@@ -1,0 +1,123 @@
+# pq-verify
+
+**Post-Quantum Cryptographic Verification Tool**
+
+The only tool that verifies ML-KEM (Kyber) implementations natively in Z₃₃₂₉ without Boolean encoding. Produces machine-checkable Coq proof certificates.
+
+![Version](https://img.shields.io/badge/version-0.2.1-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Tests](https://img.shields.io/badge/tests-15%2F15-brightgreen)
+
+## Why This Exists
+
+Every post-quantum crypto implementation needs verification. Current tools encode Z₃₃₂₉ arithmetic as Boolean SAT (12 binary variables per coefficient, millions of clauses). **pq-verify** operates directly in the native field — no encoding, no overhead.
+
+| Approach | Kyber-768 Keygen | Method |
+|---|---|---|
+| SAT encoding (CryptoMiniSat) | ~seconds | 12 bits/coeff, millions of clauses |
+| **pq-verify (native Z₃₃₂₉)** | **237μs** | Direct Gaussian elimination |
+
+## Quick Start
+
+```bash
+# On Google Colab or any Linux with gcc + Python 3
+pip install scipy
+
+# Run self-test
+python pq_verify.py
+
+# Audit an external implementation
+pip install kyber-py
+python pq_verify.py --audit kyber-py
+```
+
+## What It Tests
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  pq-verify v0.2.1 — Post-Quantum Crypto Verification Tool  ║
+╚══════════════════════════════════════════════════════════════╝
+
+  NTT butterfly (1000 trials)            ✅  1.1ms
+  NTT full layer (128 butterflies)       ✅  2.0ms
+  Modular arithmetic edge cases          ✅
+  Kyber-768 keygen trial 0 (k=3, n=256)  ✅  236μs
+  Kyber-768 keygen trial 1 (k=3, n=256)  ✅  259μs
+  Kyber-768 keygen trial 2 (k=3, n=256)  ✅  275μs
+  Kyber-768 keygen trial 3 (k=3, n=256)  ✅  276μs
+  Kyber-768 keygen trial 4 (k=3, n=256)  ✅  254μs
+  Import kyber-py                        ✅
+  ML-KEM-512 keygen                      ✅
+  ML-KEM-512 encaps                      ✅
+  ML-KEM-512 shared secret match         ✅
+  ML-KEM-768 full roundtrip              ✅
+  Coq certificate generation             ✅
+  Coq certificate verification           ✅
+
+  OVERALL: 15/15 tests passed
+  ✅ No critical findings
+```
+
+## How It Works
+
+1. **Compiles a native Z₃₃₂₉ Gaussian elimination engine** (C, via gcc)
+2. **Encodes NTT butterflies as linear equations** over Z₃₃₂₉
+3. **Solves via field-native Gaussian elimination** — not SAT, not SMT
+4. **Generates Coq proof certificates** for machine-checked verification
+5. **Outputs JSON audit report** with findings and evidence
+
+## Architecture
+
+```
+pq_verify.py
+├── Z₃₃₂₉ C Engine (compiled at runtime)
+│   ├── Modular arithmetic (add, sub, mul, inv via Fermat)
+│   ├── Sparse equation builder
+│   ├── NTT butterfly encoder
+│   └── Gaussian elimination solver
+├── Audit Functions
+│   ├── Butterfly verification (1000 random trials)
+│   ├── Full NTT layer (128 butterflies, 256 coefficients)
+│   ├── Modular arithmetic edge cases
+│   ├── Kyber-768 keygen (t = As + e recovery)
+│   └── External implementation audit
+├── Coq Certificate Generator
+│   └── Gallina proof scripts with reflexivity proofs
+└── Report Generator
+    ├── Formatted terminal output
+    └── JSON audit report
+```
+
+## Part of a Larger Pipeline
+
+pq-verify is Engine 2 of a five-engine cryptographic verification stack:
+
+| Engine | Field | Target | Paper |
+|---|---|---|---|
+| libgf2 | GF(2) | AES circuits | [Paper 2](https://doi.org/10.5281/zenodo.19302050) |
+| **libzq (pq-verify)** | **Z₃₃₂₉** | **Kyber NTT/keygen** | **[Paper 2](https://doi.org/10.5281/zenodo.19302050)** |
+| libcubic | Z[ω] | Fermat congruences | [Paper 4](https://doi.org/10.5281/zenodo.19439021) |
+| libconformity | ℝ | Hodge/Amari/PF | [Paper 3](https://doi.org/10.5281/zenodo.19425788) |
+
+## Publications
+
+- **Paper 2:** "A Unified Field-Native Cryptographic Verification Pipeline" — [Zenodo DOI: 10.5281/zenodo.19302050](https://doi.org/10.5281/zenodo.19302050)
+- **Paper 3:** "The Conformity Gradient on Calabi-Yau Moduli" (16 theorems) — [Zenodo DOI: 10.5281/zenodo.19425788](https://doi.org/10.5281/zenodo.19425788)
+- **Paper 4:** "Unified Formulas for Fermat Congruence Solutions" — [Zenodo DOI: 10.5281/zenodo.19439021](https://doi.org/10.5281/zenodo.19439021)
+
+## Requirements
+
+- Python 3.8+
+- gcc (for compiling the C engine)
+- scipy
+- coq (optional, for certificate verification)
+
+## License
+
+MIT
+
+## Author
+
+Nicholas Maino — [iamweare](https://github.com/bigDSanalyst)
+
+Independent researcher. Mekeo and Scottish-English heritage. Building technology that learns more to displace less.

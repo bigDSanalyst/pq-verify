@@ -1,0 +1,11 @@
+*.so
+*.o
+*.pyc
+__pycache__/
+*.v
+*.vo
+*.glob
+*.vok
+*.vos
+pq_verify_report_*.json
+/tmp/
