@@ -1,0 +1,44 @@
+{
+  "tool": "pq-verify",
+  "version": "2.6.0",
+  "timestamp": "2026-06-25T22:57:30.732067+00:00",
+  "target": {
+    "so_path": "./libkyber_ntt.so",
+    "symbol": "ntt",
+    "algorithm": "ML-KEM-1024",
+    "q": 3329,
+    "n": 256,
+    "k": 4
+  },
+  "results": {
+    "load": {
+      "ok": true
+    },
+    "kat": {
+      "name": "ML-KEM-1024",
+      "level": "NIST Level 5 (~AES-256)",
+      "random_fails": 0,
+      "boundary_fails": 0,
+      "verified": true
+    },
+    "params": {
+      "param_set": "ML-KEM-1024",
+      "beta": 874,
+      "classical": 255.20799999999997,
+      "quantum": 231.61,
+      "level": 5,
+      "meets_level": true
+    },
+    "kem": {
+      "name": "ML-KEM-1024",
+      "level": "NIST Level 5 (~AES-256)",
+      "recovery": "20/20",
+      "freivalds": "20/20",
+      "negative_control": true,
+      "verified": true
+    }
+  },
+  "fingerprint_sha256": "30c772f92bc8a3faaf161d00814c782a2068195b4e859fe2e290656513dea2c0",
+  "verdict": "VERIFIED",
+  "note": "Sample report. ACVP (240/240) omitted here for offline generation; run pqverify_acvp() with kyber-py + network for full ACVP block."
+}
