@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use pq-verify, please cite it as below."
+title: "pq-verify: Independent verification for ML-KEM / ML-DSA implementations"
+authors:
+  - family-names: "Maino"
+    given-names: "Nicholas"
+    alias: "iamweare"
+version: 2.6.0
+license: MIT
+repository-code: "https://github.com/bigDSanalyst/pq-verify"
+references:
+  - type: article
+    title: "A Unified Field-Native Cryptographic Verification Pipeline"
+    authors:
+      - family-names: "Maino"
+        given-names: "Nicholas"
+    doi: "10.5281/zenodo.19302050"
