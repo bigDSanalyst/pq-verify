@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include QUICKSTART.md
+include DEMO.ipynb
+include vendor_audit_template.py
+include sample_report.json
+recursive-include pq_verify *.c *.cpp
