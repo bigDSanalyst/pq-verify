@@ -37,11 +37,16 @@ def build_parser():
     p.add_argument("--quick", action="store_true",
                    help="run a fast subset of the self-suite")
     p.add_argument("--acvp", action="store_true",
-                   help="full NIST ACVP end-to-end ML-KEM (all 12 groups)")
+                   help="full NIST ACVP end-to-end ML-KEM (all groups)")
     p.add_argument("--mldsa-acvp", action="store_true",
                    help="full NIST ACVP end-to-end ML-DSA (FIPS 204, 615 vectors)")
     p.add_argument("--acvp-all", action="store_true",
-                   help="both ACVP suites: ML-KEM + ML-DSA (885 vectors)")
+                   help="both ACVP suites: ML-KEM + ML-DSA (855 pinned vectors)")
+    p.add_argument("--live", action="store_true",
+                   help="fetch NIST's CURRENT vectors instead of the pinned "
+                        "bundle (needs network; results may change between runs)")
+    p.add_argument("--vector-dir", metavar="DIR",
+                   help="verify against your own local ACVP vector directory")
     p.add_argument("--params", metavar="SET",
                    help="parameter security check (e.g. ML-KEM-512/768/1024)")
     p.add_argument("--kem", metavar="K", type=int, choices=(2, 3, 4),
@@ -58,12 +63,14 @@ def main(argv=None):
 
     # If a specific task is requested, run just that task.
     ran_task = False
+    _vsrc = dict(live=getattr(args, "live", False),
+                 vector_dir=getattr(args, "vector_dir", None))
     if args.acvp:
-        pqverify_acvp(); ran_task = True
+        pqverify_acvp(**_vsrc); ran_task = True
     if getattr(args, "mldsa_acvp", False):
-        pqverify_mldsa_acvp(); ran_task = True
+        pqverify_mldsa_acvp(**_vsrc); ran_task = True
     if getattr(args, "acvp_all", False):
-        pqverify_acvp_all(); ran_task = True
+        pqverify_acvp_all(**_vsrc); ran_task = True
     if args.params:
         pqverify_params(args.params); ran_task = True
     if args.kem:
