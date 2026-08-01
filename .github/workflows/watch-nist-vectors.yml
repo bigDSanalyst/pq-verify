@@ -1,0 +1,85 @@
+name: Watch NIST ACVP vectors
+
+# Tells the maintainer when NIST changes the upstream ACVP vectors, so a new
+# pinned snapshot can be cut deliberately. Does NOT modify the shipped bundle.
+#
+# Runs weekly (and on manual trigger). On change: updates the tracked baseline
+# and opens an issue with the diff.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # 06:00 UTC every Monday
+  workflow_dispatch: {}    # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write          # to commit the updated baseline
+  issues: write            # to open an issue on change
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check NIST vectors for drift
+        id: check
+        run: |
+          set +e
+          OUT=$(python3 tools/check_vectors.py)
+          CODE=$?
+          echo "$OUT"
+          # save output for the issue body
+          {
+            echo 'report<<EOF'
+            echo "$OUT"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit updated baseline (if changed)
+        if: steps.check.outputs.code == '1'
+        run: |
+          git config user.name  "vector-watcher"
+          git config user.email "actions@users.noreply.github.com"
+          git add tools/vector_state/baseline.json
+          git commit -m "watcher: NIST ACVP vectors changed upstream" || echo "nothing to commit"
+          git push || echo "push skipped"
+
+      - name: Open an issue (if changed)
+        if: steps.check.outputs.code == '1'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `A scheduled check detected that NIST's ACVP vectors changed upstream.
+
+            \`\`\`
+            ${{ steps.check.outputs.report }}
+            \`\`\`
+
+            **This does not change the shipped frozen vectors.** pq-verify stays
+            deterministic. Action for the maintainer:
+
+            1. Wait until the fingerprint is **stable across several weekly runs**
+               (NIST has edited these files repeatedly; do not pin a transient state).
+            2. When settled, re-capture the pinned snapshot into \`pq_verify/vectors\`.
+            3. Re-verify **offline** (\`pqverify_acvp_all()\` with network blocked) and
+               confirm the expected counts.
+            4. Cut a new patch release with the updated pinned vectors + count.`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "NIST ACVP vectors changed upstream — review before re-pinning",
+              body,
+              labels: ["upstream", "vectors"],
+            });
+
+      - name: Report clean
+        if: steps.check.outputs.code == '0'
+        run: echo "No upstream change. Pinned vectors remain current."
