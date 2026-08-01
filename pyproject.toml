@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pq-verify"
-version = "2.6.1"
+version = "2.6.2"
 description = "Independent verification for ML-KEM / ML-DSA implementations — native field NTT verification, NIST ACVP, lattice parameter security, Coq certificates."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -49,7 +49,7 @@ pq-verify = "pq_verify.cli:main"
 packages = ["pq_verify"]
 
 [tool.setuptools.package-data]
-pq_verify = ["*.c", "*.cpp"]
+pq_verify = ["*.c", "*.cpp", "vectors/*.gz", "vectors/*.json", "vectors/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
