@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.1 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.6.2 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,7 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.1"
+VERSION = "2.6.2"
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
@@ -4836,9 +4836,55 @@ def check_decapsulation_key(dk, param_set="ML-KEM-768"):
 # ================================================================
 
 _ACVP_BASE = "https://raw.githubusercontent.com/usnistgov/ACVP-Server/master/gen-val/json-files/"
+
+_VECTOR_BUNDLE_CACHE = {}
+
+def _pkg_dir():
+    """Directory of this module. Falls back to CWD when run via exec() as a
+    standalone script, where __file__ is undefined."""
+    import os as _o
+    try:
+        return _o.path.dirname(_o.path.abspath(__file__))
+    except NameError:
+        return _o.getcwd()
+
+def _bundle_path():
+    import os as _o
+    return _o.path.join(_pkg_dir(), "vectors", "acvp_vectors.json.gz")
+
+def _load_bundle():
+    """Load (and memoise) the single combined pinned-vector archive, if present.
+    One gzipped JSON keyed by 'DIR/file.json' — one file instead of a nested tree,
+    which keeps the package simple and installable anywhere."""
+    global _VECTOR_BUNDLE_CACHE
+    if _VECTOR_BUNDLE_CACHE: return _VECTOR_BUNDLE_CACHE
+    import os as _o, gzip as _gz, json as _j
+    p = _bundle_path()
+    if _o.path.exists(p):
+        with _gz.open(p, "rt") as fh:
+            _VECTOR_BUNDLE_CACHE = _j.load(fh)
+    return _VECTOR_BUNDLE_CACHE
+
+def _load_vector_json(path, bundle_key=None):
+    """Load an ACVP vector file. Precedence:
+       1. the combined bundle (pinned, shipped in-package), by key
+       2. a plain .json on disk
+       3. a gzipped .json.gz on disk
+    so an explicit prompt_dir of loose files still works."""
+    import json as _j, gzip as _gz, os as _os
+    if bundle_key:
+        b = _load_bundle()
+        if bundle_key in b:
+            return b[bundle_key]
+    if _os.path.exists(path):
+        return _j.load(open(path))
+    if _os.path.exists(path + ".gz"):
+        with _gz.open(path + ".gz", "rt") as fh:
+            return _j.load(fh)
+    raise FileNotFoundError(path + " (or .gz, or bundle key " + str(bundle_key) + ")")
 _ACVP_KEM_LEVELS = {'ML-KEM-512':'NIST Level 1','ML-KEM-768':'NIST Level 3','ML-KEM-1024':'NIST Level 5'}
 
-def pqverify_acvp(prompt_dir=None, verbose=True):
+def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
     """Full NIST ACVP end-to-end ML-KEM verification (FIPS 203), all groups.
 
     Functional groups (keyGen, encapsulation, decapsulation) are verified
@@ -4850,12 +4896,17 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
 
     Covers ML-KEM-512/768/1024 (NIST Levels 1/3/5).
 
-    prompt_dir: local directory containing the two ACVP subfolders
-        (ML-KEM-keyGen-FIPS203, ML-KEM-encapDecap-FIPS203), each with
-        prompt.json + expectedResults.json. If None, fetch live from the
-        NIST ACVP-Server GitHub.
+    Vector source precedence (deterministic-by-default):
+      1. prompt_dir / vector_dir  — explicit local directory, if given
+      2. live=True                — fetch current vectors from NIST's GitHub
+      3. default                  — the FROZEN vectors bundled in this package
+                                    (pq_verify/vectors), so results are
+                                    reproducible and offline. NIST edits the
+                                    upstream files periodically; pinning
+                                    insulates you from that. Use live=True to
+                                    check against the latest instead.
     """
-    import json as _json
+    import json as _json, os as _os
     try:
         from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
     except ImportError:
@@ -4864,12 +4915,19 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
         return None
     PS = {'ML-KEM-512':ML_KEM_512,'ML-KEM-768':ML_KEM_768,'ML-KEM-1024':ML_KEM_1024}
 
+    # resolve the vector source once
+    _local = prompt_dir or vector_dir
+    if not _local and not live:
+        _local = _os.path.join(_pkg_dir(), "vectors")
+    if verbose:
+        if _local:   print(f"  vectors: bundled/pinned ({_local})")
+        else:        print(f"  vectors: LIVE from NIST ACVP-Server (may change between runs)")
+
     def load(name):
-        if prompt_dir:
-            import os
-            d = os.path.join(prompt_dir, name)
-            return (_json.load(open(os.path.join(d,"prompt.json"))),
-                    _json.load(open(os.path.join(d,"expectedResults.json"))))
+        if _local:
+            d = _os.path.join(_local, name)
+            return (_load_vector_json(_os.path.join(d,"prompt.json"), f"{name}/prompt.json"),
+                    _load_vector_json(_os.path.join(d,"expectedResults.json"), f"{name}/expectedResults.json"))
         import urllib.request
         u = _ACVP_BASE + name + "/"
         return (_json.loads(urllib.request.urlopen(u+"prompt.json", timeout=30).read()),
@@ -4878,7 +4936,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
     if verbose:
         print("=" * 64)
         print("  NIST ACVP END-TO-END ML-KEM VERIFICATION (FIPS 203)")
-        print(f"  Source: {'local: '+prompt_dir if prompt_dir else 'NIST ACVP-Server (GitHub)'}")
+        print(f"  Source: {'pinned/local: '+_local if _local else 'LIVE NIST ACVP-Server (GitHub)'}")
         print("  Functional: kyber-py byte-exact | KeyCheck: pq-verify FIPS 203 oracle")
         print("=" * 64)
 
@@ -4911,14 +4969,14 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
     # uniformly for both keyFormats -- and read dk directly for
     # decapsulationKeyCheck (present here, absent in prompt.json).
     def load_internal(name):
-        if prompt_dir:
-            import os
-            return _json.load(open(os.path.join(prompt_dir, name, "internalProjection.json")))
+        if _local:
+            return _load_vector_json(_os.path.join(_local, name, "internalProjection.json"), f"{name}/internalProjection.json")
         import urllib.request
         u = _ACVP_BASE + name + "/internalProjection.json"
         return _json.loads(urllib.request.urlopen(u, timeout=30).read())
 
     ep = load_internal("ML-KEM-encapDecap-FIPS203")
+    _unknown_fns = set()
     for g in ep['testGroups']:
         ps = g['parameterSet']; impl = PS[ps]; fn = g.get('function','')
         for t in g['tests']:
@@ -4927,7 +4985,17 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
                 ok = c.hex().upper()==t['c'].upper() and K.hex().upper()==t['k'].upper()
                 tally('encaps', ps, ok)
             elif fn == 'decapsulation':
-                _, dk = impl._keygen_internal(bytes.fromhex(t['d']), bytes.fromhex(t['z']))
+                # Format-agnostic: NIST's encapDecap vectors have shipped in two
+                # shapes and have oscillated between them. 'seed' form gives (d,z)
+                # and dk must be derived; 'expanded' form gives dk directly. We
+                # accept whichever is present so a schema flip upstream cannot
+                # crash the run. If neither is present, skip that test loudly.
+                if 'd' in t and 'z' in t:
+                    _, dk = impl._keygen_internal(bytes.fromhex(t['d']), bytes.fromhex(t['z']))
+                elif 'dk' in t:
+                    dk = bytes.fromhex(t['dk'])
+                else:
+                    _unknown_fns.add('decapsulation:no-key-field'); continue
                 K = impl._decaps_internal(dk, bytes.fromhex(t['c']))
                 ok = K.hex().upper()==t['k'].upper()
                 tally('decaps', ps, ok)
@@ -4940,8 +5008,11 @@ def pqverify_acvp(prompt_dir=None, verbose=True):
                 ok = (ours == t['testPassed'])
                 tally('decapKeyCheck', ps, ok)
             else:
-                continue
+                _unknown_fns.add(fn); continue
             g_ok += ok; g_total += 1
+    if _unknown_fns and verbose:
+        print(f"  \u26a0 NIST vectors contain unhandled function types: {sorted(_unknown_fns)}")
+        print(f"    (upstream schema may have changed; these tests were skipped, not failed)")
 
     if verbose:
         order = ['keyGen','encaps','decaps','encapKeyCheck','decapKeyCheck']
@@ -5044,7 +5115,7 @@ def _mldsa_verify_with_mu(O, pk, mu, sig):
     return c_tilde == O._h(mu + wb, O.c_tilde_bytes)
 
 
-def pqverify_mldsa_acvp(prompt_dir=None, verbose=True):
+def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
     """Full NIST ACVP end-to-end ML-DSA verification (FIPS 204).
 
     keyGen + sigGen byte-exact, sigVer bool-exact, across ML-DSA-44/65/87
@@ -5052,11 +5123,14 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True):
     internal, internal-externalMu). Covers deterministic and hedged signing
     and all twelve HashML-DSA pre-hash functions.
 
-    prompt_dir: local directory with the three ACVP subfolders (air-gapped);
-                if None, fetch live from the NIST ACVP-Server.
+    Vector source precedence (deterministic-by-default), same as pqverify_acvp:
+      1. prompt_dir / vector_dir  — explicit local directory, if given
+      2. live=True                — fetch current vectors from NIST's GitHub
+      3. default                  — the FROZEN vectors bundled in this package
 
     Requires: pip install dilithium-py --break-system-packages
     """
+    import os as _os2
     try:
         from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
     except ImportError:
@@ -5065,12 +5139,18 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True):
     PS = {'ML-DSA-44': ML_DSA_44, 'ML-DSA-65': ML_DSA_65, 'ML-DSA-87': ML_DSA_87}
     Z32 = bytes(32)
 
+    _local = prompt_dir or vector_dir
+    if not _local and not live:
+        _local = _os2.path.join(_pkg_dir(), "vectors")
+    if verbose:
+        print(f"  vectors: {'bundled/pinned' if _local else 'LIVE from NIST (may change)'}")
+
     def load(name):
-        if prompt_dir:
-            import os
-            d = os.path.join(prompt_dir, _MLDSA_DIRS[name])
-            return (_json.load(open(os.path.join(d, "prompt.json"))),
-                    _json.load(open(os.path.join(d, "expectedResults.json"))))
+        if _local:
+            d = _os2.path.join(_local, _MLDSA_DIRS[name])
+            _dn = _MLDSA_DIRS[name]
+            return (_load_vector_json(_os2.path.join(d, "prompt.json"), f"{_dn}/prompt.json"),
+                    _load_vector_json(_os2.path.join(d, "expectedResults.json"), f"{_dn}/expectedResults.json"))
         import urllib.request
         u = _MLDSA_ACVP_BASE + _MLDSA_DIRS[name] + "/"
         g = lambda f: _json.load(urllib.request.urlopen(u + f))
@@ -5150,18 +5230,22 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True):
             'detail': {k: tuple(v) for k, v in detail.items()}}
 
 
-def pqverify_acvp_all(prompt_dir=None, verbose=True):
+def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None):
     """Run both ACVP suites: ML-KEM (FIPS 203) + ML-DSA (FIPS 204).
 
-    Combined NIST ACVP coverage = 270 (ML-KEM) + 615 (ML-DSA) = 885 vectors.
+    By default runs against the FROZEN vectors bundled in this package, so the
+    result is deterministic and offline. Combined coverage against the pinned
+    snapshot is stated in the release notes; pass live=True to verify against
+    NIST's current upstream vectors instead (the ML-KEM count can differ when
+    NIST changes the encapDecap keyFormat schema).
     Requires: pip install kyber-py dilithium-py --break-system-packages
     """
     if verbose:
         print("#" * 64)
         print("  NIST ACVP — FULL COVERAGE (FIPS 203 + FIPS 204)")
         print("#" * 64)
-    kem = pqverify_acvp(prompt_dir=prompt_dir, verbose=verbose)
-    dsa = pqverify_mldsa_acvp(prompt_dir=prompt_dir, verbose=verbose)
+    kem = pqverify_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
+    dsa = pqverify_mldsa_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
     kem_p = kem['passed'] if kem else 0
     kem_t = kem['total'] if kem else 0
     dsa_p = dsa['passed'] if dsa else 0
