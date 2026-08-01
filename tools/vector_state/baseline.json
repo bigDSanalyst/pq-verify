@@ -1,0 +1,673 @@
+{
+  "ML-DSA-keyGen-FIPS204": {
+    "bytes": 10062,
+    "sha256": "43e81ad820e495dbcad086fe27c1008393a8c32100bbbff77c558c3f06dcefef",
+    "structure": [
+      {
+        "fields": [
+          "seed",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "seed",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "seed",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-DSA-87"
+      }
+    ],
+    "total_tests": 75
+  },
+  "ML-DSA-sigGen-FIPS204": {
+    "bytes": 5044293,
+    "sha256": "447749d72817b211160d243311ce32302f3023e59c355b0f70be2bd3e9e7830d",
+    "structure": [
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "mu",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "mu",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "mu",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "mu",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "mu",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "mu",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      }
+    ],
+    "total_tests": 360
+  },
+  "ML-DSA-sigVer-FIPS204": {
+    "bytes": 3125947,
+    "sha256": "e2cba4589389756fa0bea1a7e6837138bf0a81f9d14234c9ee8f6d33caa1654e",
+    "structure": [
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "mu",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-44"
+      },
+      {
+        "fields": [
+          "mu",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-65"
+      },
+      {
+        "fields": [
+          "mu",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87"
+      }
+    ],
+    "total_tests": 180
+  },
+  "ML-KEM-encapDecap-FIPS203": {
+    "bytes": 624189,
+    "sha256": "998e22dfb12efb14ce9fdff911ca634b13612819a1806f25da69adba7e16db91",
+    "structure": [
+      {
+        "fields": [
+          "ek",
+          "m",
+          "tcId"
+        ],
+        "function": "encapsulation",
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-512"
+      },
+      {
+        "fields": [
+          "ek",
+          "m",
+          "tcId"
+        ],
+        "function": "encapsulation",
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-768"
+      },
+      {
+        "fields": [
+          "ek",
+          "m",
+          "tcId"
+        ],
+        "function": "encapsulation",
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-1024"
+      },
+      {
+        "fields": [
+          "c",
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulation",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-512"
+      },
+      {
+        "fields": [
+          "c",
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulation",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-768"
+      },
+      {
+        "fields": [
+          "c",
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulation",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-1024"
+      },
+      {
+        "fields": [
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-512"
+      },
+      {
+        "fields": [
+          "ek",
+          "tcId"
+        ],
+        "function": "encapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-512"
+      },
+      {
+        "fields": [
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-768"
+      },
+      {
+        "fields": [
+          "ek",
+          "tcId"
+        ],
+        "function": "encapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-768"
+      },
+      {
+        "fields": [
+          "dk",
+          "tcId"
+        ],
+        "function": "decapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-1024"
+      },
+      {
+        "fields": [
+          "ek",
+          "tcId"
+        ],
+        "function": "encapsulationKeyCheck",
+        "keyFormat": null,
+        "n": 10,
+        "paramSet": "ML-KEM-1024"
+      }
+    ],
+    "total_tests": 165
+  },
+  "ML-KEM-keyGen-FIPS203": {
+    "bytes": 16066,
+    "sha256": "3f9ce34f6c836c77958bad2729e837c3b213f44ac36c3065976e7acca6389523",
+    "structure": [
+      {
+        "fields": [
+          "d",
+          "tcId",
+          "z"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-512"
+      },
+      {
+        "fields": [
+          "d",
+          "tcId",
+          "z"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-768"
+      },
+      {
+        "fields": [
+          "d",
+          "tcId",
+          "z"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 25,
+        "paramSet": "ML-KEM-1024"
+      }
+    ],
+    "total_tests": 75
+  }
+      }
