@@ -5,7 +5,10 @@ authors:
   - family-names: "Maino"
     given-names: "Nicholas"
     alias: "iamweare"
+    orcid: "https://orcid.org/0009-0007-6650-5879"
 version: 2.6.2
+doi: "10.5281/zenodo.21739511"
+date-released: 2026-08-01
 license: MIT
 repository-code: "https://github.com/bigDSanalyst/pq-verify"
 references:
