@@ -5,6 +5,7 @@
 ![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21739511.svg)](https://doi.org/10.5281/zenodo.21739511)
 
 **Independent verification for ML-KEM (Kyber) and ML-DSA (Dilithium) implementations.**
 
@@ -168,6 +169,28 @@ pip install kyber-py dilithium-py sympy --break-system-packages
 ## License
 
 MIT. The verifier is open-source — builds trust, enables adoption. Commercial support, custom engine development, and PQC audit engagements available separately.
+
+## Citing this software
+
+Archived on Zenodo with a citable DOI:
+
+> Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
+> implementations* (v2.6.2). Zenodo. https://doi.org/10.5281/zenodo.21739511
+
+```bibtex
+@software{maino_pqverify_2026,
+  author    = {Maino, Nicholas Clifford},
+  title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
+  version   = {2.6.2},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.21739511},
+  url       = {https://doi.org/10.5281/zenodo.21739511}
+}
+```
+
+The DOI above resolves to this specific release. The companion paper is
+[10.5281/zenodo.19302050](https://doi.org/10.5281/zenodo.19302050).
 
 ## Contact
 
