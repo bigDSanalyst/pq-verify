@@ -1,0 +1,50 @@
+{
+  "ML-DSA-keyGen-FIPS204/expectedResults.json": {
+    "bytes": 873632,
+    "sha256": "361f47ca19d592adcc66ff2cb591686ad785fea157b295648738bed6921a68df"
+  },
+  "ML-DSA-keyGen-FIPS204/prompt.json": {
+    "bytes": 10062,
+    "sha256": "43e81ad820e495dbcad086fe27c1008393a8c32100bbbff77c558c3f06dcefef"
+  },
+  "ML-DSA-sigGen-FIPS204/expectedResults.json": {
+    "bytes": 2511972,
+    "sha256": "228d011bbe274aeb93e22eea1e0d57b78f43795cf6a64fb5ef1e626485a0bedb"
+  },
+  "ML-DSA-sigGen-FIPS204/prompt.json": {
+    "bytes": 5044293,
+    "sha256": "447749d72817b211160d243311ce32302f3023e59c355b0f70be2bd3e9e7830d"
+  },
+  "ML-DSA-sigVer-FIPS204/expectedResults.json": {
+    "bytes": 13956,
+    "sha256": "99c5b82abf37bdf6f7bd11c6976e4d8007d70f9953dc13566232404647865bb8"
+  },
+  "ML-DSA-sigVer-FIPS204/prompt.json": {
+    "bytes": 3091612,
+    "sha256": "aeba1135e5dbda1681369cc7a7598c3d53e492d1c9881098556ba4dbe067b376"
+  },
+  "ML-KEM-encapDecap-FIPS203/expectedResults.json": {
+    "bytes": 190940,
+    "sha256": "81ebccbf29c8c2704061c6704d839010458a15645f2cf3a584c4c1631c3ee6b1"
+  },
+  "ML-KEM-encapDecap-FIPS203/internalProjection.json": {
+    "bytes": 1478114,
+    "sha256": "8fe8b0ade31d8f5754e909599574eb9f2d60932d95a39bc479b2b48e38f65916"
+  },
+  "ML-KEM-encapDecap-FIPS203/prompt.json": {
+    "bytes": 636669,
+    "sha256": "6762743ebfac4497d437cd95111fe6b3501aec51b3ba74bef31d1360a224a8ca"
+  },
+  "ML-KEM-keyGen-FIPS203/expectedResults.json": {
+    "bytes": 544032,
+    "sha256": "a253d0ad91c95ebea5b409673defef0aa49d65d4ed72286399e2e798ddf073a4"
+  },
+  "ML-KEM-keyGen-FIPS203/internalProjection.json": {
+    "bytes": 558841,
+    "sha256": "d7a62a2c3476957f56dd8d24f9004ea6776ccfe995ffe71a65bb9506dc9c7b1b"
+  },
+  "ML-KEM-keyGen-FIPS203/prompt.json": {
+    "bytes": 16066,
+    "sha256": "3f9ce34f6c836c77958bad2729e837c3b213f44ac36c3065976e7acca6389523"
+  }
+}
