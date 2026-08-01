@@ -5,7 +5,7 @@ authors:
   - family-names: "Maino"
     given-names: "Nicholas"
     alias: "iamweare"
-version: 2.6.1
+version: 2.6.2
 license: MIT
 repository-code: "https://github.com/bigDSanalyst/pq-verify"
 references:
