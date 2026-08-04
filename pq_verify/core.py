@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.2 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.6.3 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,7 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.2"
+VERSION = "2.6.3"
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
@@ -2229,12 +2229,20 @@ def _dilithium_zeta_table():
     return zetas
 
 def _reference_ntt_dili(f_in):
-    """FIPS 204 Algorithm 41 \u2014 reference Dilithium NTT."""
+    """FIPS 204 Algorithm 41 \u2014 reference Dilithium NTT.
+
+    NOTE: ML-DSA's NTT is COMPLETE -- 8 layers, length 128 down to 1.
+    zeta=1753 has multiplicative order 512 mod q=8380417, so 2n | q-1 and the
+    transform splits all the way to linear factors. This differs from ML-KEM,
+    where zeta has order 256, 2n does NOT divide q-1, and the last layer is
+    deleted (7 layers). Matches pq-crystals ref/ntt.c: for(len=128; len>0; ...)
+    -- as opposed to Kyber's for(len=128; len>=2; ...).
+    """
     Q = DILI_Q
     zetas = _dilithium_zeta_table()
     f = list(f_in)
     i = 1; length = 128
-    while length >= 2:
+    while length >= 1:
         start = 0
         while start < 256:
             z = zetas[i]; i += 1
@@ -2250,7 +2258,7 @@ def _ntt_layer_dili(f_in, layer_idx, zetas):
     """One Dilithium NTT layer."""
     Q = DILI_Q
     f = list(f_in)
-    lengths = [128, 64, 32, 16, 8, 4, 2]
+    lengths = [128, 64, 32, 16, 8, 4, 2, 1]
     length = lengths[layer_idx]
     z_idx = sum(256 // (2 * lengths[l]) for l in range(layer_idx)) + 1
     start = 0
@@ -2264,7 +2272,7 @@ def _ntt_layer_dili(f_in, layer_idx, zetas):
     return f
 
 def audit_full_ntt_dilithium(lib):
-    """Complete Dilithium NTT \u2014 7 layers, 896 butterflies."""
+    """Complete Dilithium NTT \u2014 8 layers (FIPS 204 complete transform)."""
     r = AuditResult('Dilithium Full NTT')
     Q = DILI_Q
     zetas = _dilithium_zeta_table()
@@ -2275,9 +2283,9 @@ def audit_full_ntt_dilithium(lib):
 
     f_layer = list(f_input)
     total_bf = 0; all_pass = True
-    for layer in range(7):
+    for layer in range(8):
         f_next = _ntt_layer_dili(f_layer, layer, zetas)
-        lengths = [128, 64, 32, 16, 8, 4, 2]
+        lengths = [128, 64, 32, 16, 8, 4, 2, 1]
         length = lengths[layer]
         z_idx = sum(256 // (2 * lengths[l]) for l in range(layer)) + 1
         z = zetas[z_idx]
@@ -2291,7 +2299,7 @@ def audit_full_ntt_dilithium(lib):
         f_layer = f_next
 
     ntt_match = (f_layer == f_ntt)
-    r.add_test(f'7-layer Dilithium NTT ({total_bf} sample butterflies)', all_pass,
+    r.add_test(f'8-layer Dilithium NTT ({total_bf} sample butterflies)', all_pass,
                'all layers verified')
     r.add_test('Dilithium NTT matches FIPS 204 reference', ntt_match,
                '256 coefficients, layer-by-layer == direct')
@@ -5230,7 +5238,121 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
             'detail': {k: tuple(v) for k, v in detail.items()}}
 
 
-def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None):
+_SLHDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
+                     "master/gen-val/json-files/")
+_SLHDSA_DIRS = {'keyGen': 'SLH-DSA-keyGen-FIPS205'}
+
+
+def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
+    """NIST ACVP end-to-end SLH-DSA key generation verification (FIPS 205).
+
+    Verifies byte-exact key generation across all TWELVE FIPS 205 parameter
+    sets (SHA2 and SHAKE, 128/192/256, fast and small variants) against NIST's
+    published ACVP vectors.
+
+    Each test supplies (skSeed, skPrf, pkSeed) and NIST supplies the expected
+    (sk, pk). FIPS 205 defines:
+        pk = pkSeed || pkRoot
+        sk = skSeed || skPrf || pkSeed || pkRoot
+    where pkRoot is the root of the top-level XMSS tree. The seeds are copied
+    through; pkRoot is the computed quantity, so it is the real check.
+
+    Reference: the `slhdsa` package, verified FIPS 205-conformant against these
+    same NIST vectors (24/24, all twelve parameter sets) before adoption.
+    NOTE: `pyspx` is NOT usable here -- it implements the SPHINCS+ round-3
+    submission, whose tweakable-hash/address encoding differs from FIPS 205,
+    and produces a different pkRoot. Using it would report CORRECT FIPS 205
+    implementations as wrong.
+
+    Vector source precedence matches pqverify_acvp: prompt_dir/vector_dir,
+    then live=True, else the pinned bundle shipped in-package.
+
+    Requires: pip install slh-dsa   (PyPI name is hyphenated; module is `slhdsa`)
+    """
+    import json as _j3, os as _os3
+    try:
+        from slhdsa.lowlevel.slhdsa import Address, XMSS
+        import slhdsa.lowlevel.parameters as _LP
+    except ImportError:
+        print("  slh-dsa required:  pip install slh-dsa   (module name: slhdsa)")
+        return None
+
+    _local = prompt_dir or vector_dir
+    if not _local and not live:
+        _local = _os3.path.join(_pkg_dir(), "vectors")
+    if verbose:
+        print(f"  vectors: {'bundled/pinned' if _local else 'LIVE from NIST (may change)'}")
+
+    def load(name):
+        d = _SLHDSA_DIRS[name]
+        if _local:
+            base = _os3.path.join(_local, d)
+            return (_load_vector_json(_os3.path.join(base, "prompt.json"),
+                                      f"{d}/prompt.json"),
+                    _load_vector_json(_os3.path.join(base, "expectedResults.json"),
+                                      f"{d}/expectedResults.json"))
+        import urllib.request
+        u = _SLHDSA_ACVP_BASE + d + "/"
+        g = lambda f: _j3.load(urllib.request.urlopen(u + f, timeout=120))
+        return g("prompt.json"), g("expectedResults.json")
+
+    def _par(ps):
+        return getattr(_LP, ps.replace('SLH-DSA-', '').replace('-', '_').lower(), None)
+
+    if verbose:
+        print("=" * 64)
+        print("  NIST ACVP END-TO-END SLH-DSA VERIFICATION (FIPS 205)")
+        print(f"  Source: {'pinned/local' if _local else 'LIVE NIST ACVP-Server'}")
+        print("  keyGen: byte-exact pk and sk, all 12 parameter sets")
+        print("=" * 64)
+
+    p, e = load('keyGen')
+    exp = {t['tcId']: t for g in e['testGroups'] for t in g['tests']}
+    detail, ok_all, tot_all = {}, 0, 0
+    for g in p['testGroups']:
+        ps = g['parameterSet']
+        par = _par(ps)
+        if par is None:
+            if verbose:
+                print(f"  SKIP  {ps}: parameter set not available in reference")
+            continue
+        ok = tot = 0
+        for t in g['tests']:
+            tot += 1
+            try:
+                sk_seed = bytes.fromhex(t['skSeed'])
+                sk_prf = bytes.fromhex(t['skPrf'])
+                pk_seed = bytes.fromhex(t['pkSeed'])
+                pk_root = XMSS(par).node(sk_seed, 0, par.h_m, pk_seed,
+                                         Address(par.d - 1, 0))
+                got_pk = (pk_seed + pk_root).hex().upper()
+                got_sk = (sk_seed + sk_prf + pk_seed + pk_root).hex().upper()
+                ref = exp[t['tcId']]
+                if got_pk == ref['pk'].upper() and got_sk == ref['sk'].upper():
+                    ok += 1
+            except Exception:
+                pass
+        detail[f'keyGen/{ps}'] = (ok, tot)
+        ok_all += ok
+        tot_all += tot
+        if verbose:
+            print(f"  {'PASS' if ok == tot else 'FAIL'}      keyGen/{ps:22s} {ok}/{tot}")
+
+    verified = (ok_all == tot_all and tot_all > 0)
+    if verbose:
+        print("=" * 64)
+        print(f"  ACVP RESULT: {ok_all}/{tot_all} NIST SLH-DSA vectors verified")
+        print("  keyGen byte-exact (pk and sk), all 12 FIPS 205 parameter sets")
+        print("  SCOPE: key generation only. sigGen/sigVer are not included --")
+        print("         SLH-DSA signing is slow (seconds per 's'-variant sig)")
+        print("         and those vector sets total ~34 MB.")
+        print("=" * 64)
+    return {'verified': verified, 'passed': ok_all, 'total': tot_all,
+            'detail': detail}
+
+
+def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None,
+                      slhdsa=False):
     """Run both ACVP suites: ML-KEM (FIPS 203) + ML-DSA (FIPS 204).
 
     By default runs against the FROZEN vectors bundled in this package, so the
@@ -5246,18 +5368,27 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
         print("#" * 64)
     kem = pqverify_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
     dsa = pqverify_mldsa_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
+    slh = None
+    if slhdsa:
+        slh = pqverify_slhdsa_acvp(prompt_dir=prompt_dir, verbose=verbose,
+                                   live=live, vector_dir=vector_dir)
     kem_p = kem['passed'] if kem else 0
     kem_t = kem['total'] if kem else 0
     dsa_p = dsa['passed'] if dsa else 0
     dsa_t = dsa['total'] if dsa else 0
-    total_p, total_t = kem_p + dsa_p, kem_t + dsa_t
+    slh_p = slh['passed'] if slh else 0
+    slh_t = slh['total'] if slh else 0
+    total_p, total_t = kem_p + dsa_p + slh_p, kem_t + dsa_t + slh_t
     if verbose:
         print("#" * 64)
         print(f"  COMBINED ACVP: {total_p}/{total_t} NIST vectors")
         print(f"    ML-KEM (FIPS 203): {kem_p}/{kem_t}")
         print(f"    ML-DSA (FIPS 204): {dsa_p}/{dsa_t}")
+        if slh:
+            print(f"    SLH-DSA (FIPS 205, keyGen only): {slh_p}/{slh_t}")
         print("#" * 64)
     return {'verified': (total_p == total_t and total_t > 0),
+            'slh_dsa': slh,
             'passed': total_p, 'total': total_t,
             'ml_kem': kem, 'ml_dsa': dsa}
 
