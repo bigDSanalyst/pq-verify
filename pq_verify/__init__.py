@@ -11,7 +11,7 @@ Author: Nicholas Maino (iamweare) — Melbourne AU
 License: MIT
 """
 
-__version__ = "2.6.2"
+__version__ = "2.6.3"
 __author__ = "Nicholas Maino (iamweare)"
 __license__ = "MIT"
 
@@ -22,6 +22,7 @@ from .core import (
     pqverify_kem,
     pqverify_acvp,
     pqverify_mldsa_acvp,
+    pqverify_slhdsa_acvp,
     pqverify_acvp_all,
     pqverify_params,
     pqverify_leakage,
@@ -42,6 +43,7 @@ __all__ = [
     "pqverify_kem",
     "pqverify_acvp",
     "pqverify_mldsa_acvp",
+    "pqverify_slhdsa_acvp",
     "pqverify_acvp_all",
     "pqverify_params",
     "pqverify_leakage",
