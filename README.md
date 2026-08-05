@@ -1,6 +1,6 @@
-# pq-verify v2.6.2 — PQC Implementation Verification
+# pq-verify v2.6.3 — PQC Implementation Verification
 
-![version](https://img.shields.io/badge/version-2.6.2-blue)
+![version](https://img.shields.io/badge/version-2.6.3-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
@@ -126,15 +126,15 @@ pq_verify/
 tests/test_pqverify.py     16-test pytest suite
 pyproject.toml             Build config + console-script entry point
 dist/
-  pq_verify-2.6.2-py3-none-any.whl    Installable wheel
-  pq_verify-2.6.2.tar.gz              Source distribution
+  pq_verify-2.6.3-py3-none-any.whl    Installable wheel
+  pq_verify-2.6.3.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 855/855
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
 README.md / QUICKSTART.md / LICENSE / CITATION.cff
 ```
 
-Install: `pip install dist/pq_verify-2.6.2-py3-none-any.whl`
+Install: `pip install dist/pq_verify-2.6.3-py3-none-any.whl`
 
 ---
 
@@ -175,13 +175,13 @@ MIT. The verifier is open-source — builds trust, enables adoption. Commercial 
 Archived on Zenodo with a citable DOI:
 
 > Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
-> implementations* (v2.6.2). Zenodo. https://doi.org/10.5281/zenodo.21739511
+> implementations* (v2.6.3). Zenodo. https://doi.org/10.5281/zenodo.21739511
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
   title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
-  version   = {2.6.2},
+  version   = {2.6.3},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.21739511},
