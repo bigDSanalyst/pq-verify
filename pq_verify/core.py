@@ -4668,12 +4668,18 @@ def pqverify_leakage(q=3329, zeta=17, n=256):
         pqverify_leakage()                    # Kyber
         pqverify_leakage(q=8380417, zeta=1753) # Dilithium
     """
-    bits = {256: 7, 512: 8}.get(n, 7)
+    # Layer count from zeta's ORDER, not from n. ML-KEM's zeta has order n
+    # (incomplete transform, last layer deleted -> log2(n)-1 layers); ML-DSA's
+    # has order 2n (complete -> log2(n) layers). Keying on n alone gave a
+    # 7-layer table for ML-DSA, which is one layer short.
+    _log2n = max(1, n.bit_length() - 1)
+    _complete = (pow(zeta, 2 * n, q) == 1 and pow(zeta, n, q) == q - 1)
+    bits = _log2n if _complete else _log2n - 1
     def br(x):
         r = 0
         for _ in range(bits): r = (r << 1) | (x & 1); x >>= 1
         return r
-    zetas = [pow(zeta, br(i), q) for i in range(n // 2)]
+    zetas = [pow(zeta, br(i), q) for i in range(n if _complete else n // 2)]
 
     # Track state as linear combinations of inputs (n x n matrix over Z_q)
     state = [[0]*n for _ in range(n)]
