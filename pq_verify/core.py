@@ -5537,7 +5537,26 @@ def pqverify_params(param_set=None, n=None, q=None, k=None, sigma_s=None, sigma_
 # PUBLIC API: pqverify_load_so — load NTT from any .so for auditing
 # ================================================================
 
-def pqverify_load_so(so_path, func_name='ntt', q=3329, n=256, in_place=True):
+def _detect_scheme(*hints):
+    """Infer the lattice scheme from a symbol name / library path.
+    Returns 'mldsa', 'mlkem', or None. Used to pick the right field and, more
+    importantly, the right ctypes WIDTH -- ML-DSA coefficients are int32 and
+    writing them into an int16 buffer is a heap overflow."""
+    blob = ' '.join(str(h) for h in hints if h).lower()
+    for tok in ('dilithium', 'mldsa', 'ml_dsa', 'ml-dsa', 'fips204'):
+        if tok in blob:
+            return 'mldsa'
+    for tok in ('kyber', 'mlkem', 'ml_kem', 'ml-kem', 'fips203'):
+        if tok in blob:
+            return 'mlkem'
+    return None
+
+
+_SCHEME_FIELD = {'mlkem': (KYBER_Q, KYBER_ZETA), 'mldsa': (DILI_Q, DILI_ZETA)}
+
+
+def pqverify_load_so(so_path, func_name='ntt', q=None, n=256, in_place=True,
+                     scheme=None, force=False):
     """Load an NTT function from a compiled .so and return a callable for pqverify_scan.
 
     Usage:
@@ -5551,20 +5570,60 @@ def pqverify_load_so(so_path, func_name='ntt', q=3329, n=256, in_place=True):
     Args:
         so_path: path to .so file
         func_name: symbol name (use nm -D libfoo.so | grep -i ntt to find it)
-        q: field prime (3329 for Kyber, 8380417 for Dilithium)
+        q: field prime. If None (default) it is inferred from `scheme`, or from
+           the symbol/path via _detect_scheme, falling back to ML-KEM's 3329.
         n: polynomial degree (256)
-        in_place: True if void ntt(int16_t r[n]), False if void ntt(int16_t *out, const int16_t *in)
+        in_place: True if void ntt(T r[n]), False if void ntt(T *out, const T *in)
+        scheme: 'mlkem' | 'mldsa' | None. Sets q AND the ctypes integer width.
+        force: bypass the width/scheme safety check (not recommended).
+
+    SAFETY: ML-DSA (q=8380417) coefficients are int32; ML-KEM (q=3329) are
+    int16. Loading an ML-DSA NTT with ML-KEM parameters allocates a 512-byte
+    buffer for a function that writes 1024 bytes -- a heap overflow that
+    silently corrupts memory on some systems and segfaults on others. This
+    function now detects that mismatch and refuses, rather than proceeding.
     """
     import os, subprocess
     so_path = os.path.abspath(os.path.expanduser(so_path))
     if not os.path.exists(so_path):
         raise FileNotFoundError(f"Library not found: {so_path}")
 
+    # ---- resolve scheme and field BEFORE any buffer is allocated ----
+    detected = _detect_scheme(func_name, so_path)
+    if scheme is None:
+        scheme = detected
+    if q is None:
+        q = _SCHEME_FIELD.get(scheme, (KYBER_Q, KYBER_ZETA))[0]
+
+    # SAFETY: refuse a width/field mismatch instead of overflowing the buffer.
+    if not force and detected is not None:
+        want_q = _SCHEME_FIELD[detected][0]
+        if (q <= 32767) != (want_q <= 32767):
+            raise ValueError(
+                f"Refusing to load '{func_name}': it looks like {detected.upper()} "
+                f"(expects q={want_q}, {'int32' if want_q > 32767 else 'int16'} "
+                f"coefficients) but q={q} was requested, which would allocate "
+                f"{'int16' if q <= 32767 else 'int32'} buffers.\n"
+                f"  ML-DSA writes int32; an int16 buffer overflows by "
+                f"{n * 2} bytes -> silent corruption or SIGSEGV.\n"
+                f"  Fix: pass scheme='{detected}' (or q={want_q}), "
+                f"or force=True to override.")
+
     lib = ctypes.CDLL(so_path)
 
     # Try requested name + common variants
     candidates = [func_name]
     base = func_name.lower()
+    if scheme == 'mldsa' or 'dilithium' in base or 'mldsa' in base:
+        candidates += [f'pqcrystals_dilithium3_ref_{func_name}',
+                       f'pqcrystals_dilithium2_ref_{func_name}',
+                       f'pqcrystals_dilithium5_ref_{func_name}',
+                       'pqcrystals_dilithium3_ref_ntt',
+                       'PQCLEAN_MLDSA65_CLEAN_ntt',
+                       'PQCLEAN_MLDSA44_CLEAN_ntt',
+                       'PQCLEAN_MLDSA87_CLEAN_ntt',
+                       'PQCLEAN_DILITHIUM3_CLEAN_ntt',
+                       'ntt', 'poly_ntt', 'mldsa_ntt', 'dilithium_ntt']
     if 'ntt' in base or 'kyber' in base or 'mlkem' in base:
         candidates += [f'pqcrystals_kyber768_ref_{func_name}',
                        f'pqcrystals_kyber512_ref_{func_name}',
@@ -5572,6 +5631,9 @@ def pqverify_load_so(so_path, func_name='ntt', q=3329, n=256, in_place=True):
                        'poly_ntt', 'ntt', 'mlkem_ntt', 'kyber_ntt',
                        'PQCLEAN_KYBER768_CLEAN_ntt',
                        'PQCLEAN_KYBER512_CLEAN_ntt',
+                       'PQCLEAN_MLKEM768_CLEAN_ntt',
+                       'PQCLEAN_MLKEM512_CLEAN_ntt',
+                       'PQCLEAN_MLKEM1024_CLEAN_ntt',
                        'OQS_KEM_ml_kem_768_ntt']
 
     fn = None; found_name = None
@@ -5618,6 +5680,9 @@ def pqverify_load_so(so_path, func_name='ntt', q=3329, n=256, in_place=True):
             return [out[i] % q for i in range(n)]
 
     ntt_callable.__name__ = f"ntt_{os.path.basename(so_path)}:{found_name}"
+    ntt_callable.pqv_scheme = scheme
+    ntt_callable.pqv_q = q
+    ntt_callable.pqv_n = n
     print(f"  Loaded: {found_name} from {os.path.basename(so_path)} (q={q}, n={n}, {'in-place' if in_place else 'out-of-place'})")
     return ntt_callable
 
@@ -5654,7 +5719,7 @@ def _pq_probe_ntt(func, ns, q=3329, n=256):
     return None
 
 
-def pqverify_scan(*targets, ns=None):
+def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
     """Audit NTT implementations from the notebook namespace.
 
     Usage (in the next cell after running pq-verify + your crypto):
@@ -5669,8 +5734,35 @@ def pqverify_scan(*targets, ns=None):
             except: ns = {}
 
     # Constants
-    q = ns.get('KYBER_Q') or ns.get('Q') or ns.get('q', 3329)
-    zeta_root = ns.get('KYBER_ZETA') or ns.get('ZETA') or ns.get('zeta', 17)
+    # Field/scheme resolution, in priority order:
+    #   1. explicit scheme= / q= / zeta= arguments
+    #   2. metadata attached by pqverify_load_so (pqv_scheme / pqv_q)
+    #   3. the notebook namespace
+    #   4. ML-KEM defaults
+    _q_arg, _zeta_arg = q, zeta
+    if scheme is None:
+        for t in targets:
+            sc = getattr(t, 'pqv_scheme', None)
+            if sc: scheme = sc; break
+        else:
+            for t in targets:
+                nm = getattr(t, '__name__', '')
+                sc = _detect_scheme(nm)
+                if sc: scheme = sc; break
+    if scheme in _SCHEME_FIELD:
+        _sq, _sz = _SCHEME_FIELD[scheme]
+    else:
+        _sq, _sz = None, None
+    q = (_q_arg or _sq
+         or ns.get('KYBER_Q') or ns.get('Q') or ns.get('q', 3329))
+    zeta_root = (_zeta_arg or _sz
+                 or ns.get('KYBER_ZETA') or ns.get('ZETA') or ns.get('zeta', 17))
+    if scheme is None:
+        scheme = 'mldsa' if q == DILI_Q else 'mlkem'
+    if scheme == 'mldsa':
+        print(f"  scheme: ML-DSA (FIPS 204) q={q} zeta={zeta_root} "
+              f"-- complete 8-layer NTT")
+    
     n = ns.get('KYBER_N') or ns.get('N', 256)
     if isinstance(q, float): q = int(q)
     if isinstance(n, float): n = int(n)
@@ -5688,12 +5780,28 @@ def pqverify_scan(*targets, ns=None):
     eng = ns.get('engines', {}) or globals().get('engines', {})
 
     # Reference NTT
-    bits = {256: 7, 512: 8, 1024: 9}.get(n, 7)
+    # Layer count is determined by the ORDER of zeta, not by n.
+    #   ML-KEM  : zeta has order n   -> 2n does NOT divide q-1 -> incomplete,
+    #             last layer deleted -> log2(n) - 1 layers (7 for n=256)
+    #   ML-DSA  : zeta has order 2n  -> 2n divides q-1 -> COMPLETE transform
+    #             -> log2(n) layers (8 for n=256)
+    # Deriving it from zeta's actual order makes this correct for any scheme
+    # rather than assuming ML-KEM.
+    _log2n = max(1, n.bit_length() - 1)
+    if pow(zeta_root, 2 * n, q) == 1 and pow(zeta_root, n, q) == q - 1:
+        bits = _log2n            # complete transform (ML-DSA-like)
+    else:
+        bits = _log2n - 1        # incomplete, last layer deleted (ML-KEM-like)
     def _br(x):
         r = 0
         for _ in range(bits): r = (r << 1) | (x & 1); x >>= 1
         return r
-    ref_z = [pow(zeta_root, _br(i), q) for i in range(n // 2)]
+    # Zeta table size: a complete transform consumes 2^bits - 1 twiddles
+    # (255 for 8 layers), an incomplete one 2^bits - 1 as well but with
+    # bits one smaller (127 for 7 layers). Build n entries when complete so
+    # the 8th layer has its twiddles; n//2 is enough when incomplete.
+    _nz = n if bits == _log2n else n // 2
+    ref_z = [pow(zeta_root, _br(i), q) for i in range(_nz)]
     def _ref_ntt(poly):
         f = [x % q for x in poly]; k = 1
         for layer in range(bits):
@@ -5763,9 +5871,17 @@ def pqverify_scan(*targets, ns=None):
                 if all(i >= len(zetas) or zetas[i] == (ref_z[i] * R_mod_q) % q for i in range(len(ref_z))):
                     print(f"     Montgomery-form (x{R_mod_q} mod {q})")
 
-        ok = pow(zeta_root, n, q) == 1 and pow(zeta_root, n // 2, q) == q - 1
+        # Primitivity: the required ORDER of zeta differs by scheme.
+        #   complete transform (ML-DSA): zeta^{2n}=1, zeta^{n}=-1
+        #   incomplete       (ML-KEM)  : zeta^{n}=1,  zeta^{n/2}=-1
+        if bits == _log2n:
+            _e1, _e2 = 2 * n, n
+        else:
+            _e1, _e2 = n, n // 2
+        ok = pow(zeta_root, _e1, q) == 1 and pow(zeta_root, _e2, q) == q - 1
         t += 1; p += ok
-        print(f"  {'\u2705' if ok else '\u274c'} Primitivity: zeta^{n}=1, zeta^{n//2}=-1")
+        print(f"  {'\u2705' if ok else '\u274c'} Primitivity: zeta^{_e1}=1, zeta^{_e2}=-1"
+              f"  [{bits}-layer {'complete' if bits == _log2n else 'incomplete'} NTT]")
 
         # Domain-aware comparison. Standards libraries (pq-crystals, PQClean,
         # liboqs) leave NTT output in the MONTGOMERY domain (each coeff x R mod q).
