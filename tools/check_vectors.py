@@ -52,12 +52,20 @@ BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
         "master/gen-val/json-files/")
 
 # directory -> files tracked within it
+# Every file that is PINNED INTO THE SHIPPED BUNDLE must be watched here.
+# If the bundle carries a file the watcher does not track, upstream can move
+# underneath the frozen copy without anyone being told -- which is precisely
+# the failure this tool exists to prevent.
+#   pq_verify/vectors/acvp_vectors.json.gz  <-- keep this list in sync with it
 TARGETS = {
-    "ML-KEM-encapDecap-FIPS203": ["prompt.json", "expectedResults.json"],
-    "ML-KEM-keyGen-FIPS203":     ["prompt.json", "expectedResults.json"],
+    "ML-KEM-encapDecap-FIPS203": ["prompt.json", "expectedResults.json",
+                                  "internalProjection.json"],
+    "ML-KEM-keyGen-FIPS203":     ["prompt.json", "expectedResults.json",
+                                  "internalProjection.json"],
     "ML-DSA-sigGen-FIPS204":     ["prompt.json", "expectedResults.json"],
     "ML-DSA-keyGen-FIPS204":     ["prompt.json", "expectedResults.json"],
     "ML-DSA-sigVer-FIPS204":     ["prompt.json", "expectedResults.json"],
+    "SLH-DSA-keyGen-FIPS205":    ["prompt.json", "expectedResults.json"],
 }
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
