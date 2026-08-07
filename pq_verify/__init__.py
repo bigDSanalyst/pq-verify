@@ -11,7 +11,7 @@ Author: Nicholas Maino (iamweare) — Melbourne AU
 License: MIT
 """
 
-__version__ = "2.6.3"
+__version__ = "2.6.4"
 __author__ = "Nicholas Maino (iamweare)"
 __license__ = "MIT"
 
