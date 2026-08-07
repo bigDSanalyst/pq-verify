@@ -1,72 +1,100 @@
 {
   "ML-DSA-keyGen-FIPS204/expectedResults.json": {
     "361f47ca19d592adcc66ff2cb591686ad785fea157b295648738bed6921a68df": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-DSA-keyGen-FIPS204/prompt.json": {
     "43e81ad820e495dbcad086fe27c1008393a8c32100bbbff77c558c3f06dcefef": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-DSA-sigGen-FIPS204/expectedResults.json": {
     "228d011bbe274aeb93e22eea1e0d57b78f43795cf6a64fb5ef1e626485a0bedb": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-DSA-sigGen-FIPS204/prompt.json": {
     "447749d72817b211160d243311ce32302f3023e59c355b0f70be2bd3e9e7830d": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-DSA-sigVer-FIPS204/expectedResults.json": {
     "e1d84ef1b2f35196278ab0b0ed6a46ec62cc03d2dfa92c564199e1999bfb8ea6": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-DSA-sigVer-FIPS204/prompt.json": {
     "e2cba4589389756fa0bea1a7e6837138bf0a81f9d14234c9ee8f6d33caa1654e": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-KEM-encapDecap-FIPS203/expectedResults.json": {
     "9089ec6ff2424da9f2782b89b2f831a329a3e28d6e5e24b802b78ff36ac61cdf": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
+    }
+  },
+  "ML-KEM-encapDecap-FIPS203/internalProjection.json": {
+    "a556952ce869bb89c3a3196a701dad89647c193a34c86eafb61a9d710d5b810f": {
+      "count": 2,
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07"
     }
   },
   "ML-KEM-encapDecap-FIPS203/prompt.json": {
     "998e22dfb12efb14ce9fdff911ca634b13612819a1806f25da69adba7e16db91": {
-      "count": 6,
+      "count": 9,
       "first_seen": "2026-06-14",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
     }
   },
   "ML-KEM-keyGen-FIPS203/expectedResults.json": {
     "a253d0ad91c95ebea5b409673defef0aa49d65d4ed72286399e2e798ddf073a4": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
+    }
+  },
+  "ML-KEM-keyGen-FIPS203/internalProjection.json": {
+    "d7a62a2c3476957f56dd8d24f9004ea6776ccfe995ffe71a65bb9506dc9c7b1b": {
+      "count": 2,
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07"
     }
   },
   "ML-KEM-keyGen-FIPS203/prompt.json": {
     "3f9ce34f6c836c77958bad2729e837c3b213f44ac36c3065976e7acca6389523": {
-      "count": 5,
+      "count": 8,
       "first_seen": "2026-08-03",
-      "last_seen": "2026-08-03"
+      "last_seen": "2026-08-07"
+    }
+  },
+  "SLH-DSA-keyGen-FIPS205/expectedResults.json": {
+    "f35f74b6676d6b369c87e88c36698f28c14d5929d31e507d910288c69258afee": {
+      "count": 2,
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07"
+    }
+  },
+  "SLH-DSA-keyGen-FIPS205/prompt.json": {
+    "bce170976f257ee3dfc8c54ea46722ccb553539847daa6d8048f0216cc28b51c": {
+      "count": 2,
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07"
     }
   }
 }
