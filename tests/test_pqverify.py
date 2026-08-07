@@ -25,7 +25,7 @@ from pq_verify import (
 # ----------------------------------------------------------------------
 
 def test_version():
-    assert pq_verify.__version__ == "2.6.3"
+    assert pq_verify.__version__ == "2.6.4"
 
 
 def test_public_api_present():
@@ -108,8 +108,12 @@ def test_leakage_table_structure(q, zeta):
     with contextlib.redirect_stdout(io.StringIO()):
         rows = pqverify_leakage(q=q, zeta=zeta, n=256)
     table = [{"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1, "LOW": 0}[r["risk"]] for r in rows]
-    # Validated allocation — identical for both fields (structural, not field-specific)
-    assert table == [3, 2, 2, 2, 1, 1, 0]
+    # Layer COUNT is scheme-determined: ML-KEM's zeta has order n -> incomplete
+    # transform, 7 layers. ML-DSA's has order 2n -> complete, 8 layers. The
+    # risk PATTERN is structural and identical; only the depth differs.
+    expected = ([3, 2, 2, 2, 1, 1, 0, 0] if q == 8380417
+                else [3, 2, 2, 2, 1, 1, 0])
+    assert table == expected, f"q={q}: got {table}, expected {expected}"
     # Monotone non-increasing (information exposure only drops deeper into the NTT)
     assert all(table[i] >= table[i + 1] for i in range(len(table) - 1))
     # Exactly one CRITICAL layer, at layer 0
@@ -165,3 +169,36 @@ def test_kat_rejects_corrupted_ntt():
     with contextlib.redirect_stdout(io.StringIO()):
         r = pqverify_kat(broken, k=4)
     assert r["verified"] is False
+
+
+def test_watcher_covers_every_bundled_vector():
+    """Every pinned vector file must be watched for upstream drift.
+
+    The bundle is frozen for determinism; the watcher is what tells the
+    maintainer when upstream has moved so re-pinning is a deliberate act. A
+    file that is bundled but unwatched can drift silently -- exactly the
+    failure the watcher exists to prevent. This caught SLH-DSA-keyGen-FIPS205
+    and the two internalProjection.json files being bundled but untracked.
+    """
+    import gzip, json, re, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bundle = root / "pq_verify" / "vectors" / "acvp_vectors.json.gz"
+    watcher = root / "tools" / "check_vectors.py"
+    if not bundle.exists() or not watcher.exists():
+        import pytest
+        pytest.skip("bundle or watcher not present in this layout")
+
+    with gzip.open(bundle, "rt") as fh:
+        bundled = set(json.load(fh).keys())
+
+    src = watcher.read_text()
+    block = re.search(r"TARGETS = \{(.*?)\n\}", src, re.S).group(1)
+    watched = set()
+    for m in re.finditer(r'"([^"]+)":\s*\[([^\]]+)\]', block):
+        for f in re.findall(r'"([^"]+)"', m.group(2)):
+            watched.add(f"{m.group(1)}/{f}")
+
+    unwatched = bundled - watched
+    assert not unwatched, (
+        f"bundled but NOT watched for drift: {sorted(unwatched)} -- "
+        f"add them to TARGETS in tools/check_vectors.py")
