@@ -202,3 +202,53 @@ def test_watcher_covers_every_bundled_vector():
     assert not unwatched, (
         f"bundled but NOT watched for drift: {sorted(unwatched)} -- "
         f"add them to TARGETS in tools/check_vectors.py")
+
+
+def test_mldsa_freivalds_engine():
+    """The 32-bit Freivalds engine must accept a correct ML-DSA NTT and reject
+    a wrong one -- including a 7-layer (ML-KEM-shaped) transform.
+
+    That last case matters: a 7-layer transform applied to ML-DSA was a real
+    bug in this codebase, and a check that only ever passes would not have
+    caught it.
+    """
+    import ctypes, random, io, contextlib
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng = core.compile_all(); core.bind_all(eng)
+    z32 = eng.get('zq32')
+    if z32 is None or not hasattr(z32, 'zq32_freivalds_ntt'):
+        import pytest; pytest.skip("zq32 engine unavailable")
+
+    Q, Z, N = 8380417, 1753, 256
+    mk = lambda p: (ctypes.c_uint32 * N)(*p)
+    random.seed(4242)
+    x = [random.randint(0, Q - 1) for _ in range(N)]
+
+    # correct NTT -> accepted
+    xa, ya = mk(x), mk(x)
+    z32.zq32_ntt_forward(ya, N, Q, Z)
+    assert z32.zq32_freivalds_ntt(xa, ya, N, Q, Z, 10, 1) == 1, \
+        "correct ML-DSA NTT was rejected"
+
+    # single-coefficient corruption -> rejected
+    yb = mk([ya[i] for i in range(N)])
+    yb[13] = (yb[13] + 1) % Q
+    assert z32.zq32_freivalds_ntt(xa, yb, N, Q, Z, 10, 1) == 0, \
+        "off-by-one corruption was accepted"
+
+    # a 7-layer (ML-KEM-shaped) transform is NOT ML-DSA's NTT -> rejected
+    zt = [pow(Z, int(format(i, '08b')[::-1], 2), Q) for i in range(256)]
+    f, k, L = list(x), 1, 128
+    while L >= 2:
+        s = 0
+        while s < N:
+            w = zt[k]; k += 1
+            for j in range(s, s + L):
+                t = (w * f[j + L]) % Q
+                f[j + L] = (f[j] - t) % Q
+                f[j] = (f[j] + t) % Q
+            s += 2 * L
+        L //= 2
+    assert z32.zq32_freivalds_ntt(xa, mk(f), N, Q, Z, 10, 1) == 0, \
+        "a 7-layer transform was accepted as ML-DSA's 8-layer NTT"
