@@ -350,6 +350,76 @@ r->num_pivots=rank;r->num_free_vars=n-rank;r->used_markowitz=1;
 if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_m32fr(rhs[i],q);}
 clock_gettime(CLOCK_MONOTONIC,&t1);r->solve_time_us=(t1.tv_sec-t0.tv_sec)*1e6+(t1.tv_nsec-t0.tv_nsec)/1e3;}
+/* ================================================================
+   ML-DSA (FIPS 204) NTT + Freivalds verification, 32-bit.
+
+   ML-DSA's transform is COMPLETE: zeta=1753 has multiplicative order 512
+   mod q=8380417, so 2n | q-1 and the NTT splits to linear factors --
+   8 layers, len 128..1, consuming 255 twiddles. (ML-KEM is the 7-layer
+   incomplete case; its Freivalds lives in the 16-bit engine and cannot be
+   reused here: wrong width, wrong layer count, wrong zeta table.)
+
+   Freivalds: to check y == NTT(x) without recomputing the transform,
+   draw random r and verify   r.y == (NTT^T r).x
+   A Cooley-Tukey butterfly is [[1, w], [1, -w]] on (a, b); its transpose
+   is [[1, 1], [w, -w]], i.e.
+        out[j]     = in[j] + in[j+len]
+        out[j+len] = w * (in[j] - in[j+len])
+   applied with the LAYERS IN REVERSE ORDER and zetas descending.
+   ================================================================ */
+static uint32_t _dili_zetas[256];
+static int _dili_zetas_ready=0;
+static uint32_t _pow_mod32(uint32_t base,uint32_t exp,uint32_t q){
+uint64_t r=1,b=base%q;while(exp>0){if(exp&1)r=(r*b)%q;b=(b*b)%q;exp>>=1;}return(uint32_t)r;}
+static uint32_t _bitrev8(uint32_t x){uint32_t r=0;for(int i=0;i<8;i++){r=(r<<1)|(x&1);x>>=1;}return r;}
+static void _init_dili_zetas(uint32_t q,uint32_t zeta){
+if(_dili_zetas_ready)return;
+for(int i=0;i<256;i++)_dili_zetas[i]=_pow_mod32(zeta,_bitrev8(i),q);
+_dili_zetas_ready=1;}
+
+/* Forward ML-DSA NTT, in place. 8 layers: len = 128,64,...,2,1. */
+void zq32_ntt_forward(uint32_t*f,int n,uint32_t q,uint32_t zeta){
+_init_dili_zetas(q,zeta);
+int k=1;
+for(int len=n/2;len>=1;len/=2){
+for(int start=0;start<n;start+=2*len){
+uint32_t w=_dili_zetas[k++];
+for(int j=start;j<start+len;j++){
+uint32_t t=(uint32_t)(((uint64_t)w*f[j+len])%q);
+f[j+len]=zq32_sub(f[j],t,q);
+f[j]=(uint32_t)((f[j]+(uint64_t)t)%q);}}}}
+
+/* NTT^T applied in place: layers reversed, zetas descending. */
+static void _ntt32_transpose(uint32_t*r,int n,uint32_t q){
+int k=255;
+for(int len=1;len<=n/2;len*=2){
+for(int start=n-2*len;start>=0;start-=2*len){
+uint32_t w=_dili_zetas[k--];
+for(int j=start;j<start+len;j++){
+uint32_t re=r[j],ro=r[j+len];
+r[j]=(uint32_t)((re+(uint64_t)ro)%q);
+r[j+len]=(uint32_t)(((uint64_t)w*zq32_sub(re,ro,q))%q);}}}}
+
+static uint32_t _xorshift32(uint32_t s){s^=s<<13;s^=s>>17;s^=s<<5;return s;}
+
+/* Returns 1 if y == NTT(x) survives k_rounds Freivalds checks, else 0.
+   Soundness: a wrong y passes one round with probability <= 1/q, so
+   k rounds give <= q^-k (q = 8380417). */
+int zq32_freivalds_ntt(const uint32_t*x,const uint32_t*y,
+int n,uint32_t q,uint32_t zeta,int k_rounds,uint32_t seed){
+_init_dili_zetas(q,zeta);
+uint32_t rng=seed?seed:42;
+for(int round=0;round<k_rounds;round++){
+uint32_t r[256];
+if(n>256)return -1;
+for(int i=0;i<n;i++){rng=_xorshift32(rng);r[i]=(uint32_t)(rng%q);}
+uint64_t lhs=0;
+for(int i=0;i<n;i++)lhs=(lhs+(uint64_t)r[i]*y[i])%q;
+_ntt32_transpose(r,n,q);
+uint64_t rhs=0;
+for(int i=0;i<n;i++)rhs=(rhs+(uint64_t)r[i]*x[i])%q;
+if((uint32_t)lhs!=(uint32_t)rhs)return 0;}
+return 1;}
 """
 
 # ================================================================
@@ -594,6 +664,12 @@ def bind_all(engines):
         z32.zq32_add_sparse.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_uint32), ctypes.c_int, ctypes.c_uint32]
         z32.zq32_add_ntt_butterfly.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint32]
         z32.zq32_solve.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        z32.zq32_ntt_forward.argtypes = [ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32]
+        z32.zq32_freivalds_ntt.argtypes = [ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
+            ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        z32.zq32_freivalds_ntt.restype = ctypes.c_int
 
     if engines.get('cubic'):
         c = engines['cubic']
@@ -5920,22 +5996,34 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             else: print(f"     Error: {mm[2]}")
             findings.append(f"NTT: {nf}/100 wrong")
 
-        lib = eng.get('zq') if q <= 65535 else eng.get('zq32')
-        if lib and q <= 65535:
+        # Freivalds: probabilistic check that y == NTT(x) via r.y == (NTT^T r).x.
+        # Two engines: 16-bit for ML-KEM (7-layer incomplete), 32-bit for
+        # ML-DSA (8-layer complete). They are NOT interchangeable -- different
+        # width, layer count and zeta table.
+        _narrow = q <= 65535
+        lib = eng.get('zq') if _narrow else eng.get('zq32')
+        _fn = 'zq_freivalds_ntt' if _narrow else 'zq32_freivalds_ntt'
+        if lib is not None and hasattr(lib, _fn):
             try:
-                lib.zq_freivalds_ntt.argtypes = [ctypes.POINTER(ctypes.c_uint16)] * 2 + [
-                    ctypes.c_int, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint32]
-                lib.zq_freivalds_ntt.restype = ctypes.c_int
+                _ct = ctypes.c_uint16 if _narrow else ctypes.c_uint32
+                _cq = ctypes.c_uint16 if _narrow else ctypes.c_uint32
+                _f = getattr(lib, _fn)
+                _f.argtypes = [ctypes.POINTER(_ct)] * 2 + [
+                    ctypes.c_int, _cq, _cq, ctypes.c_int, ctypes.c_uint32]
+                _f.restype = ctypes.c_int
                 random.seed(42); ff = 0
                 for trial in range(100):
                     poly = [random.randint(0, q - 1) for _ in range(n)]
                     ntt_out = list(func(list(poly)))
-                    x = (ctypes.c_uint16 * n)(*poly); y = (ctypes.c_uint16 * n)(*ntt_out)
-                    if lib.zq_freivalds_ntt(x, y, n, q, zeta_root, 5, trial + 1) != 1: ff += 1
+                    x = (_ct * n)(*poly); y = (_ct * n)(*[v % q for v in ntt_out])
+                    if _f(x, y, n, q, zeta_root, 5, trial + 1) != 1: ff += 1
                 ok = ff == 0; t += 1; p += ok
-                print(f"  {'\u2705' if ok else '\u274c'} Freivalds (C engine): 100 x 5 rounds, {ff} failures")
+                _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
+                print(f"  {'\u2705' if ok else '\u274c'} Freivalds ({_eng_lbl} engine): "
+                      f"100 x 5 rounds, {ff} failures")
                 if not ok: findings.append(f"Freivalds: {ff}")
-            except: print(f"  \u23ed\ufe0f  Freivalds: engine error")
+            except Exception as _fe:
+                print(f"  \u23ed\ufe0f  Freivalds: engine error ({type(_fe).__name__})")
         else:
             print(f"  \u23ed\ufe0f  Freivalds: skipped (engine not available)")
 
