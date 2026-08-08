@@ -74,7 +74,8 @@ See `vendor_audit_template.py` for the complete "give us your .so → get a JSON
 | `main()` | 160-test self-suite |
 | `pqverify_acvp()` | Full NIST ACVP end-to-end ML-KEM (240/240, all groups) |
 | `pqverify_mldsa_acvp()` | Full NIST ACVP end-to-end ML-DSA (615/615, FIPS 204) |
-| `pqverify_acvp_all()` | Both ACVP suites combined (855/855) — offline by default |
+| `pqverify_slhdsa_acvp()` | NIST ACVP SLH-DSA keyGen (120/120, FIPS 205, all 12 parameter sets) |
+| `pqverify_acvp_all()` | ML-KEM + ML-DSA (855/855) offline; `slhdsa=True` adds FIPS 205 → 975/975 |
 | `pqverify_params(set)` | Parameter security: primal-uSVP + sparse hybrid |
 | `pqverify_kem(k=4)` | Native algebraic full-KEM verification |
 | `pqverify_kat(ntt, k=4)` | Non-circular KAT vs FIPS definition |
@@ -120,10 +121,10 @@ The algebraic core is proven natively where the proof is exact; the full impleme
 
 ```
 pq_verify/
-  __init__.py              Public API (10 functions)
-  core.py                  The stack (~5,700 lines, 6 field-native engines)
+  __init__.py              Public API (11 functions)
+  core.py                  The stack (~6,100 lines, 6 field-native engines)
   cli.py                   Command-line interface
-tests/test_pqverify.py     16-test pytest suite
+tests/test_pqverify.py     18-test pytest suite
 pyproject.toml             Build config + console-script entry point
 dist/
   pq_verify-2.6.4-py3-none-any.whl    Installable wheel
