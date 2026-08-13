@@ -1,0 +1,162 @@
+name: 'pq-verify — post-quantum implementation verification'
+description: >
+  Independently verify that an ML-KEM (FIPS 203) or ML-DSA (FIPS 204)
+  implementation computes the standard correctly. Runs in CI, reports findings
+  as SARIF so they appear inline on pull requests, and can fail the build.
+author: 'Nicholas Maino (iamweare)'
+
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  library:
+    description: >
+      Path to a compiled shared object containing the NTT to audit
+      (e.g. build/libmlkem768.so). Leave empty to run the ACVP suites only.
+    required: false
+    default: ''
+  symbol:
+    description: >
+      Exported NTT symbol name inside `library`
+      (e.g. PQCLEAN_MLKEM768_CLEAN_ntt). Find it with:
+      nm -D <lib> | grep -i ntt
+    required: false
+    default: ''
+  acvp:
+    description: >
+      Run the NIST ACVP suites against pinned, offline vectors.
+      'true' (default), 'false', or 'live' to fetch NIST's current vectors.
+    required: false
+    default: 'true'
+  slhdsa:
+    description: 'Also run FIPS 205 SLH-DSA key generation vectors.'
+    required: false
+    default: 'false'
+  fail-on-finding:
+    description: 'Fail the workflow step if any finding is reported.'
+    required: false
+    default: 'true'
+  sarif-file:
+    description: 'Where to write SARIF 2.1.0 output.'
+    required: false
+    default: 'pq-verify.sarif'
+  json-file:
+    description: "Where to write pq-verify's native JSON schema."
+    required: false
+    default: 'pq-verify.json'
+  version:
+    description: 'pq-verify version/ref to install (a tag, branch, or commit).'
+    required: false
+    default: 'main'
+
+outputs:
+  verified:
+    description: "'true' if every check passed with no findings."
+    value: ${{ steps.run.outputs.verified }}
+  findings:
+    description: 'Number of findings reported.'
+    value: ${{ steps.run.outputs.findings }}
+  sarif-file:
+    description: 'Path to the SARIF file that was written.'
+    value: ${{ steps.run.outputs.sarif_file }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install toolchain
+      shell: bash
+      run: |
+        # gcc/g++ build the six field-native engines at runtime.
+        # coq is only needed for the certificate tests, which this Action
+        # does not run, so it is deliberately omitted to keep CI fast.
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq gcc g++
+
+    - name: Install pq-verify
+      shell: bash
+      run: |
+        python -m pip install --quiet --upgrade pip
+        python -m pip install --quiet \
+          "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${{ inputs.version }}"
+        pq-verify --version
+
+    - name: Run verification
+      id: run
+      shell: bash
+      run: |
+        set +e
+        STATUS=0
+
+        # --- ACVP suites (pinned vectors, no network needed) ---
+        if [ "${{ inputs.acvp }}" != "false" ]; then
+          EXTRA=""
+          [ "${{ inputs.acvp }}" = "live" ] && EXTRA="--live"
+          echo "::group::NIST ACVP suites"
+          pq-verify --acvp-all $EXTRA
+          [ $? -ne 0 ] && STATUS=1
+          echo "::endgroup::"
+        fi
+
+        # --- symbol audit of a compiled library ---
+        FINDINGS=0
+        if [ -n "${{ inputs.library }}" ]; then
+          if [ ! -f "${{ inputs.library }}" ]; then
+            echo "::error::library not found: ${{ inputs.library }}"
+            exit 1
+          fi
+          if [ -z "${{ inputs.symbol }}" ]; then
+            echo "::error::'symbol' is required when 'library' is set."
+            echo "::error::Find it with: nm -D ${{ inputs.library }} | grep -i ntt"
+            exit 1
+          fi
+
+          echo "::group::Auditing ${{ inputs.symbol }}"
+          ARGS="--audit-so ${{ inputs.library }} ${{ inputs.symbol }}"
+          ARGS="$ARGS --sarif ${{ inputs.sarif-file }} --json ${{ inputs.json-file }}"
+          [ "${{ inputs.fail-on-finding }}" = "true" ] && ARGS="$ARGS --fail-on-finding"
+          pq-verify $ARGS
+          RC=$?
+          echo "::endgroup::"
+
+          if [ -f "${{ inputs.json-file }}" ]; then
+            FINDINGS=$(python -c "import json;print(json.load(open('${{ inputs.json-file }}'))['summary']['findings'])")
+            VERIFIED=$(python -c "import json;print(str(json.load(open('${{ inputs.json-file }}'))['summary']['verified']).lower())")
+            echo "verified=$VERIFIED" >> $GITHUB_OUTPUT
+            echo "findings=$FINDINGS" >> $GITHUB_OUTPUT
+            echo "sarif_file=${{ inputs.sarif-file }}" >> $GITHUB_OUTPUT
+
+            # summary panel on the workflow run
+            {
+              echo "### pq-verify"
+              echo ""
+              if [ "$VERIFIED" = "true" ]; then
+                echo "**VERIFIED** — \`${{ inputs.symbol }}\` matches the FIPS reference."
+              else
+                echo "**$FINDINGS finding(s)** in \`${{ inputs.symbol }}\`."
+                echo ""
+                python -c "import json,sys; d=json.load(open(sys.argv[1])); [print('- \`%s\` — %s' % (t['name'], f)) for t in d['targets'] for f in t['findings']]" "${{ inputs.json-file }}"
+              fi
+            } >> $GITHUB_STEP_SUMMARY
+          fi
+
+          [ $RC -ne 0 ] && STATUS=$RC
+        else
+          echo "verified=true"   >> $GITHUB_OUTPUT
+          echo "findings=0"      >> $GITHUB_OUTPUT
+          echo "sarif_file="     >> $GITHUB_OUTPUT
+        fi
+
+        exit $STATUS
+
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.library != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+      continue-on-error: true
