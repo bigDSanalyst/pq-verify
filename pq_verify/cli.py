@@ -55,6 +55,13 @@ def build_parser():
                    help="per-layer side-channel protection-allocation table")
     p.add_argument("--audit-so", nargs=2, metavar=("PATH", "SYM"),
                    help="audit an NTT symbol SYM inside compiled library PATH")
+    p.add_argument("--json", metavar="FILE",
+                   help="write results to FILE in pq-verify's native schema")
+    p.add_argument("--sarif", metavar="FILE",
+                   help="write SARIF 2.1.0 to FILE — ingested natively by GitHub "
+                        "Code Scanning, DefectDojo, Snyk, AWS Security Hub")
+    p.add_argument("--fail-on-finding", action="store_true",
+                   help="exit non-zero if any finding is reported (CI gating)")
     return p
 
 
@@ -77,16 +84,33 @@ def main(argv=None):
         pqverify_kem(k=args.kem); ran_task = True
     if args.leakage:
         pqverify_leakage(); ran_task = True
+    scan_results = None
     if args.audit_so:
         path, sym = args.audit_so
         ntt = pqverify_load_so(path, sym)
-        pqverify_scan(ntt); ran_task = True
+        scan_results = pqverify_scan(ntt); ran_task = True
 
     # Default: run the self-suite.
     if not ran_task:
         run_selftest(quick=args.quick)
 
-    return 0
+    # ---- machine-readable output --------------------------------------
+    exit_code = 0
+    if scan_results is not None and (args.json or args.sarif or args.fail_on_finding):
+        from .report import to_json, to_sarif, write
+        from .core import VERSION
+        if args.json:
+            write(args.json, to_json(scan_results))
+            print(f"  wrote {args.json}")
+        if args.sarif:
+            write(args.sarif, to_sarif(scan_results, tool_version=VERSION))
+            print(f"  wrote {args.sarif}")
+        findings = sum(len(r.get("findings", [])) for r in scan_results)
+        if args.fail_on_finding and findings:
+            print(f"  FAILING: {findings} finding(s)")
+            exit_code = 1
+
+    return exit_code
 
 
 if __name__ == "__main__":
