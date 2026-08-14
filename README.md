@@ -1,6 +1,7 @@
-# pq-verify v2.6.4 — PQC Implementation Verification
+# pq-verify v2.6.5 — PQC Implementation Verification
 
-![version](https://img.shields.io/badge/version-2.6.4-blue)
+[![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
+![version](https://img.shields.io/badge/version-2.6.5-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
@@ -44,12 +45,28 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ## Quick start
 
-Open `DEMO.ipynb` in Google Colab and run all cells. ~3 minutes to 855/855.
+```bash
+pip install "pq-verify[full]"
+pq-verify --acvp-all            # 855/855, offline, no configuration
+```
 
-Or, in any Python 3.8+ environment with gcc:
+That is the whole installation. It is a command-line tool: Python 3.8+, `gcc`,
+and nothing else. No notebook, no network, no service. The NIST vectors ship
+inside the package, so air-gapped environments work out of the box.
+
+To audit a compiled library:
+
+```bash
+pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
+```
+
+`DEMO.ipynb` runs the same thing in Colab if you prefer a notebook.
+
+<details>
+<summary>Other install routes</summary>
 
 ```python
-exec(open('pq_verify_v2_6_1.py').read())   # 160-test self-suite + loads the API
+exec(open('pq_verify/core.py').read())   # 160-test self-suite + loads the API
 
 pqverify_acvp()                    # full NIST ACVP, all parameter sets
 pqverify_params('ML-KEM-1024')     # parameter security check
@@ -64,6 +81,119 @@ pqverify_scan(ntt)                 # full audit + KAT + leakage
 ```
 
 See `vendor_audit_template.py` for the complete "give us your .so → get a JSON report" workflow.
+
+</details>
+
+---
+
+## Use it in CI
+
+Three lines in any repository that builds an ML-KEM or ML-DSA implementation.
+Findings appear as annotations on the pull request, and the build fails if the
+transform diverges from the FIPS 203/204 reference.
+
+```yaml
+- uses: bigDSanalyst/pq-verify@v1
+  with:
+    library: build/libmlkem768.so
+    symbol: PQCLEAN_MLKEM768_CLEAN_ntt
+```
+
+With no library at all, it runs the NIST ACVP suites:
+
+```yaml
+- uses: bigDSanalyst/pq-verify@v1
+```
+
+| Input | Default | Purpose |
+|---|---|---|
+| `library` | — | compiled `.so` containing the NTT to audit |
+| `symbol` | — | exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
+| `acvp` | `true` | run ACVP suites; `live` fetches NIST's current vectors |
+| `fail-on-finding` | `true` | fail the step if anything is reported |
+
+Outputs: `verified`, `findings`, `sarif-file`. A complete workflow is in
+[`example-workflow.yml`](example-workflow.yml).
+
+---
+
+## Machine-readable output
+
+```bash
+pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt \
+          --sarif results.sarif --json results.json --fail-on-finding
+```
+
+**SARIF 2.1.0** is ingested natively by GitHub Code Scanning, DefectDojo, Snyk
+and AWS Security Hub, so findings land in the security tooling a team already
+runs rather than in a terminal someone has to read.
+
+| Rule | Meaning |
+|---|---|
+| `PQV001` | NTT output diverges from the FIPS reference |
+| `PQV002` | Freivalds probabilistic check failed |
+| `PQV003` | Root of unity has the wrong multiplicative order |
+| `PQV004` | Non-circular known-answer test failed |
+| `PQV005` | Boundary/edge-case vector failed |
+
+`--fail-on-finding` exits non-zero, so it can gate a merge.
+
+---
+
+## Independent audits
+
+pq-verify has been run against four upstream projects — all verify clean, with
+negative controls that correctly fail. Exact commits, build commands and
+per-check output are in [AUDITS.md](AUDITS.md).
+
+| Implementation | Result |
+|---|---|
+| liboqs (`mlkem-native` / `mldsa-native`) | ML-KEM and ML-DSA verified |
+| PQClean | ML-KEM and ML-DSA verified |
+| pq-crystals reference | Kyber and Dilithium verified |
+| BoringSSL | vector cross-check, byte-exact |
+
+---
+
+## Architecture — six field-native engines
+
+pq-verify does not encode cryptographic arithmetic as generic boolean SAT and
+hand it to a solver. It verifies each operation **in the field the algorithm
+actually works in**. Kyber's NTT is checked in Z₃₃₂₉ directly; Dilithium's in
+Z₈₃₈₀₄₁₇. That is what "field-native" means, and it is why the checks are exact
+rather than an encoding of an encoding.
+
+Six C/C++ engines are compiled at runtime from sources embedded in `core.py` —
+no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
+
+| Engine | Field | What it verifies |
+|---|---|---|
+| **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space enumeration** (full solution spaces, 2⁵⁶ verified) |
+| **Z₃₃₂₉** | ML-KEM | Kyber NTT butterflies, Montgomery arithmetic, Freivalds verification |
+| **Z₈₃₈₀₄₁₇** | ML-DSA | Dilithium NTT butterflies — the *complete* 8-layer transform, 32-bit Freivalds |
+| **Cubic + ECC** | — | B(a,b) decomposition, elliptic curve point validation, BSGS |
+| **Conformity** | — | D(t) stability on curve families — *research framework, not a security check* |
+| **Period / Gauss-Manin** | — | Amari-Schwarzian, ranks 2/4/4/8 — *research framework, not a security check* |
+
+The two schemes differ structurally and the tool distinguishes them: ML-KEM's ζ
+has order n, so 2n does not divide q−1 and the transform is **incomplete** —
+seven layers, last one deleted. ML-DSA's ζ has order 2n, so the transform is
+**complete** — eight layers. A verifier that assumes one shape silently
+mis-verifies the other.
+
+### Specification front-end
+
+Alongside the engines, a pipeline turns a formal specification into field
+constraints:
+
+```
+CFL spec → lexer → parser → FOL → QBF → field router → engine dispatch
+XML module → DQBF (Henkin dependency sets) → Tseitin linearization → GF(2)
+```
+
+The router picks the correct engine from the constraint structure — XOR-dense
+systems route to GF(2), ring arithmetic to the Z_q engines. Both paths are
+exercised in the self-suite (CFL 6/6, DQBF 7/7).
 
 ---
 
@@ -127,15 +257,15 @@ pq_verify/
 tests/test_pqverify.py     18-test pytest suite
 pyproject.toml             Build config + console-script entry point
 dist/
-  pq_verify-2.6.4-py3-none-any.whl    Installable wheel
-  pq_verify-2.6.4.tar.gz              Source distribution
+  pq_verify-2.6.5-py3-none-any.whl    Installable wheel
+  pq_verify-2.6.5.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 855/855
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
 README.md / QUICKSTART.md / LICENSE / CITATION.cff
 ```
 
-Install: `pip install dist/pq_verify-2.6.4-py3-none-any.whl`
+Install: `pip install dist/pq_verify-2.6.5-py3-none-any.whl`
 
 ---
 
@@ -176,13 +306,13 @@ MIT. The verifier is open-source — builds trust, enables adoption. Commercial 
 Archived on Zenodo with a citable DOI:
 
 > Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
-> implementations* (v2.6.4). Zenodo. https://doi.org/10.5281/zenodo.21739511
+> implementations* (v2.6.5). Zenodo. https://doi.org/10.5281/zenodo.21739511
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
   title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
-  version   = {2.6.4},
+  version   = {2.6.5},
   year      = {2026},
   publisher = {Zenodo},
   doi       = {10.5281/zenodo.21739511},
