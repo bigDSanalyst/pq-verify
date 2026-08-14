@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.4 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.6.5 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,7 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.4"
+VERSION = "2.6.5"
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
