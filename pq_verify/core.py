@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.5 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.6.7 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,7 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.5"
+VERSION = "2.6.7"
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
@@ -549,8 +549,47 @@ conformity_check_t conformity_verify(
 # COMPILE ALL ENGINES
 # ================================================================
 
+# Engines that failed to compile in this process. A verifier that silently
+# verifies LESS than it claims is worse than one that errors: in CI a skipped
+# check reads as green. Anything that degrades coverage is recorded here and
+# surfaced in every summary.
+DEGRADED = {'engines': [], 'deps': [], 'skipped_checks': []}
+
+
+def integrity_report(verbose=True):
+    """What this run could NOT verify, and why.
+
+    Returns (ok, lines). ok is False if any engine failed to build or any
+    optional dependency was missing, i.e. if the run covered less than the
+    tool's full claim. Call this before trusting a pass.
+    """
+    lines = []
+    if DEGRADED['engines']:
+        lines.append(f"engines unavailable: {', '.join(sorted(set(DEGRADED['engines'])))}"
+                     "  (install gcc/g++ — checks depending on these did NOT run)")
+    if DEGRADED['deps']:
+        lines.append(f"dependencies missing: {', '.join(sorted(set(DEGRADED['deps'])))}"
+                     "  (checks depending on these did NOT run)")
+    if DEGRADED['skipped_checks']:
+        lines.append(f"checks skipped: {', '.join(sorted(set(DEGRADED['skipped_checks'])))}")
+    ok = not lines
+    if verbose:
+        if ok:
+            print("  INTEGRITY: full coverage — every engine built, every "
+                  "dependency present.")
+        else:
+            print("  " + "!" * 66)
+            print("  DEGRADED RUN — this run verified LESS than pq-verify claims:")
+            for l in lines:
+                print(f"    - {l}")
+            print("  A pass here does NOT mean full verification.")
+            print("  " + "!" * 66)
+    return ok, lines
+
+
 def compile_all():
     engines = {}
+    DEGRADED['engines'].clear()
     for name, src, flags in [
         ('gf2',         GF2_C,         '-O3 -march=native -shared -fPIC -lm -lrt'),
         ('zq',          ZQ_C,          '-O3 -shared -fPIC -lm'),
@@ -567,8 +606,13 @@ def compile_all():
             engines[name] = ctypes.CDLL(so_path)
             print(f"  \u2705 {name}")
         else:
-            print(f"  \u274c {name} \u2014 compilation failed")
+            print(f"  \u274c {name} \u2014 compilation failed "
+                  f"(is gcc installed? checks using this engine will NOT run)")
             engines[name] = None
+            DEGRADED['engines'].append(name)
+    if DEGRADED['engines']:
+        print(f"  \u26a0  {len(DEGRADED['engines'])} engine(s) unavailable — "
+              f"this run cannot provide full coverage")
     return engines
 
 # ================================================================
@@ -1270,6 +1314,8 @@ def print_report(results):
         print(f"  \u2705 No critical findings")
     else:
         print(f"  \U0001f534 {total_c} CRITICAL finding(s)")
+    # A pass count means nothing without knowing what actually ran.
+    integrity_report()
     print(f"{'='*70}")
 
 def save_json(results, filename):
@@ -1373,7 +1419,7 @@ def audit_fips203_params():
     except Exception as e:
         r.add_test('FIPS 203 (kyber-py)', False,
                    f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed \u2014 pip install kyber-py')
+                   'kyber-py not installed \u2014 pip install kyber-py' if not DEGRADED['deps'].append('kyber-py') else '')
     return r
 
 def audit_exhaustive_inverses(lib):
@@ -1456,7 +1502,7 @@ def audit_kyber_roundtrip():
     except Exception as e:
         r.add_test('kyber-py roundtrip', False,
                    f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed')
+                   'kyber-py not installed' if not DEGRADED['deps'].append('kyber-py') else '')
     return r
 
 def audit_boundary_values(lib):
@@ -1880,7 +1926,10 @@ def audit_full_ntt(lib):
     ntt_cert_file = '/tmp/pq_ntt_cert.v'
     with open(ntt_cert_file, 'w') as f:
         f.write('\n'.join(coq_lines))
-    r.add_test('NTT Coq certificate generated', True, ntt_cert_file)
+    # Writing a file proves nothing. The real check is 'certificate verified'
+    # below, which runs coqc. This entry only records where the file went.
+    r.add_test('NTT Coq certificate emitted', os.path.exists(ntt_cert_file),
+               ntt_cert_file)
 
     import subprocess, shutil
     coqc_path = shutil.which('coqc')
@@ -2206,8 +2255,12 @@ def audit_aes_sbox(lib_gf2):
                    f'CMS5={cms_time*1e6:.0f}\u03bcs, engine={res.solve_time_us:.1f}\u03bcs, '
                    f'speedup={speedup:.0f}\u00d7')
     else:
-        r.add_test('CryptoMiniSat5 comparison', True,
-                   'CMS5 not installed \u2014 apt install cryptominisat for comparison')
+        # A benchmark that did not run is not a passed test.
+        DEGRADED['deps'].append('cryptominisat')
+        DEGRADED['skipped_checks'].append('CMS5 comparison')
+        r.add_test('CryptoMiniSat5 comparison', False,
+                   'SKIPPED \u2014 CMS5 not installed. This comparison did NOT run '
+                   '(apt install cryptominisat).')
     return r
 
 # ================================================================
@@ -2238,9 +2291,15 @@ def audit_fips204_params():
                        f"pk={len(pk)}/{params['pk']} sk={len(sk)}/{params['sk']} "
                        f"sig={len(sig)}/{params['sig']} verify={'OK' if valid else 'FAIL'}")
     except ImportError:
+        # Without dilithium-py there is nothing to check these constants
+        # AGAINST -- asserting them true compares them with themselves.
+        DEGRADED['deps'].append('dilithium-py')
+        DEGRADED['skipped_checks'].append('FIPS 204 parameter validation')
         for name, params in fips204.items():
-            r.add_test(f'{name} params (const)', True,
-                       f"pk={params['pk']} sk={params['sk']} sig={params['sig']}")
+            r.add_test(f'{name} params (unverified)', False,
+                       f"SKIPPED \u2014 dilithium-py not installed, constants "
+                       f"not checked against an implementation "
+                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})")
     return r
 
 # ================================================================
@@ -2276,17 +2335,29 @@ def audit_fips205_params():
         ok = sk_ok and pk_ok and sig_ok
         r.add_test(f'{name} FIPS 205 params', ok,
                    f"n={n} pk={p['pk']}/{2*n} sk={p['sk']}/{4*n} sig={p['sig']}")
-    # Try to import and test a real SPHINCS+ implementation
+    # Live roundtrip against a real FIPS 205 implementation.
+    # NOTE: the PyPI package is `slh-dsa` but the MODULE is `slhdsa`. An
+    # earlier version imported `slh_dsa`, which never resolved, so this check
+    # silently reported "not installed" even when the library was present --
+    # a skip that reads as a pass. Import the module name, not the dist name.
     try:
-        from slh_dsa import SLH_DSA_SHA2_128s
-        pk, sk = SLH_DSA_SHA2_128s.keygen()
-        sig = SLH_DSA_SHA2_128s.sign(sk, b"pq-verify test")
-        valid = SLH_DSA_SHA2_128s.verify(pk, b"pq-verify test", sig)
-        r.add_test('SLH-DSA-SHA2-128s live roundtrip', valid,
-                   f"pk={len(pk)} sk={len(sk)} sig={len(sig)} verify={'OK' if valid else 'FAIL'}")
+        import slhdsa
+        import slhdsa.parameters as _slhp
+        _kp = slhdsa.KeyPair.gen(_slhp.sha2_128s)
+        _msg = b"pq-verify test"
+        _sig = _kp.sign(_msg)
+        valid = bool(_kp.verify(_msg, _sig))
+        # negative control: a tampered message must NOT verify
+        _tampered = not bool(_kp.verify(b"pq-verify tesT", _sig))
+        r.add_test('SLH-DSA-SHA2-128s live roundtrip', valid and _tampered,
+                   f"sign/verify={'OK' if valid else 'FAIL'}, "
+                   f"tampered-rejected={'OK' if _tampered else 'FAIL'}")
     except ImportError:
-        r.add_test('SLH-DSA live roundtrip', True,
-                   'slh-dsa not installed — parameter validation only (pip install slh-dsa)')
+        DEGRADED['deps'].append('slh-dsa')
+        DEGRADED['skipped_checks'].append('SLH-DSA live roundtrip')
+        r.add_test('SLH-DSA live roundtrip', False,
+                   'SKIPPED \u2014 slh-dsa not installed, no live sign/verify was '
+                   'performed (pip install slh-dsa)')
     return r
 
 # ================================================================
@@ -5000,6 +5071,8 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
     try:
         from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
     except ImportError:
+        DEGRADED['deps'].append('kyber-py')
+        DEGRADED['skipped_checks'].append('ML-KEM ACVP')
         print("  kyber-py required for functional vectors:")
         print("    pip install kyber-py --break-system-packages")
         return None
@@ -5224,6 +5297,8 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
     try:
         from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
     except ImportError:
+        DEGRADED['deps'].append('dilithium-py')
+        DEGRADED['skipped_checks'].append('ML-DSA ACVP')
         print("  dilithium-py required:  pip install dilithium-py --break-system-packages")
         return None
     PS = {'ML-DSA-44': ML_DSA_44, 'ML-DSA-65': ML_DSA_65, 'ML-DSA-87': ML_DSA_87}
@@ -5356,6 +5431,8 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         from slhdsa.lowlevel.slhdsa import Address, XMSS
         import slhdsa.lowlevel.parameters as _LP
     except ImportError:
+        DEGRADED['deps'].append('slh-dsa')
+        DEGRADED['skipped_checks'].append('SLH-DSA ACVP')
         print("  slh-dsa required:  pip install slh-dsa   (module name: slhdsa)")
         return None
 
@@ -5433,6 +5510,171 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             'detail': detail}
 
 
+_KEM_SIZES = {  # (ek, dk, ct, ss) per FIPS 203
+    'ML-KEM-512':  (800, 1632, 768, 32),
+    'ML-KEM-768':  (1184, 2400, 1088, 32),
+    'ML-KEM-1024': (1568, 3168, 1568, 32),
+}
+
+
+def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
+                       decaps=None, prompt_dir=None, vector_dir=None, live=False,
+                       verbose=True):
+    """Audit a THIRD-PARTY ML-KEM implementation end to end against NIST's vectors.
+
+    This is the scheme-level counterpart to pqverify_scan (which audits the NTT
+    symbol). It exists because production libraries hide internal transforms but
+    export the public KEM API: BoringSSL declares its NTT `inline` inside an
+    anonymous namespace, AWS-LC compiles mlkem-native with
+    MLK_CONFIG_INTERNAL_API_QUALIFIER=static, wolfSSL marks it `static`. None of
+    those can be symbol-audited at the NTT level -- but all of them expose
+    keygen / encapsulate / decapsulate, which is what customers actually run.
+
+    Drives the vendor's own code with NIST's ACVP vectors:
+        keygen : NIST (d,z)  -> vendor ek,dk   must match NIST byte-for-byte
+        encaps : NIST (ek,m) -> vendor c,K     must match NIST byte-for-byte
+        decaps : NIST (dk,c) -> vendor K       must match NIST byte-for-byte
+
+    Requires DERANDOMISED entry points, because NIST's vectors are seeded. A
+    library exposing only randomised keygen/encaps cannot be checked for
+    byte-exactness -- only for self-consistency, which is not verification.
+    PQClean names them *_crypto_kem_keypair_derand / *_crypto_kem_enc_derand.
+
+    Symbols are auto-detected from the library if not given explicitly.
+    """
+    import ctypes as _ct, os as _o, subprocess as _sp
+    so_path = _o.path.abspath(_o.path.expanduser(so_path))
+    if not _o.path.exists(so_path):
+        raise FileNotFoundError(so_path)
+    if param_set not in _KEM_SIZES:
+        raise ValueError(f"unknown parameter set {param_set}")
+    ek_n, dk_n, ct_n, ss_n = _KEM_SIZES[param_set]
+
+    lib = _ct.CDLL(so_path)
+
+    # ---- locate the three entry points ----
+    try:
+        syms = _sp.run(['nm', '-D', '--defined-only', so_path],
+                       capture_output=True, text=True).stdout
+        exported = [l.split()[-1] for l in syms.splitlines() if ' T ' in l]
+    except Exception:
+        exported = []
+
+    def _find(explicit, *needles):
+        if explicit:
+            return explicit
+        for e in exported:
+            low = e.lower()
+            if all(n in low for n in needles):
+                return e
+        return None
+
+    kp = _find(keypair, 'keypair', 'derand')
+    en = _find(encaps, 'enc', 'derand')
+    de = _find(decaps, 'kem_dec')
+    missing = [n for n, v in (('keypair_derand', kp), ('enc_derand', en),
+                              ('dec', de)) if v is None]
+    if missing:
+        print(f"  Cannot audit {so_path}:")
+        print(f"    missing derandomised entry point(s): {', '.join(missing)}")
+        print(f"    NIST's vectors are seeded; without a derandomised API the")
+        print(f"    library can only be checked for self-consistency, which is")
+        print(f"    not verification. Pass keypair=/encaps=/decaps= explicitly")
+        print(f"    if the symbols are named differently.")
+        if exported:
+            hint = [e for e in exported if 'kem' in e.lower()][:6]
+            if hint:
+                print(f"    exported KEM symbols: {hint}")
+        DEGRADED['skipped_checks'].append(f'KEM audit ({param_set})')
+        return None
+
+    f_kp = getattr(lib, kp); f_kp.restype = _ct.c_int
+    f_en = getattr(lib, en); f_en.restype = _ct.c_int
+    f_de = getattr(lib, de); f_de.restype = _ct.c_int
+
+    # ---- NIST vectors (same source resolution as pqverify_acvp) ----
+    import json as _j
+    _local = prompt_dir or vector_dir
+    if not _local and not live:
+        _local = _o.path.join(_pkg_dir(), "vectors")
+
+    def _load(name, fn):
+        if _local:
+            return _load_vector_json(_o.path.join(_local, name, fn), f"{name}/{fn}")
+        import urllib.request
+        return _j.loads(urllib.request.urlopen(
+            _ACVP_BASE + name + "/" + fn, timeout=60).read())
+
+    if verbose:
+        print("=" * 68)
+        print(f"  THIRD-PARTY KEM AUDIT \u2014 {param_set}")
+        print(f"  library : {_o.path.basename(so_path)}")
+        print(f"  keygen  : {kp}")
+        print(f"  encaps  : {en}")
+        print(f"  decaps  : {de}")
+        print(f"  vectors : {'pinned' if _local else 'LIVE from NIST'}")
+        print("=" * 68)
+
+    tally = {}
+    def _rec(stage, ok):
+        p, t = tally.get(stage, (0, 0))
+        tally[stage] = (p + int(ok), t + 1)
+
+    # ---- keyGen: NIST (d,z) -> vendor ek,dk ----
+    kg = _load("ML-KEM-keyGen-FIPS203", "internalProjection.json")
+    for g in kg['testGroups']:
+        if g.get('parameterSet') != param_set:
+            continue
+        for t in g['tests']:
+            coins = bytes.fromhex(t['d']) + bytes.fromhex(t['z'])
+            ek = (_ct.c_ubyte * ek_n)(); dk = (_ct.c_ubyte * dk_n)()
+            f_kp(ek, dk, (_ct.c_ubyte * 64)(*coins))
+            ok = (bytes(ek).hex().upper() == t['ek'].upper() and
+                  bytes(dk).hex().upper() == t['dk'].upper())
+            _rec('keyGen', ok)
+
+    # ---- encaps / decaps ----
+    ed = _load("ML-KEM-encapDecap-FIPS203", "internalProjection.json")
+    for g in ed['testGroups']:
+        if g.get('parameterSet') != param_set:
+            continue
+        fn = g.get('function')
+        for t in g['tests']:
+            if fn == 'encapsulation':
+                ct_b = (_ct.c_ubyte * ct_n)(); ss = (_ct.c_ubyte * ss_n)()
+                f_en(ct_b, ss, (_ct.c_ubyte * ek_n)(*bytes.fromhex(t['ek'])),
+                     (_ct.c_ubyte * 32)(*bytes.fromhex(t['m'])))
+                ok = (bytes(ct_b).hex().upper() == t['c'].upper() and
+                      bytes(ss).hex().upper() == t['k'].upper())
+                _rec('encaps', ok)
+            elif fn == 'decapsulation':
+                if 'dk' not in t or 'c' not in t or 'k' not in t:
+                    continue
+                ss = (_ct.c_ubyte * ss_n)()
+                f_de(ss, (_ct.c_ubyte * ct_n)(*bytes.fromhex(t['c'])),
+                     (_ct.c_ubyte * dk_n)(*bytes.fromhex(t['dk'])))
+                ok = bytes(ss).hex().upper() == t['k'].upper()
+                _rec('decaps', ok)
+
+    p_all = sum(p for p, _ in tally.values())
+    t_all = sum(t for _, t in tally.values())
+    if verbose:
+        for stage in ('keyGen', 'encaps', 'decaps'):
+            if stage in tally:
+                p, t = tally[stage]
+                print(f"  {'PASS' if p == t else 'FAIL'}  {stage:8s} "
+                      f"{p}/{t}  byte-exact vs NIST")
+        print("=" * 68)
+        print(f"  RESULT: {p_all}/{t_all} \u2014 "
+              f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
+        print(f"  This audits the vendor's OWN keygen/encaps/decaps against")
+        print(f"  NIST's published vectors. It is not a side-channel review.")
+        print("=" * 68)
+    return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
+            'total': t_all, 'detail': tally, 'library': so_path,
+            'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
+
+
 def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None,
                       slhdsa=False):
     """Run both ACVP suites: ML-KEM (FIPS 203) + ML-DSA (FIPS 204).
@@ -5464,6 +5706,7 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
     if verbose:
         print("#" * 64)
         print(f"  COMBINED ACVP: {total_p}/{total_t} NIST vectors")
+        print("  SCOPE: reference-chain conformance, not a vendor audit.")
         print(f"    ML-KEM (FIPS 203): {kem_p}/{kem_t}")
         print(f"    ML-DSA (FIPS 204): {dsa_p}/{dsa_t}")
         if slh:
@@ -6025,7 +6268,9 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             except Exception as _fe:
                 print(f"  \u23ed\ufe0f  Freivalds: engine error ({type(_fe).__name__})")
         else:
-            print(f"  \u23ed\ufe0f  Freivalds: skipped (engine not available)")
+            DEGRADED['skipped_checks'].append('Freivalds')
+            print(f"  \u23ed\ufe0f  Freivalds: SKIPPED \u2014 engine unavailable. "
+                  f"This check did NOT run; coverage is reduced.")
 
         if cp_ap and cp_rm:
             class _L:
