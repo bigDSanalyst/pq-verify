@@ -24,6 +24,7 @@ from .core import (
     pqverify_leakage,
     pqverify_load_so,
     pqverify_scan,
+    pqverify_audit_kem,
 )
 
 
@@ -55,11 +56,18 @@ def build_parser():
                    help="per-layer side-channel protection-allocation table")
     p.add_argument("--audit-so", nargs=2, metavar=("PATH", "SYM"),
                    help="audit an NTT symbol SYM inside compiled library PATH")
+    p.add_argument("--audit-kem", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="audit a full ML-KEM implementation (keygen/encaps/decaps) "
+                        "in PATH against NIST vectors, e.g. "
+                        "--audit-kem lib.so ML-KEM-768")
     p.add_argument("--json", metavar="FILE",
                    help="write results to FILE in pq-verify's native schema")
     p.add_argument("--sarif", metavar="FILE",
                    help="write SARIF 2.1.0 to FILE — ingested natively by GitHub "
                         "Code Scanning, DefectDojo, Snyk, AWS Security Hub")
+    p.add_argument("--require-full-coverage", action="store_true",
+                   help="exit non-zero if any engine or dependency was missing "
+                        "(prevents a degraded run from reporting green in CI)")
     p.add_argument("--fail-on-finding", action="store_true",
                    help="exit non-zero if any finding is reported (CI gating)")
     return p
@@ -85,10 +93,24 @@ def main(argv=None):
     if args.leakage:
         pqverify_leakage(); ran_task = True
     scan_results = None
+    if getattr(args, "audit_kem", None):
+        from .core import pqverify_audit_kem
+        _p, _ps = args.audit_kem
+        _r = pqverify_audit_kem(_p, _ps)
+        ran_task = True
+        if _r is not None and not _r["verified"] and args.fail_on_finding:
+            exit_early = True
     if args.audit_so:
         path, sym = args.audit_so
+        # Compile the engines first. Without them pqverify_scan silently omits
+        # the Freivalds check and reports 2/2 instead of 3/3 -- a skip that
+        # looks like a pass, which is the failure mode this tool exists to
+        # prevent in other people's code.
+        from .core import compile_all, bind_all
+        _eng = compile_all()
+        bind_all(_eng)
         ntt = pqverify_load_so(path, sym)
-        scan_results = pqverify_scan(ntt); ran_task = True
+        scan_results = pqverify_scan(ntt, ns={"engines": _eng}); ran_task = True
 
     # Default: run the self-suite.
     if not ran_task:
@@ -100,7 +122,10 @@ def main(argv=None):
         from .report import to_json, to_sarif, write
         from .core import VERSION
         if args.json:
-            write(args.json, to_json(scan_results))
+            from .core import integrity_report as _ir
+            _f, _g = _ir(verbose=False)
+            write(args.json, to_json(scan_results,
+                                     extra={"coverage": {"full": _f, "gaps": _g}}))
             print(f"  wrote {args.json}")
         if args.sarif:
             write(args.sarif, to_sarif(scan_results, tool_version=VERSION))
@@ -109,6 +134,14 @@ def main(argv=None):
         if args.fail_on_finding and findings:
             print(f"  FAILING: {findings} finding(s)")
             exit_code = 1
+
+    # ---- integrity: did this run cover what the tool claims? -----------
+    # Reported LAST, after every task, so it reflects the whole run.
+    from .core import integrity_report
+    _full, _gaps = integrity_report()
+    if getattr(args, "require_full_coverage", False) and not _full:
+        print("  FAILING: degraded run and --require-full-coverage was set")
+        exit_code = 1
 
     return exit_code
 
