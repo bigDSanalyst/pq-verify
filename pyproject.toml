@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pq-verify"
-version = "2.6.5"
+version = "2.6.7"
 description = "Independent verification for ML-KEM / ML-DSA implementations — native field NTT verification, NIST ACVP, lattice parameter security, Coq certificates."
 readme = "README.md"
 requires-python = ">=3.8"
