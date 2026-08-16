@@ -11,7 +11,7 @@ Author: Nicholas Maino (iamweare) — Melbourne AU
 License: MIT
 """
 
-__version__ = "2.6.5"
+__version__ = "2.6.7"
 __author__ = "Nicholas Maino (iamweare)"
 __license__ = "MIT"
 
@@ -28,6 +28,7 @@ from .core import (
     pqverify_leakage,
     pqverify_load_so,
     pqverify_scan,
+    pqverify_audit_kem,
 )
 
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
@@ -49,6 +50,7 @@ __all__ = [
     "pqverify_leakage",
     "pqverify_load_so",
     "pqverify_scan",
+    "pqverify_audit_kem",
     "check_encapsulation_key",
     "check_decapsulation_key",
 ]
