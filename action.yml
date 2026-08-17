@@ -46,9 +46,13 @@ inputs:
     required: false
     default: 'pq-verify.json'
   version:
-    description: 'pq-verify version/ref to install (a tag, branch, or commit).'
+    description: >
+      Which pq-verify to install. A bare version (e.g. '2.6.7') installs that
+      release from PyPI — the artifact users get. Prefix with 'git:' to install
+      a ref from source instead (e.g. 'git:main'). Default is the latest PyPI
+      release, so CI tests the published wheel rather than the repository.
     required: false
-    default: 'main'
+    default: ''
 
 outputs:
   verified:
@@ -82,8 +86,17 @@ runs:
       shell: bash
       run: |
         python -m pip install --quiet --upgrade pip
-        python -m pip install --quiet \
-          "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${{ inputs.version }}"
+        V="${{ inputs.version }}"
+        case "$V" in
+          git:*)  # install from source at a ref
+            REF="${V#git:}"
+            python -m pip install --quiet \
+              "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${REF}" ;;
+          "")     # latest published release
+            python -m pip install --quiet "pq-verify[full]" ;;
+          *)      # a specific published version
+            python -m pip install --quiet "pq-verify[full]==${V}" ;;
+        esac
         pq-verify --version
 
     - name: Run verification
@@ -147,15 +160,35 @@ runs:
 
           [ $RC -ne 0 ] && STATUS=$RC
         else
-          echo "verified=true"   >> $GITHUB_OUTPUT
-          echo "findings=0"      >> $GITHUB_OUTPUT
-          echo "sarif_file="     >> $GITHUB_OUTPUT
+          # No library given: the ACVP suites are the whole run. `verified`
+          # must reflect whether they actually passed -- asserting true here
+          # would report a green output from a failed job, which is the same
+          # false-pass class pq-verify exists to detect.
+          if [ $STATUS -eq 0 ]; then
+            echo "verified=true"  >> $GITHUB_OUTPUT
+          else
+            echo "verified=false" >> $GITHUB_OUTPUT
+          fi
+          echo "findings=$STATUS" >> $GITHUB_OUTPUT
+          echo "sarif_file="      >> $GITHUB_OUTPUT
+          {
+            echo "### pq-verify"
+            echo ""
+            if [ $STATUS -eq 0 ]; then
+              echo "**ACVP suites passed** — no library was supplied, so no"
+              echo "third-party implementation was audited."
+            else
+              echo "**ACVP suites FAILED** (exit $STATUS)."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
         fi
 
         exit $STATUS
 
     - name: Upload SARIF to code scanning
-      if: always() && inputs.library != ''
+      # Only when a library was audited: the ACVP path produces no SARIF
+      # (it verifies pq-verify's own reference chain, not third-party code).
+      if: always() && inputs.library != '' && hashFiles(inputs.sarif-file) != ''
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ inputs.sarif-file }}
