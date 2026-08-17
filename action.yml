@@ -73,14 +73,23 @@ runs:
       with:
         python-version: '3.12'
 
-    - name: Install toolchain
+    - name: Toolchain preflight
       shell: bash
       run: |
-        # gcc/g++ build the six field-native engines at runtime.
-        # coq is only needed for the certificate tests, which this Action
-        # does not run, so it is deliberately omitted to keep CI fast.
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq gcc g++
+        # gcc/g++ build the six field-native engines at runtime. coq is only
+        # needed for certificate tests, which this Action does not run.
+        # sudo is absent on many container and self-hosted runners.
+        SUDO=""
+        command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+        $SUDO apt-get update -qq || true
+        $SUDO apt-get install -y -qq gcc g++ || true
+        # Installing is not the same as working. Verify, and fail with a
+        # DISTINCT exit code: "could not run" is not "found a problem".
+        if ! command -v gcc >/dev/null || ! command -v g++ >/dev/null; then
+          echo "::error title=PQV000::No working gcc/g++. pq-verify cannot build its engines and will not report a result."
+          exit 3
+        fi
+        gcc --version | head -1
 
     - name: Install pq-verify
       shell: bash
