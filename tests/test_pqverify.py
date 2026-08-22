@@ -252,3 +252,258 @@ def test_mldsa_freivalds_engine():
         L //= 2
     assert z32.zq32_freivalds_ntt(xa, mk(f), N, Q, Z, 10, 1) == 0, \
         "a 7-layer transform was accepted as ML-DSA's 8-layer NTT"
+
+
+# ----------------------------------------------------------------------
+# Prompt / response verification (pq_verify.response)
+#
+# The route to implementations that cannot be dlopen'd. The invariants that
+# matter here are (a) the emitted prompt never contains an answer, and (b) a
+# response that covers less than the prompt is never scored as a pass.
+# ----------------------------------------------------------------------
+
+import json
+
+from pq_verify.response import (
+    build_prompt,
+    available_parameter_sets,
+    verify_response,
+    _prompt_id,
+)
+
+_PS = "ML-KEM-512"
+
+
+@pytest.fixture(scope="module")
+def prompt512():
+    return build_prompt(_PS)
+
+
+@pytest.fixture(scope="module")
+def response512(prompt512):
+    """Answer the prompt with kyber-py, standing in for a vendor."""
+    pytest.importorskip("kyber_py")
+    from kyber_py.ml_kem import ML_KEM_512
+    from pq_verify import check_encapsulation_key, check_decapsulation_key
+
+    out = {"schema": "pq-verify/acvp-response", "schema_version": "1.0",
+           "promptId": prompt512["promptId"], "parameterSet": _PS,
+           "implementation": {"name": "kyber-py"}, "suites": []}
+    for s in prompt512["suites"]:
+        groups = []
+        for g in s["testGroups"]:
+            fn, tests = g.get("function"), []
+            for t in g["tests"]:
+                tc = t["tcId"]
+                if s["mode"] == "keyGen":
+                    ek, dk = ML_KEM_512._keygen_internal(
+                        bytes.fromhex(t["d"]), bytes.fromhex(t["z"]))
+                    tests.append({"tcId": tc, "ek": ek.hex(), "dk": dk.hex()})
+                elif fn == "encapsulation":
+                    k, c = ML_KEM_512._encaps_internal(
+                        bytes.fromhex(t["ek"]), bytes.fromhex(t["m"]))
+                    tests.append({"tcId": tc, "c": c.hex(), "k": k.hex()})
+                elif fn == "decapsulation":
+                    k = ML_KEM_512._decaps_internal(
+                        bytes.fromhex(t["dk"]), bytes.fromhex(t["c"]))
+                    tests.append({"tcId": tc, "k": k.hex()})
+                elif fn == "encapsulationKeyCheck":
+                    tests.append({"tcId": tc, "testPassed": bool(
+                        check_encapsulation_key(bytes.fromhex(t["ek"]), _PS))})
+                else:
+                    tests.append({"tcId": tc, "testPassed": bool(
+                        check_decapsulation_key(bytes.fromhex(t["dk"]), _PS))})
+            groups.append({"tgId": g["tgId"], "tests": tests})
+        out["suites"].append({"suite": s["suite"], "testGroups": groups})
+    return out
+
+
+def _write(tmp_path, doc, name="response.json"):
+    p = tmp_path / name
+    p.write_text(json.dumps(doc))
+    return str(p)
+
+
+def _run(path):
+    with contextlib.redirect_stdout(io.StringIO()):
+        return verify_response(path, verbose=False)
+
+
+def test_parameter_sets_cover_all_three_fips():
+    sets = available_parameter_sets()
+    assert {"ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"} <= set(sets)
+    assert {"ML-DSA-44", "ML-DSA-65", "ML-DSA-87"} <= set(sets)
+    assert any(s.startswith("SLH-DSA-") for s in sets)
+
+
+def test_prompt_carries_no_answers(prompt512):
+    """A question must never contain the value it is asking for."""
+    for s in prompt512["suites"]:
+        for g in s["testGroups"]:
+            keys = {k for t in g["tests"] for k in t}
+            assert not (set(g["answerFields"]) & keys), (
+                f"{s['suite']} tg{g['tgId']} leaks {g['answerFields']}")
+
+
+def test_prompt_id_is_reproducible(prompt512):
+    """The binding is only worth anything if it recomputes from the bundle."""
+    again = build_prompt(_PS)
+    assert again["promptId"] == prompt512["promptId"]
+    assert _prompt_id(again["suites"]) == prompt512["promptId"]
+    assert build_prompt("ML-KEM-768")["promptId"] != prompt512["promptId"]
+
+
+def test_mldsa_65_prompt_asks_every_pinned_question():
+    p = build_prompt("ML-DSA-65")
+    assert p["questionCount"] == 205        # 25 keyGen + 120 sigGen + 60 sigVer
+    assert sum(build_prompt(f"ML-DSA-{n}")["questionCount"]
+               for n in (44, 65, 87)) == 615
+
+
+def test_correct_response_verifies(tmp_path, response512):
+    r = _run(_write(tmp_path, response512))
+    assert r["status"] == "VERIFIED" and r["verified"] is True
+    assert r["passed"] == r["total"] == r["questions"] == 80
+    assert r["unanswered"] == 0 and r["malformed"] == 0 and not r["findings"]
+    assert r["prompt_binding"] == "confirmed"
+
+
+def test_response_result_is_never_artifact_bound(tmp_path, response512):
+    """A response proves computation, not provenance. The report must say so."""
+    r = _run(_write(tmp_path, response512))
+    assert r["artifact"]["bound"] is False
+    assert r["artifact"]["sha256"] is None
+    assert r["artifact"]["summary"] == "none — vendor-supplied response"
+
+
+def test_vendor_asserted_hash_is_not_a_binding(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    doc["artifact"] = {"sha256": "ab" * 32}
+    r = _run(_write(tmp_path, doc))
+    assert r["artifact"]["bound"] is False
+    assert r["artifact"]["vendor_asserted_sha256"] == "ab" * 32
+    assert "not verified by pq-verify" in r["artifact"]["summary"]
+
+
+def test_partial_response_is_incomplete_never_a_pass(tmp_path, response512):
+    """Three correct answers out of eighty is 3/80 INCOMPLETE, not 3/3 PASS.
+
+    A skip that reads as a pass is the failure mode this tool exists to stop.
+    """
+    doc = json.loads(json.dumps(response512))
+    kg = [s for s in doc["suites"] if s["suite"] == "ML-KEM-keyGen-FIPS203"][0]
+    kg["testGroups"][0]["tests"] = kg["testGroups"][0]["tests"][:3]
+    doc["suites"] = [kg]
+    r = _run(_write(tmp_path, doc))
+    assert r["verified"] is False
+    assert r["status"] == "INCOMPLETE"
+    assert r["answered"] == 3 and r["passed"] == 3
+    assert r["total"] == 80 and r["unanswered"] == 77
+    # groups nobody answered are not reported as failing groups
+    for label, (ok, ans, tot) in r["detail"].items():
+        if "keyGen" not in label:
+            assert (ok, ans) == (0, 0), label
+
+
+def test_wrong_answer_is_a_finding(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    kg = [s for s in doc["suites"] if s["suite"] == "ML-KEM-keyGen-FIPS203"][0]
+    t = kg["testGroups"][0]["tests"][0]
+    t["ek"] = ("0" if t["ek"][0] != "0" else "1") + t["ek"][1:]
+    r = _run(_write(tmp_path, doc))
+    assert r["verified"] is False and r["status"] == "FINDINGS PRESENT"
+    assert r["passed"] == 79 and r["answered"] == 80
+    assert any("mismatch" in f for f in r["findings"])
+
+
+def test_flipped_boolean_decision_is_caught(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    ed = [s for s in doc["suites"] if s["suite"] == "ML-KEM-encapDecap-FIPS203"][0]
+    for g in ed["testGroups"]:
+        if "testPassed" in g["tests"][0]:
+            g["tests"][0]["testPassed"] = not g["tests"][0]["testPassed"]
+            break
+    r = _run(_write(tmp_path, doc))
+    assert r["verified"] is False and r["passed"] == 79
+
+
+def test_malformed_answers_do_not_count_as_passes(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    kg = [s for s in doc["suites"] if s["suite"] == "ML-KEM-keyGen-FIPS203"][0]
+    kg["testGroups"][0]["tests"][0]["ek"] = "not-hex"
+    del kg["testGroups"][0]["tests"][1]["dk"]
+    r = _run(_write(tmp_path, doc))
+    assert r["malformed"] == 2
+    assert r["passed"] == 78 and r["verified"] is False
+    assert sum("malformed" in f for f in r["findings"]) == 2
+
+
+def test_prompt_id_mismatch_refuses_to_verify(tmp_path, response512):
+    """Answering a different question set is cannot-verify, not verified-and-failed."""
+    doc = json.loads(json.dumps(response512))
+    doc["promptId"] = "0" * 64
+    r = _run(_write(tmp_path, doc))
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+    assert r["prompt_binding"] == "mismatch"
+    assert r["passed"] == 0 and r["answered"] == 0
+
+
+def test_unknown_test_case_ids_are_reported(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    doc["suites"][0]["testGroups"][0]["tests"].append(
+        {"tcId": 10 ** 7, "ek": "00", "dk": "00"})
+    r = _run(_write(tmp_path, doc))
+    assert r["unknown"] and "10000000" in r["unknown"][0]
+    assert r["verified"] is False
+
+
+def test_raw_acvp_response_is_accepted_without_binding(tmp_path, response512):
+    """A vendor whose harness already emits ACVP responses need not reshape them."""
+    kg = [s for s in response512["suites"]
+          if s["suite"] == "ML-KEM-keyGen-FIPS203"][0]
+    raw = {"vsId": 1, "algorithm": "ML-KEM", "mode": "keyGen",
+           "revision": "FIPS203", "testGroups": kg["testGroups"]}
+    r = _run(_write(tmp_path, raw))
+    assert r["parameter_set"] == _PS          # inferred from the tcIds
+    assert r["prompt_binding"] == "absent"    # stated, not assumed
+    assert r["answered"] == 25 and r["passed"] == 25
+    assert r["status"] == "INCOMPLETE"        # the prompt asked for 80
+
+
+def test_hex_case_and_whitespace_are_not_findings(tmp_path, response512):
+    doc = json.loads(json.dumps(response512))
+    for s in doc["suites"]:
+        for g in s["testGroups"]:
+            for t in g["tests"]:
+                for k, v in t.items():
+                    if k != "tcId" and isinstance(v, str):
+                        t[k] = " " + v.upper() + " "
+    r = _run(_write(tmp_path, doc))
+    assert r["verified"] is True and r["passed"] == 80
+
+
+def test_unreadable_response_is_cannot_verify(tmp_path):
+    p = tmp_path / "junk.json"
+    p.write_text("{not json")
+    r = _run(str(p))
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+    r = _run(str(tmp_path / "absent.json"))
+    assert r["status"] == "CANNOT VERIFY"
+
+
+def test_response_report_records_the_binding(tmp_path, response512):
+    from pq_verify.report import to_json_response
+    doc = to_json_response(_run(_write(tmp_path, response512)))
+    assert doc["schema"] == "pq-verify/response-result"
+    assert doc["artifact"]["bound"] is False
+    assert doc["coverage"] == {"questions": 80, "answered": 80,
+                               "unanswered": 0, "unknown": []}
+
+
+def test_cannot_verify_and_mismatch_map_to_different_rules():
+    from pq_verify.report import _rule_for, RULES
+    assert _rule_for("cannot verify: 5 of 80 unanswered") == "PQV000"
+    assert _rule_for("response: x tcId 1 malformed — no") == "PQV000"
+    assert _rule_for("response: x tcId 1 mismatch — no") == "PQV006"
+    assert RULES["PQV000"]["level"] == "warning"   # absent check, not a failure
+    assert RULES["PQV006"]["level"] == "error"

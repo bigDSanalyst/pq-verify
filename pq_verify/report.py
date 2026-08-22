@@ -14,6 +14,7 @@ has to go and look at.
 """
 
 import datetime
+import hashlib
 import json
 import os
 
@@ -24,6 +25,16 @@ SARIF_SCHEMA = ("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
 # Rules the verifier can report. Kept explicit rather than generated so the
 # descriptions stay accurate and reviewable.
 RULES = {
+    "PQV000": {
+        "name": "CannotVerify",
+        "short": "The run could not verify this — not a pass and not a failure",
+        "full": ("Verification did not take place: the input was unreadable, "
+                 "the response answered a different question set, or part of "
+                 "the question set went unanswered. This is reported "
+                 "separately from a verified failure so that an absent check "
+                 "is never read as a passing one."),
+        "level": "warning",
+    },
     "PQV001": {
         "name": "NttMismatch",
         "short": "NTT output does not match the FIPS reference",
@@ -59,6 +70,15 @@ RULES = {
                  "self-consistent testing cannot."),
         "level": "error",
     },
+    "PQV006": {
+        "name": "ResponseMismatch",
+        "short": "Vendor-supplied answer differs from the pinned NIST value",
+        "full": ("A test case in a prompt/response run produced a value that "
+                 "does not match NIST's published answer byte for byte. The "
+                 "implementation that produced this response does not compute "
+                 "the standard correctly for that input."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -69,6 +89,9 @@ RULES = {
 }
 
 _FINDING_MAP = (
+    ("cannot verify", "PQV000"),
+    ("malformed",   "PQV000"),
+    ("response:",   "PQV006"),
     ("NTT:",        "PQV001"),
     ("Freivalds",   "PQV002"),
     ("Primitiv",    "PQV003"),
@@ -85,8 +108,33 @@ def _rule_for(finding_text):
     return "PQV001"
 
 
-def to_json(results, extra=None):
-    """Native schema — stable, versioned, safe to parse."""
+def artifact_bound(path):
+    """Binding for a run that loaded a file: `artifact: sha256 <hex>`."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    return {"bound": True, "sha256": digest, "path": os.path.abspath(path),
+            "summary": f"sha256 {digest}",
+            "detail": "The audited computation was performed by this file."}
+
+
+def artifact_unbound(reason):
+    """Binding for a run that loaded no file: `artifact: none — <reason>`."""
+    return {"bound": False, "sha256": None, "path": None,
+            "summary": f"none — {reason}",
+            "detail": ("No binary was loaded, so the result is not bound to "
+                       "any artifact.")}
+
+
+def to_json(results, extra=None, artifact=None):
+    """Native schema — stable, versioned, safe to parse.
+
+    `artifact` states the binding: what file, if any, produced the audited
+    computation. It is a field rather than a caveat so a reader can see what
+    was bound and what was not, the same way the coverage counts are data.
+    """
     passed = sum(r.get("passed", 0) for r in results)
     total = sum(r.get("total", 0) for r in results)
     findings = sum(len(r.get("findings", [])) for r in results)
@@ -112,8 +160,51 @@ def to_json(results, extra=None):
             for r in results
         ],
     }
+    if artifact is not None:
+        doc["artifact"] = artifact
     if extra:
         doc.update(extra)
+    return doc
+
+
+def to_json_response(result):
+    """Native schema for a prompt/response run (pq_verify.response)."""
+    doc = {
+        "schema": "pq-verify/response-result",
+        "schema_version": "1.0",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "parameter_set": result.get("parameter_set"),
+        "status": result.get("status"),
+        "verified": result.get("verified", False),
+        "artifact": result.get("artifact") or artifact_unbound(
+            "vendor-supplied response"),
+        "prompt": {
+            "prompt_id": result.get("prompt_id"),
+            "response_prompt_id": result.get("response_prompt_id"),
+            "binding": result.get("prompt_binding"),
+            "vector_source": result.get("vector_source"),
+        },
+        "response": {
+            "file": result.get("response_file"),
+            "sha256": result.get("response_sha256"),
+            "implementation": result.get("implementation"),
+        },
+        "coverage": {
+            "questions": result.get("questions", 0),
+            "answered": result.get("answered", 0),
+            "unanswered": result.get("unanswered", 0),
+            "unknown": result.get("unknown", []),
+        },
+        "summary": {
+            "checks_passed": result.get("passed", 0),
+            "checks_total": result.get("total", 0),
+            "malformed": result.get("malformed", 0),
+            "findings": len(result.get("findings", [])),
+        },
+        "groups": {k: {"passed": v[0], "answered": v[1], "total": v[2]}
+                   for k, v in (result.get("detail") or {}).items()},
+        "findings": result.get("findings", []),
+    }
     return doc
 
 

@@ -8,6 +8,8 @@ pq-verify command-line interface.
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
     pq-verify --leakage            per-layer protection-allocation table
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
+    pq-verify --emit-prompt SET    write the ACVP questions for SET
+    pq-verify --verify-response F  check a response against the pinned answers
     pq-verify --version
 """
 import argparse
@@ -60,6 +62,19 @@ def build_parser():
                    help="audit a full ML-KEM implementation (keygen/encaps/decaps) "
                         "in PATH against NIST vectors, e.g. "
                         "--audit-kem lib.so ML-KEM-768")
+    p.add_argument("--emit-prompt", metavar="PARAM_SET",
+                   help="write the ACVP question set for PARAM_SET (e.g. "
+                        "ML-DSA-65) to a file, for implementations that cannot "
+                        "be dlopen'd \u2014 HSMs, sealed vendor binaries. No "
+                        "answers are included. Pass 'list' for the available "
+                        "parameter sets")
+    p.add_argument("--prompt-out", metavar="FILE",
+                   help="where --emit-prompt writes (default "
+                        "pq-verify-prompt-<PARAM_SET>.json; .gz is honoured)")
+    p.add_argument("--verify-response", metavar="FILE",
+                   help="check a response file against the pinned expected "
+                        "answers, byte-exact and per test case. The result is "
+                        "NOT bound to any artifact and says so")
     p.add_argument("--json", metavar="FILE",
                    help="write results to FILE in pq-verify's native schema")
     p.add_argument("--sarif", metavar="FILE",
@@ -92,6 +107,26 @@ def main(argv=None):
         pqverify_kem(k=args.kem); ran_task = True
     if args.leakage:
         pqverify_leakage(); ran_task = True
+    response_result = None
+    if getattr(args, "emit_prompt", None):
+        from .response import emit_prompt, available_parameter_sets
+        ran_task = True
+        if args.emit_prompt.lower() in ("list", "?"):
+            sets = available_parameter_sets(**_vsrc)
+            print("  parameter sets available from the pinned bundle:")
+            for s_ in sets:
+                print(f"    {s_}")
+            return 0
+        try:
+            emit_prompt(args.emit_prompt, out_path=args.prompt_out, **_vsrc)
+        except ValueError as exc:
+            print(f"  {exc}")
+            return 2
+    if getattr(args, "verify_response", None):
+        from .response import verify_response
+        response_result = verify_response(args.verify_response, **_vsrc)
+        ran_task = True
+
     scan_results = None
     if getattr(args, "audit_kem", None):
         from .core import pqverify_audit_kem
@@ -118,6 +153,26 @@ def main(argv=None):
 
     # ---- machine-readable output --------------------------------------
     exit_code = 0
+    if response_result is not None:
+        if args.json:
+            from .report import to_json_response, write
+            write(args.json, to_json_response(response_result))
+            print(f"  wrote {args.json}")
+        if args.sarif:
+            from .report import to_sarif, write
+            from .core import VERSION
+            write(args.sarif, to_sarif(
+                [{"name": f"{response_result.get('parameter_set')}:response",
+                  "passed": response_result.get("passed", 0),
+                  "total": response_result.get("total", 0),
+                  "findings": response_result.get("findings", [])}],
+                tool_version=VERSION))
+            print(f"  wrote {args.sarif}")
+        # A response that was not fully verified must not exit 0 under a CI
+        # gate: INCOMPLETE and CANNOT VERIFY are both "did not verify".
+        if args.fail_on_finding and not response_result["verified"]:
+            print(f"  FAILING: {response_result['status']}")
+            exit_code = 1
     if scan_results is not None and (args.json or args.sarif or args.fail_on_finding):
         from .report import to_json, to_sarif, write
         from .core import VERSION

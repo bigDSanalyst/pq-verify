@@ -60,6 +60,15 @@ To audit a compiled library:
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
 ```
 
+For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
+a build with the transform inlined — ask it the questions instead:
+
+```bash
+pq-verify --emit-prompt ML-DSA-65 --prompt-out prompt.json   # 205 questions, no answers
+#   ... the implementer runs them, wherever it lives, and returns a response ...
+pq-verify --verify-response response.json                    # byte-exact, per test case
+```
+
 `DEMO.ipynb` runs the same thing in Colab if you prefer a notebook.
 
 <details>
@@ -212,6 +221,9 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 | `pqverify_load_so(path, sym)` | Load NTT from a compiled .so |
 | `pqverify_scan(target)` | Auto-discover + audit NTT functions |
 | `pqverify_leakage()` | Per-layer protection-allocation table |
+| `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |
+| `verify_response(file)` | Check a response byte-exact against the pinned answers |
+| `available_parameter_sets()` | Parameter sets the pinned bundle can pose questions for |
 
 ---
 
@@ -239,6 +251,30 @@ Vector provenance and per-file sha256 are recorded in `pq_verify/vectors/MANIFES
 A scheduled GitHub Action watches upstream and opens an issue when NIST changes
 something, so re-pinning is a deliberate, reviewed act rather than a live dependency.
 
+## What a result is bound to
+
+Every report states its binding as a field, not as prose:
+
+| Path | `artifact` |
+|------|-----------|
+| `--audit-so`, `--audit-kem` | `sha256 <hash>` — that file performed the computation |
+| `--verify-response` | `none — vendor-supplied response` |
+
+A passing response proves that whoever produced it computes FIPS 203/204/205
+correctly for those inputs. It does not prove **which binary did it**: there is
+no signature over the computation and no binding to code. So the report says
+`artifact: none` rather than implying otherwise, and a reader can tell the two
+kinds of result apart without reading a footnote.
+
+The same discipline applies to coverage. A response answering 3 of 205
+questions reports `3 of 205 asked`, groups nobody answered print `NOT RUN`
+rather than `FAIL`, and the verdict is `INCOMPLETE` — never `3/3 PASS`.
+Answering a different question set (`promptId` mismatch) is `CANNOT VERIFY`,
+which is reported separately from verified-and-failed: `PQV000` for an absent
+check, `PQV006` for an answer that is genuinely wrong.
+
+---
+
 ## Scope
 
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
@@ -251,10 +287,12 @@ The algebraic core is proven natively where the proof is exact; the full impleme
 
 ```
 pq_verify/
-  __init__.py              Public API (11 functions)
+  __init__.py              Public API (15 functions)
   core.py                  The stack (~6,100 lines, 6 field-native engines)
   cli.py                   Command-line interface
-tests/test_pqverify.py     18-test pytest suite
+  response.py              Prompt/response verification for un-loadable builds
+  report.py                Native JSON + SARIF 2.1.0 output
+tests/test_pqverify.py     36-test pytest suite
 pyproject.toml             Build config + console-script entry point
 dist/
   pq_verify-2.6.7-py3-none-any.whl    Installable wheel

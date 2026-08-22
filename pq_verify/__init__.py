@@ -31,6 +31,12 @@ from .core import (
     pqverify_audit_kem,
 )
 
+# Prompt/response verification — the route to implementations that cannot be
+# dlopen'd (HSMs, sealed vendor binaries, inlined builds). Results from this
+# path are explicitly NOT bound to an artifact; see pq_verify.response.
+from .response import emit_prompt, build_prompt, verify_response, \
+    available_parameter_sets
+
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
 try:
     from .core import check_encapsulation_key, check_decapsulation_key
@@ -51,6 +57,10 @@ __all__ = [
     "pqverify_load_so",
     "pqverify_scan",
     "pqverify_audit_kem",
+    "emit_prompt",
+    "build_prompt",
+    "verify_response",
+    "available_parameter_sets",
     "check_encapsulation_key",
     "check_decapsulation_key",
 ]
