@@ -93,14 +93,22 @@ def main(argv=None):
 
     # If a specific task is requested, run just that task.
     ran_task = False
+    acvp_results = {}
     _vsrc = dict(live=getattr(args, "live", False),
                  vector_dir=getattr(args, "vector_dir", None))
     if args.acvp:
-        pqverify_acvp(**_vsrc); ran_task = True
+        acvp_results["ML-KEM (FIPS 203)"] = pqverify_acvp(**_vsrc)
+        ran_task = True
     if getattr(args, "mldsa_acvp", False):
-        pqverify_mldsa_acvp(**_vsrc); ran_task = True
+        acvp_results["ML-DSA (FIPS 204)"] = pqverify_mldsa_acvp(**_vsrc)
+        ran_task = True
     if getattr(args, "acvp_all", False):
-        pqverify_acvp_all(**_vsrc); ran_task = True
+        _all = pqverify_acvp_all(**_vsrc)
+        acvp_results["ML-KEM (FIPS 203)"] = _all.get("ml_kem")
+        acvp_results["ML-DSA (FIPS 204)"] = _all.get("ml_dsa")
+        if _all.get("slh_dsa"):
+            acvp_results["SLH-DSA (FIPS 205)"] = _all["slh_dsa"]
+        ran_task = True
     if args.params:
         pqverify_params(args.params); ran_task = True
     if args.kem:
@@ -127,14 +135,32 @@ def main(argv=None):
         response_result = verify_response(args.verify_response, **_vsrc)
         ran_task = True
 
+    from .report import artifact_bound
+
     scan_results = None
+    kem_result = kem_ran = kem_reason = None
+    kem_artifact = scan_artifact = None
     if getattr(args, "audit_kem", None):
         from .core import pqverify_audit_kem
         _p, _ps = args.audit_kem
-        _r = pqverify_audit_kem(_p, _ps)
+        kem_ran = _ps
         ran_task = True
-        if _r is not None and not _r["verified"] and args.fail_on_finding:
-            exit_early = True
+        # Bind first: the hash is of the file we were pointed at, and it holds
+        # whether or not the audit can run. Binding and verdict are separate
+        # facts, so a library that cannot be audited is still bound to.
+        try:
+            kem_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {kem_artifact['summary']}")
+        try:
+            kem_result = pqverify_audit_kem(_p, _ps)
+        except OSError as exc:
+            # Not loadable by the dynamic linker: cannot verify, not a failure.
+            kem_result = None
+            kem_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {kem_reason}")
     if args.audit_so:
         path, sym = args.audit_so
         # Compile the engines first. Without them pqverify_scan silently omits
@@ -144,51 +170,108 @@ def main(argv=None):
         from .core import compile_all, bind_all
         _eng = compile_all()
         bind_all(_eng)
-        ntt = pqverify_load_so(path, sym)
-        scan_results = pqverify_scan(ntt, ns={"engines": _eng}); ran_task = True
+        ran_task = True
+        try:
+            scan_artifact = artifact_bound(path)
+            print(f"  artifact: {scan_artifact['summary']}")
+            ntt = pqverify_load_so(path, sym)
+        except (OSError, ValueError) as exc:
+            # An unloadable file or a refused width/field mismatch is an input
+            # error, not a verification outcome: say so and stop rather than
+            # emitting a report about a target that was never audited.
+            print(f"  cannot audit {path}: {exc}")
+            return 2
+        scan_results = pqverify_scan(ntt, ns={"engines": _eng})
 
     # Default: run the self-suite.
     if not ran_task:
         run_selftest(quick=args.quick)
 
     # ---- machine-readable output --------------------------------------
+    # One native report per invocation, chosen most-specific-first, so two
+    # tasks in one command cannot silently overwrite each other's file. The
+    # exit code still reflects EVERY task that ran, not just the reported one.
+    from .report import (to_json, to_json_acvp, to_json_kem, to_json_response,
+                         to_sarif, artifact_unbound, write)
+    from .core import VERSION
+
     exit_code = 0
-    if response_result is not None:
-        if args.json:
-            from .report import to_json_response, write
-            write(args.json, to_json_response(response_result))
-            print(f"  wrote {args.json}")
-        if args.sarif:
-            from .report import to_sarif, write
-            from .core import VERSION
-            write(args.sarif, to_sarif(
-                [{"name": f"{response_result.get('parameter_set')}:response",
-                  "passed": response_result.get("passed", 0),
-                  "total": response_result.get("total", 0),
-                  "findings": response_result.get("findings", [])}],
-                tool_version=VERSION))
-            print(f"  wrote {args.sarif}")
-        # A response that was not fully verified must not exit 0 under a CI
-        # gate: INCOMPLETE and CANNOT VERIFY are both "did not verify".
-        if args.fail_on_finding and not response_result["verified"]:
-            print(f"  FAILING: {response_result['status']}")
-            exit_code = 1
-    if scan_results is not None and (args.json or args.sarif or args.fail_on_finding):
-        from .report import to_json, to_sarif, write
-        from .core import VERSION
-        if args.json:
-            from .core import integrity_report as _ir
-            _f, _g = _ir(verbose=False)
-            write(args.json, to_json(scan_results,
-                                     extra={"coverage": {"full": _f, "gaps": _g}}))
-            print(f"  wrote {args.json}")
-        if args.sarif:
-            write(args.sarif, to_sarif(scan_results, tool_version=VERSION))
-            print(f"  wrote {args.sarif}")
+    json_doc = sarif_doc = None
+    reported = None
+
+    if scan_results is not None:
+        from .core import integrity_report as _ir
+        _f, _g = _ir(verbose=False)
+        json_doc = to_json(scan_results,
+                           extra={"coverage": {"full": _f, "gaps": _g}},
+                           artifact=scan_artifact)
+        sarif_doc = to_sarif(scan_results, tool_version=VERSION,
+                             artifact=scan_artifact)
+        reported = "--audit-so"
         findings = sum(len(r.get("findings", [])) for r in scan_results)
         if args.fail_on_finding and findings:
             print(f"  FAILING: {findings} finding(s)")
             exit_code = 1
+
+    if kem_ran is not None:
+        doc = to_json_kem(kem_result, artifact=kem_artifact, param_set=kem_ran,
+                          library=args.audit_kem[0], reason=kem_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-kem"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_kem[0]}:{kem_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=kem_artifact)
+        # A KEM audit that found faults, or that could not run at all, must
+        # not exit 0 under a CI gate. The old code set a variable nothing read.
+        if args.fail_on_finding and not doc["verified"]:
+            print(f"  FAILING: KEM audit {doc['status']}")
+            exit_code = 1
+
+    if response_result is not None:
+        doc = to_json_response(response_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--verify-response"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{response_result.get('parameter_set')}:response",
+                  "passed": response_result.get("passed", 0),
+                  "total": response_result.get("total", 0),
+                  "findings": response_result.get("findings", [])}],
+                tool_version=VERSION, artifact=response_result.get("artifact"))
+        # INCOMPLETE and CANNOT VERIFY are both "did not verify".
+        if args.fail_on_finding and not response_result["verified"]:
+            print(f"  FAILING: {response_result['status']}")
+            exit_code = 1
+
+    if acvp_results:
+        doc = to_json_acvp(acvp_results)
+        if json_doc is None:
+            json_doc, reported = doc, "ACVP"
+        if args.fail_on_finding and not doc["verified"]:
+            print(f"  FAILING: ACVP {doc['status']} "
+                  f"({doc['summary']['checks_passed']}/"
+                  f"{doc['summary']['checks_total']})")
+            exit_code = 1
+
+    if args.json:
+        if json_doc is not None:
+            write(args.json, json_doc)
+            print(f"  wrote {args.json}  (report for {reported}; "
+                  f"artifact: {json_doc['artifact']['summary']})")
+        else:
+            print(f"  note: --json wrote nothing — this task emits no "
+                  f"machine-readable report")
+    if args.sarif:
+        if sarif_doc is not None:
+            write(args.sarif, sarif_doc)
+            print(f"  wrote {args.sarif}")
+        else:
+            print(f"  note: --sarif wrote nothing — this task emits no "
+                  f"machine-readable report")
 
     # ---- integrity: did this run cover what the tool claims? -----------
     # Reported LAST, after every task, so it reflects the whole run.

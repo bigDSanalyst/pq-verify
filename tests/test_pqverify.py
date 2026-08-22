@@ -507,3 +507,164 @@ def test_cannot_verify_and_mismatch_map_to_different_rules():
     assert _rule_for("response: x tcId 1 mismatch — no") == "PQV006"
     assert RULES["PQV000"]["level"] == "warning"   # absent check, not a failure
     assert RULES["PQV006"]["level"] == "error"
+
+
+# ----------------------------------------------------------------------
+# Artifact binding — every report states what it was bound to
+#
+# `artifact` is a field, not a caveat: `sha256 <hash>` when a file was loaded,
+# `none — <why>` when one was not. It is independent of the verdict: a library
+# that could not be audited is still bound to the file that was read.
+# ----------------------------------------------------------------------
+
+from pq_verify.report import (
+    artifact_bound,
+    artifact_unbound,
+    to_json,
+    to_json_acvp,
+    to_json_kem,
+    to_sarif,
+)
+
+_SCAN = [{"name": "lib.so:ntt", "passed": 1, "total": 3,
+          "findings": ["NTT: layer 3 mismatch"]}]
+
+
+def test_artifact_bound_is_the_file_digest(tmp_path):
+    import hashlib
+    p = tmp_path / "lib.so"
+    p.write_bytes(b"\x7fELF not really")
+    a = artifact_bound(str(p))
+    assert a["bound"] is True
+    assert a["sha256"] == hashlib.sha256(p.read_bytes()).hexdigest()
+    assert a["summary"] == f"sha256 {a['sha256']}"
+
+
+def test_artifact_unbound_names_the_reason():
+    a = artifact_unbound("vendor-supplied response")
+    assert a["bound"] is False and a["sha256"] is None
+    assert a["summary"] == "none — vendor-supplied response"
+
+
+def test_scan_report_carries_the_binding(tmp_path):
+    p = tmp_path / "lib.so"
+    p.write_bytes(b"x")
+    doc = to_json(_SCAN, artifact=artifact_bound(str(p)))
+    assert doc["artifact"]["bound"] is True
+    assert doc["artifact"]["path"] == str(p)
+
+
+def test_scan_report_without_a_binding_is_unchanged():
+    """Existing output must not grow a field until a caller asks for one."""
+    assert "artifact" not in to_json(_SCAN)
+
+
+def test_sarif_records_the_artifact_hash(tmp_path):
+    p = tmp_path / "lib.so"
+    p.write_bytes(b"x")
+    a = artifact_bound(str(p))
+    s = to_sarif(_SCAN, artifact=a)["runs"][0]
+    assert s["artifacts"][0]["hashes"]["sha-256"] == a["sha256"]
+    assert s["artifacts"][0]["location"]["uri"].endswith("lib.so")
+    assert s["properties"]["pqVerifyArtifact"] == a["summary"]
+    # the finding still points at the target, unaffected by the new field
+    assert s["results"][0]["locations"][0]["physicalLocation"][
+        "artifactLocation"]["uri"] == "lib.so"
+
+
+def test_sarif_omits_artifacts_when_nothing_was_loaded():
+    assert "artifacts" not in to_sarif(_SCAN)["runs"][0]
+    s = to_sarif(_SCAN, artifact=artifact_unbound("vendor-supplied response"))
+    assert "artifacts" not in s["runs"][0]
+    assert s["runs"][0]["properties"]["pqVerifyArtifact"].startswith("none —")
+
+
+def test_kem_audit_binds_the_file_even_when_it_cannot_be_audited(tmp_path):
+    """Binding and verdict are separate facts: the file was read either way."""
+    p = tmp_path / "lib.so"
+    p.write_bytes(b"x")
+    doc = to_json_kem(None, artifact=artifact_bound(str(p)),
+                      param_set="ML-KEM-768", library=str(p))
+    assert doc["artifact"]["bound"] is True
+    assert doc["status"] == "CANNOT VERIFY" and doc["verified"] is False
+    assert doc["findings"] and doc["findings"][0].startswith("cannot verify:")
+
+
+def test_kem_audit_report_shape():
+    res = {"verified": False, "passed": 55, "total": 60,
+           "detail": {"keyGen": (25, 25), "encaps": (25, 25), "decaps": (5, 10)},
+           "library": "/x/lib.so", "symbols": {"keypair": "kp"}}
+    doc = to_json_kem(res, param_set="ML-KEM-768")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert doc["summary"]["checks_passed"] == 55
+    assert doc["stages"]["decaps"] == {"passed": 5, "total": 10}
+    assert len(doc["findings"]) == 1 and "decaps" in doc["findings"][0]
+    # no file was passed, so the report says so rather than staying silent
+    assert doc["artifact"]["bound"] is False
+
+
+def test_acvp_report_is_explicitly_unbound():
+    doc = to_json_acvp({
+        "ML-KEM (FIPS 203)": {"verified": True, "passed": 240, "total": 240,
+                              "detail": {"keyGen/ML-KEM-512": (25, 25)}},
+        "ML-DSA (FIPS 204)": {"verified": True, "passed": 615, "total": 615,
+                              "detail": {}},
+    })
+    assert doc["verified"] is True and doc["status"] == "VERIFIED"
+    assert doc["summary"]["checks_total"] == 855
+    assert doc["artifact"]["bound"] is False
+    assert "no vendor binary loaded" in doc["artifact"]["summary"]
+    assert doc["groups"]["ML-KEM (FIPS 203)/keyGen/ML-KEM-512"]["total"] == 25
+
+
+def test_acvp_report_marks_a_suite_that_did_not_run():
+    doc = to_json_acvp({"ML-DSA (FIPS 204)": None})
+    assert doc["suites"]["ML-DSA (FIPS 204)"]["ran"] is False
+    assert doc["status"] == "CANNOT VERIFY" and doc["verified"] is False
+
+
+# ----------------------------------------------------------------------
+# CLI exit codes — a run that did not verify must not pass a CI gate
+# ----------------------------------------------------------------------
+
+def _cli(*argv):
+    from pq_verify.cli import main
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = main(list(argv))
+    return code, out.getvalue()
+
+
+def test_unauditable_kem_library_fails_the_gate(tmp_path):
+    """--audit-kem on a library with no derandomised entry points.
+
+    This used to set a variable nothing read, so CI saw exit 0 for a library
+    that was never verified at all.
+    """
+    import json as _json
+    so = tmp_path / "empty.so"
+    so.write_bytes(b"\x7fELF")
+    rpt = tmp_path / "kem.json"
+    code, out = _cli("--audit-kem", str(so), "ML-KEM-768",
+                     "--json", str(rpt), "--fail-on-finding")
+    assert code == 1
+    doc = _json.loads(rpt.read_text())
+    assert doc["status"] == "CANNOT VERIFY"
+    assert doc["artifact"]["bound"] is True      # the file was still read
+
+
+def test_json_flag_reports_when_it_writes_nothing(tmp_path):
+    rpt = tmp_path / "none.json"
+    code, out = _cli("--params", "ML-KEM-768", "--json", str(rpt))
+    assert code == 0
+    assert not rpt.exists()
+    assert "wrote nothing" in out
+
+
+def test_incomplete_response_fails_the_gate(tmp_path):
+    import json as _json
+    bad = tmp_path / "r.json"
+    bad.write_text(_json.dumps({"schema": "pq-verify/acvp-response",
+                                "parameterSet": "ML-KEM-512", "suites": []}))
+    code, out = _cli("--verify-response", str(bad), "--fail-on-finding")
+    assert code == 1
+    assert "CANNOT VERIFY" in out

@@ -259,6 +259,14 @@ Every report states its binding as a field, not as prose:
 |------|-----------|
 | `--audit-so`, `--audit-kem` | `sha256 <hash>` — that file performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
+| `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
+
+The binding is recorded independently of the verdict, because they are
+different facts. A library that exposes no derandomised entry points is
+`artifact: sha256 <hash>` (the file was read) with status `CANNOT VERIFY` (no
+vector was ever driven through it). In SARIF the hash is emitted as the run's
+`artifacts[].hashes.sha-256`, which is where a security platform already looks
+for "this exact file was analysed".
 
 A passing response proves that whoever produced it computes FIPS 203/204/205
 correctly for those inputs. It does not prove **which binary did it**: there is
@@ -272,6 +280,10 @@ rather than `FAIL`, and the verdict is `INCOMPLETE` — never `3/3 PASS`.
 Answering a different question set (`promptId` mismatch) is `CANNOT VERIFY`,
 which is reported separately from verified-and-failed: `PQV000` for an absent
 check, `PQV006` for an answer that is genuinely wrong.
+
+`--fail-on-finding` exits non-zero for all of it — findings, `INCOMPLETE`,
+`CANNOT VERIFY`, a KEM audit that could not run, and an ACVP suite short of
+its full count. A run that did not verify does not pass a CI gate.
 
 ---
 
