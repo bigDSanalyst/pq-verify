@@ -9,3 +9,8 @@ __pycache__/
 *.vos
 pq_verify_report_*.json
 /tmp/
+
+# build artifacts
+*.egg-info/
+build/
+dist/
