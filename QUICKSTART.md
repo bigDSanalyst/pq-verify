@@ -5,14 +5,14 @@
 Google Colab, or any Linux with `gcc` + Python 3.8+:
 
 ```bash
-apt-get install -y coq && pip install kyber-py dilithium-py sympy   # for full 160/160 + 885/885
+apt-get install -y coq && pip install kyber-py dilithium-py sympy   # for full 158/158 + 855/855
 ```
 
 ```python
 exec(open('pq_verify_v2_6_1.py').read())
 ```
 
-Expected: a 7-phase report ending in `OVERALL: 160/160 tests passed`.
+Expected: a 7-phase report ending in `OVERALL: 158/158 tests passed` (fewer, with some reported `SKIPPED`, when an optional dependency is absent).
 Without coq/kyber-py/sympy you'll see fewer (those tests report as failures, not skips).
 
 After loading, eight public functions are available: `main`, `pqverify_acvp`,

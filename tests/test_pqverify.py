@@ -1124,3 +1124,104 @@ def test_self_suite_has_no_failing_checks():
             for t in r.tests:
                 if t.get("skipped"):
                     assert t.get("detail"), f"{t['name']} skipped without a reason"
+
+
+# ----------------------------------------------------------------------
+# Numbers claimed in the documentation
+#
+# The README badge read `tests 160/160` while the suite recorded 158 checks.
+# It is a static shields.io image with the number typed into the URL, so
+# nothing computed it and nothing caught it -- the same shape as a
+# requires-python that does not match the code, on the most-read surface in
+# the repository. Related stale claims: 885/885 combined ACVP (it is 855) and
+# 270/270 ML-KEM (it is 240).
+#
+# These pin the documented numbers to measured ones.
+# ----------------------------------------------------------------------
+
+def _docs_text():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    return {p.name: p.read_text() for p in
+            [root / "README.md", root / "QUICKSTART.md",
+             root / "pq_verify" / "core.py", root / "pq_verify" / "__init__.py",
+             root / "pq_verify" / "cli.py"]}
+
+
+def test_self_suite_check_count_matches_what_the_docs_claim():
+    """The documented count must be the count the suite actually records.
+
+    quick=True changes how many iterations each check runs, not how many
+    checks there are, so it measures the same total as the full suite.
+    """
+    import re
+    from pq_verify.core import main as run_selftest, DEGRADED
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = run_selftest(quick=True)
+        if DEGRADED["engines"]:
+            pytest.skip(f"engines unavailable {DEGRADED['engines']}; the count "
+                        f"is only meaningful when every engine built")
+    measured = sum(len(r.tests) for r in results)
+
+    # Targeted at self-suite claims only. A count of pytest tests, or of
+    # anything else that moves every commit, does not belong in prose at all --
+    # "53-test pytest suite" was written one morning and was wrong by evening.
+    patterns = [
+        r"self--suite-(\d+)%20checks",        # the badge
+        r"(\d+)-check self-suite",            # prose and the API table
+        r"\*\*(\d+)/\d+\*\* self-test",      # the Proven section
+        r"full (\d+)/\d+ self-suite",         # Requirements
+        r"OVERALL: (\d+)/\d+ tests passed",   # QUICKSTART's expected output
+        r"main\(\)\s+# (\d+)/\d+",            # core.py's usage header
+        r"run the (\d+)-check self-suite",    # cli.py's usage header
+    ]
+    claimed = set()
+    for name, text in _docs_text().items():
+        for pat in patterns:
+            for m in re.finditer(pat, text):
+                claimed.add((name, int(m.group(1))))
+    assert claimed, "no documented self-suite count found to check against"
+    wrong = [(n, c) for n, c in claimed if c != measured]
+    assert not wrong, (
+        f"the suite records {measured} checks; these claim otherwise: {wrong}")
+
+
+def test_acvp_counts_match_the_badges():
+    """240 ML-KEM and 615 ML-DSA are asserted on the README badges.
+
+    Nothing computed them either: the combined figure was documented as
+    885/885 (270+615) when the real total is 855 (240+615).
+    """
+    import re
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from pq_verify.core import pqverify_acvp, pqverify_mldsa_acvp
+    with contextlib.redirect_stdout(io.StringIO()):
+        kem = pqverify_acvp(verbose=False)
+        dsa = pqverify_mldsa_acvp(verbose=False)
+    if kem is None or dsa is None:
+        pytest.skip("reference implementations unavailable")
+
+    assert (kem["passed"], kem["total"]) == (240, 240), kem["total"]
+    assert (dsa["passed"], dsa["total"]) == (615, 615), dsa["total"]
+
+    docs = _docs_text()
+    readme = docs["README.md"]
+    assert "ML--KEM%20ACVP-240%2F240" in readme, "the ML-KEM badge drifted"
+    assert "ML--DSA%20ACVP-615%2F615" in readme, "the ML-DSA badge drifted"
+
+    combined = kem["total"] + dsa["total"]
+    assert combined == 855
+    for name, text in docs.items():
+        assert "885" not in text.replace("n885", ""), (
+            f"{name} still claims 885 combined vectors; it is {combined}")
+
+
+def test_the_tests_badge_is_computed_not_typed():
+    """A status badge GitHub renders from real runs cannot be wrong the way a
+    hand-typed one can."""
+    readme = _docs_text()["README.md"]
+    assert "actions/workflows/tests.yml/badge.svg" in readme, (
+        "the tests badge must be the workflow status badge, not a literal")
+    assert "badge/tests-" not in readme, "a hand-typed tests badge is back"

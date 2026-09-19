@@ -25,8 +25,8 @@ Colab:
   Cell 1: !apt-get install -y -qq gcc g++ coq
           !pip install -q kyber-py dilithium-py sympy --break-system-packages
   Cell 2: exec(open('pq_verify_v2_6_1.py').read())
-  Cell 3: main()                # 160/160
-          pqverify_acvp_all()   # 885/885
+  Cell 3: main()                # 158/158
+          pqverify_acvp_all()   # 855/855
 
 Author: Nicholas Maino (iamweare)
 License: MIT
@@ -5313,7 +5313,7 @@ import hashlib as _hashlib
 #             ML-DSA verification (FIPS 204)
 # ----------------------------------------------------------------
 # Companion to pqverify_acvp (ML-KEM / FIPS 203).
-# Together: 270 (ML-KEM) + 615 (ML-DSA) = 885/885 NIST ACVP vectors.
+# Together: 240 (ML-KEM) + 615 (ML-DSA) = 855/855 NIST ACVP vectors.
 # Requires: pip install dilithium-py --break-system-packages
 # ================================================================
 _MLDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
