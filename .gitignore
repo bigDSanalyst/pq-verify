@@ -14,3 +14,9 @@ pq_verify_report_*.json
 *.egg-info/
 build/
 dist/
+
+# test/coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
