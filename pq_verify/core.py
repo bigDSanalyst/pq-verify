@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.7 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.7.0 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,13 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.7"
+VERSION = "2.7.0"
+
+# Status glyphs as names rather than escapes inlined into f-string expressions.
+# A backslash inside an f-string expression is PEP 701 syntax (Python 3.12+);
+# using it raised this package's real floor to 3.12 while the metadata still
+# advertised 3.8, so pip installed happily on 3.11 and every import failed.
+_OK, _BAD = '\u2705', '\u274c'
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
@@ -6189,7 +6195,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
         if zetas is not None:
             match = sum(1 for i in range(min(len(zetas), len(ref_z))) if zetas[i] == ref_z[i])
             ok = match == len(ref_z); t += 1; p += ok
-            print(f"\n  {'\u2705' if ok else '\u274c'} Twiddle factors: {match}/{len(ref_z)} match FIPS")
+            print(f"\n  {_OK if ok else _BAD} Twiddle factors: {match}/{len(ref_z)} match FIPS")
             if not ok:
                 findings.append(f"Twiddle: {match}/{len(ref_z)}")
                 R_mod_q = pow(2, 16, q) if q < 65536 else pow(2, 32, q)
@@ -6205,7 +6211,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             _e1, _e2 = n, n // 2
         ok = pow(zeta_root, _e1, q) == 1 and pow(zeta_root, _e2, q) == q - 1
         t += 1; p += ok
-        print(f"  {'\u2705' if ok else '\u274c'} Primitivity: zeta^{_e1}=1, zeta^{_e2}=-1"
+        print(f"  {_OK if ok else _BAD} Primitivity: zeta^{_e1}=1, zeta^{_e2}=-1"
               f"  [{bits}-layer {'complete' if bits == _log2n else 'incomplete'} NTT]")
 
         # Domain-aware comparison. Standards libraries (pq-crystals, PQClean,
@@ -6233,7 +6239,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                 nf += 1; mm = mm or (trial, -1, str(e), "")
         ok = nf == 0; t += 1; p += ok
         _dom_note = '' if ntt_domain == 'plain' else f' [{ntt_domain} domain]'
-        print(f"  {'\u2705' if ok else '\u274c'} Full NTT: 100 polynomials, {nf} mismatches{_dom_note}")
+        print(f"  {_OK if ok else _BAD} Full NTT: 100 polynomials, {nf} mismatches{_dom_note}")
         if not ok and mm:
             if mm[1] >= 0: print(f"     poly {mm[0]}, coeff [{mm[1]}]: got {mm[2]}, expected {mm[3]}")
             else: print(f"     Error: {mm[2]}")
@@ -6262,7 +6268,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                     if _f(x, y, n, q, zeta_root, 5, trial + 1) != 1: ff += 1
                 ok = ff == 0; t += 1; p += ok
                 _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
-                print(f"  {'\u2705' if ok else '\u274c'} Freivalds ({_eng_lbl} engine): "
+                print(f"  {_OK if ok else _BAD} Freivalds ({_eng_lbl} engine): "
                       f"100 x 5 rounds, {ff} failures")
                 if not ok: findings.append(f"Freivalds: {ff}")
             except Exception as _fe:
@@ -6295,7 +6301,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                         if list(rec) != poly: cf += 1
                     except: cf += 1
             ok = cf == 0; t += 1; p += ok
-            print(f"  {'\u2705' if ok else '\u274c'} CP round-trip: 100 cycles, {cf} failures")
+            print(f"  {_OK if ok else _BAD} CP round-trip: 100 cycles, {cf} failures")
             ci = 0
             for trial in range(100):
                 poly = [random.randint(0, q - 1) for _ in range(n)]
@@ -6312,7 +6318,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                         if list(rec) != ntt_out: ci += 1
                     except: ci += 1
             ok = ci == 0; t += 1; p += ok
-            print(f"  {'\u2705' if ok else '\u274c'} NTT->CP->unCP: 100 trials, {ci} failures")
+            print(f"  {_OK if ok else _BAD} NTT->CP->unCP: 100 trials, {ci} failures")
 
         print(f"\n  {'='*60}")
         if findings:

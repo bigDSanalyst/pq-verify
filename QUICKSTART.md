@@ -1,4 +1,4 @@
-# pq-verify v2.6.7 — Quickstart
+# pq-verify v2.7.0 — Quickstart
 
 ## 1. Run the self-test (confirms the tool works on your machine)
 
