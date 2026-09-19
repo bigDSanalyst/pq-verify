@@ -32,6 +32,7 @@ Author: Nicholas Maino (iamweare)
 License: MIT
 """
 import os, sys, ctypes, time, random, json, math, hashlib, struct
+import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
 VERSION = "2.7.0"
@@ -41,6 +42,33 @@ VERSION = "2.7.0"
 # using it raised this package's real floor to 3.12 while the metadata still
 # advertised 3.8, so pip installed happily on 3.11 and every import failed.
 _OK, _BAD = '\u2705', '\u274c'
+
+_PQV_WORKDIR = None
+
+
+def _pqv_workdir():
+    """Private per-process scratch directory for generated sources and engines.
+
+    These files used to go to fixed paths -- /tmp/pqv_gf2.c, /tmp/libpqv_gf2.so,
+    /tmp/pq_ntt_cert.v. Two problems, both demonstrated:
+
+      * open(path, 'w') follows symlinks. Any local user who pre-created one of
+        those paths as a symlink got an arbitrary file overwrite with this
+        process's privileges -- pq-verify would happily destroy the target and
+        fill it with C source.
+      * Predictable names are shared state. Two runs on one machine (two CI
+        jobs, two shells) clobber each other's sources mid-compile.
+
+    mkdtemp() gives a fresh 0700 directory with an unpredictable name that only
+    this user can enter, removed when the process exits.
+    """
+    global _PQV_WORKDIR
+    if _PQV_WORKDIR is None or not os.path.isdir(_PQV_WORKDIR):
+        _PQV_WORKDIR = tempfile.mkdtemp(prefix="pqv-")
+        atexit.register(shutil.rmtree, _PQV_WORKDIR, True)
+    return _PQV_WORKDIR
+
+
 BANNER = f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║  pq-verify v{VERSION}                                              ║
@@ -603,17 +631,25 @@ def compile_all():
         ('cubic',       CUBIC_C,       '-O3 -shared -fPIC -lm'),
         ('conformity',  CONFORMITY_C,  '-O3 -shared -fPIC -lm'),
     ]:
-        c_path = f'/tmp/pqv_{name}.c'
-        so_path = f'/tmp/libpqv_{name}.so'
+        _wd = _pqv_workdir()
+        c_path = os.path.join(_wd, f'pqv_{name}.c')
+        so_path = os.path.join(_wd, f'libpqv_{name}.so')
         with open(c_path, 'w') as f:
             f.write(src)
-        ret = os.system(f'gcc {flags} -o {so_path} {c_path} 2>/dev/null')
-        if ret == 0:
+        # A list argv rather than os.system: no shell to quote for, and the
+        # compiler's diagnostics are captured instead of thrown at /dev/null,
+        # where a build failure looked identical to a missing compiler.
+        proc = subprocess.run(['gcc', *flags.split(), '-o', so_path, c_path],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
             engines[name] = ctypes.CDLL(so_path)
-            print(f"  \u2705 {name}")
+            print(f"  {_OK} {name}")
         else:
-            print(f"  \u274c {name} \u2014 compilation failed "
+            _why = (proc.stderr or proc.stdout or '').strip().splitlines()
+            print(f"  {_BAD} {name} \u2014 compilation failed "
                   f"(is gcc installed? checks using this engine will NOT run)")
+            for _l in _why[-3:]:
+                print(f"      {_l[:160]}")
             engines[name] = None
             DEGRADED['engines'].append(name)
     if DEGRADED['engines']:
@@ -1243,7 +1279,9 @@ def audit_curve(engines, a, b, p):
 # COQ CERTIFICATE GENERATOR
 # ================================================================
 
-def gen_coq_cert(results, filename='/tmp/pq_verify_cert.v'):
+def gen_coq_cert(results, filename=None):
+    if filename is None:
+        filename = os.path.join(_pqv_workdir(), 'pq_verify_cert.v')
     lines = [
         f"(* pq-verify v{VERSION} Coq certificate *)",
         f"(* Generated: {datetime.now(timezone.utc).isoformat()} *)",
@@ -1929,7 +1967,7 @@ def audit_full_ntt(lib):
                 coq_lines.append("Proof. vm_compute. reflexivity. Qed.")
         z_idx += n_groups
 
-    ntt_cert_file = '/tmp/pq_ntt_cert.v'
+    ntt_cert_file = os.path.join(_pqv_workdir(), 'pq_ntt_cert.v')
     with open(ntt_cert_file, 'w') as f:
         f.write('\n'.join(coq_lines))
     # Writing a file proves nothing. The real check is 'certificate verified'
@@ -2556,14 +2594,30 @@ def audit_coq_daemon():
 def audit_c_cfl(engines):
     """Benchmark C-compiled CFL pipeline vs Python CFL."""
     r = AuditResult('C CFL Pipeline')
+    # This benchmark used to load ./libgf2_cfl.so and /tmp/libgf2_cfl.so if they
+    # happened to exist. Both are attacker-controllable -- the first by anyone
+    # who can write the directory pq-verify is run from, which for an auditing
+    # tool is routinely a vendor's build tree or an extracted tarball; the
+    # second by any local user, since /tmp is world-writable. ctypes.CDLL runs
+    # the library's constructors, so either one was arbitrary code execution
+    # inside the process doing the verifying.
+    #
+    # The comparison is optional -- without the library this falls back to the
+    # Python pipeline and still reports -- so the library is now opt-in by
+    # absolute path and never discovered implicitly.
     c_cfl = None
-    for path in ['./libgf2_cfl.so', '/tmp/libgf2_cfl.so']:
-        if os.path.exists(path):
+    _cfl_so = os.environ.get('PQV_CFL_SO')
+    if _cfl_so:
+        if not os.path.isabs(_cfl_so):
+            print(f"  {_BAD} PQV_CFL_SO must be an absolute path — ignoring "
+                  f"{_cfl_so!r}")
+        elif not os.path.exists(_cfl_so):
+            print(f"  {_BAD} PQV_CFL_SO does not exist — ignoring {_cfl_so!r}")
+        else:
             try:
-                c_cfl = ctypes.CDLL(path)
-                break
-            except Exception:
-                pass
+                c_cfl = ctypes.CDLL(_cfl_so)
+            except Exception as _e:
+                print(f"  {_BAD} PQV_CFL_SO failed to load: {_e}")
     if c_cfl is None:
         t0 = time.perf_counter()
         for _ in range(100):
@@ -3543,21 +3597,22 @@ def compile_engine6():
     ]
     engines = {}
     for name, blob, cfile, cc, flags in specs:
-        c_path  = f'/tmp/{cfile}'
-        so_path = f'/tmp/{cfile.rsplit(".",1)[0]}.so'
+        _wd = _pqv_workdir()
+        c_path  = os.path.join(_wd, cfile)
+        so_path = os.path.join(_wd, cfile.rsplit(".", 1)[0] + '.so')
         # Cache guard: wipe any prior artifact
         for p in (c_path, so_path):
             if os.path.exists(p):
                 os.remove(p)
         with open(c_path, 'w') as f:
             f.write(_decode(blob))
-        ret = os.system(f'{cc} {flags} -o {so_path} {c_path} 2>/tmp/e6_{name}_err.txt')
-        if ret != 0 or not os.path.exists(so_path):
-            print(f'  ❌ engine6/{name} — compilation failed')
-            try:
-                print('     ' + open(f'/tmp/e6_{name}_err.txt').read().strip()[:200])
-            except Exception:
-                pass
+        proc = subprocess.run([cc, *flags.split(), '-o', so_path, c_path],
+                              capture_output=True, text=True)
+        if proc.returncode != 0 or not os.path.exists(so_path):
+            print(f'  {_BAD} engine6/{name} — compilation failed')
+            _why = (proc.stderr or proc.stdout or '').strip()
+            if _why:
+                print('     ' + _why[:200])
             engines[name] = None
             continue
         lib = ctypes.CDLL(so_path)
@@ -3945,8 +4000,10 @@ def audit_engine6_cfl(engines):
 # residue theorem (finite residues of f2 sum to zero).  Verified by coqc,
 # which returns a real exit code — unlike the daemon's write-only check.
 
-def gen_engine6_coq_cert(filename='/tmp/pq_engine6_cert.v'):
+def gen_engine6_coq_cert(filename=None):
     """Emit a Coq certificate of Engine 6's EXACT results."""
+    if filename is None:
+        filename = os.path.join(_pqv_workdir(), 'pq_engine6_cert.v')
     lam_num = 884266719222068786621093750  # lambda2 = -lam_num / 97
     # Conjecture 7 exact residue integers (z=0 and conifold z=1/3125)
     rf2_0, rf4_0 = (-527286529541015625000,

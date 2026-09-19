@@ -711,9 +711,11 @@ def test_every_module_parses_at_the_declared_python_floor():
     # Moving the floor DOWN is a claim nothing here can check: the scan below
     # is parse-only, and no interpreter older than this is on PATH to run. So
     # widening requires exercising it first, not editing one line of metadata.
-    assert floor >= (3, 8), (
-        f"requires-python was widened to {floor[0]}.{floor[1]}, which has "
-        f"never been exercised -- run the suite there before claiming it")
+    assert floor >= (3, 9), (
+        f"requires-python was widened to {floor[0]}.{floor[1]}. 3.9 is the "
+        f"floor CI actually runs, and the documented `pq-verify[full]` install "
+        f"cannot resolve below it -- kyber-py and dilithium-py both require "
+        f">=3.9. Exercise a lower version before claiming it.")
     for path in _shipped_modules():
         try:
             ast.parse(path.read_text(), filename=str(path),
@@ -808,3 +810,124 @@ def test_package_imports_on_every_older_interpreter_present():
         assert r.returncode == 0, (
             f"pq-verify does not import on python3.{minor}, which "
             f"requires-python advertises:\n{r.stderr.strip()[-600:]}")
+
+
+# ----------------------------------------------------------------------
+# Untrusted load paths and generated-file handling
+#
+# Two demonstrated defects, kept as the exploits that proved them:
+#   * ./libgf2_cfl.so was loaded from the working directory, and CDLL runs a
+#     library's constructors -- arbitrary code execution inside the process
+#     doing the verifying, in a tool whose normal use is "cd into the vendor's
+#     build tree and run it".
+#   * Generated C went to fixed /tmp paths, and open(path, 'w') follows
+#     symlinks -- arbitrary file overwrite for any local user.
+# ----------------------------------------------------------------------
+
+def _gcc_or_skip():
+    import shutil
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+
+
+def test_engine_workdir_is_private_and_unpredictable():
+    import os
+    import stat
+    from pq_verify.core import _pqv_workdir
+    d = _pqv_workdir()
+    assert os.path.isdir(d)
+    mode = stat.S_IMODE(os.stat(d).st_mode)
+    assert mode == 0o700, f"scratch directory is {oct(mode)}, must be 0700"
+    # mkdtemp's suffix is random; a fixed name is what made the old paths
+    # predictable enough to squat on
+    assert os.path.basename(d) != "pqv-"
+    assert _pqv_workdir() == d, "workdir must be stable within a process"
+
+
+def test_no_hardcoded_tmp_paths_remain():
+    """A fixed path under a world-writable directory is the whole bug class."""
+    import pathlib
+    import re
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "pq_verify" / "core.py").read_text()
+    offenders = []
+    for i, line in enumerate(src.splitlines(), 1):
+        if re.search(r"""['"]/tmp/""", line) and not line.lstrip().startswith("#"):
+            offenders.append(f"{i}: {line.strip()[:90]}")
+    assert not offenders, "fixed /tmp paths are back:\n  " + "\n  ".join(offenders)
+
+
+def test_generated_sources_do_not_land_on_predictable_paths():
+    import glob
+    import os
+    from pq_verify.core import compile_all, _pqv_workdir
+    _gcc_or_skip()
+
+    def _snapshot():
+        out = {}
+        for pat in ("/tmp/pqv_*.c", "/tmp/libpqv_*.so"):
+            for f in glob.glob(pat):
+                try:
+                    out[f] = os.stat(f).st_mtime_ns
+                except OSError:
+                    pass
+        return out
+
+    before = _snapshot()
+    compile_all()
+    after = _snapshot()
+    assert after == before, (
+        "the run created or rewrote a fixed path under /tmp: "
+        f"{sorted(set(after) ^ set(before)) or 'contents changed'}")
+    wd = _pqv_workdir()
+    produced = glob.glob(os.path.join(wd, "pqv_*.c"))
+    assert produced, "engine sources should be written inside the private workdir"
+
+
+def test_cfl_benchmark_ignores_a_library_in_the_working_directory(tmp_path,
+                                                                  monkeypatch):
+    """The exploit, as a test. CDLL runs constructors; this must not reach one."""
+    import subprocess
+    _gcc_or_skip()
+    marker = tmp_path / "executed"
+    src = tmp_path / "evil.c"
+    src.write_text(
+        '#include <stdio.h>\n'
+        '__attribute__((constructor)) static void run(void) {\n'
+        '    FILE *f = fopen("%s", "w");\n'
+        '    if (f) { fprintf(f, "x"); fclose(f); }\n'
+        '}\n' % marker)
+    lib = tmp_path / "libgf2_cfl.so"
+    if subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(lib), str(src)],
+                      capture_output=True).returncode != 0:
+        pytest.skip("could not build the probe library")
+
+    from pq_verify.core import audit_c_cfl
+    monkeypatch.delenv("PQV_CFL_SO", raising=False)
+    monkeypatch.chdir(tmp_path)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = audit_c_cfl({})
+    assert not marker.exists(), (
+        "a library in the working directory was loaded and its constructor ran")
+    assert r is not None, "the benchmark must still report via the Python path"
+
+
+def test_cfl_library_opt_in_requires_an_absolute_path(tmp_path, monkeypatch):
+    from pq_verify.core import audit_c_cfl
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PQV_CFL_SO", "libgf2_cfl.so")     # relative
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        audit_c_cfl({})
+    assert "absolute path" in out.getvalue()
+
+
+def test_engine_compilation_does_not_use_a_shell():
+    """os.system() meant the compiler's diagnostics went to /dev/null, where a
+    broken build looked exactly like a missing compiler."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "pq_verify" / "core.py").read_text()
+    for i, line in enumerate(src.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        assert "os.system(" not in line, f"core.py:{i} shells out: {line.strip()[:80]}"
