@@ -51,7 +51,7 @@ def discover_symbols(so_path):
 def run_vendor_audit():
     p = _PARAMS[ALGORITHM]
     report = {
-        "tool": "pq-verify", "version": "2.6.7",
+        "tool": "pq-verify", "version": "2.7.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "target": {"so_path": SO_PATH, "symbol": NTT_SYMBOL, "algorithm": ALGORITHM, **p},
         "results": {},

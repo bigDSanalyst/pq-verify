@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.6.7 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.7.0 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -34,7 +34,7 @@ License: MIT
 import os, sys, ctypes, time, random, json, math, hashlib, struct
 from datetime import datetime, timezone
 
-VERSION = "2.6.7"
+VERSION = "2.7.0"
 
 # Status glyphs as names rather than escapes inlined into f-string expressions.
 # A backslash inside an f-string expression is PEP 701 syntax (Python 3.12+);

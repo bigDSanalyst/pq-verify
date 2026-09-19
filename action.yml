@@ -47,7 +47,7 @@ inputs:
     default: 'pq-verify.json'
   version:
     description: >
-      Which pq-verify to install. A bare version (e.g. '2.6.7') installs that
+      Which pq-verify to install. A bare version (e.g. '2.7.0') installs that
       release from PyPI — the artifact users get. Prefix with 'git:' to install
       a ref from source instead (e.g. 'git:main'). Default is the latest PyPI
       release, so CI tests the published wheel rather than the repository.
