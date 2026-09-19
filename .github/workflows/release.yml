@@ -1,0 +1,202 @@
+# Cuts a release: verifies, builds, attests, and publishes.
+#
+# SLSA provenance cannot be added to an artifact after the fact -- the
+# attestation is produced by the builder and signed via OIDC, which is what
+# makes it evidence rather than a claim. So the artifacts a release ships must
+# be built HERE, by this workflow, from a reviewed commit. A wheel built on
+# someone's laptop and uploaded by hand can never be attested.
+#
+# Trigger from the Actions tab with the version to release. The workflow
+# creates the tag itself, so no local tag push is needed.
+#
+# PREREQUISITE, once, before the first run:
+#   PyPI -> pq-verify -> Publishing -> Add a trusted publisher
+#     owner: bigDSanalyst   repository: pq-verify
+#     workflow: release.yml  environment: (leave blank)
+#   That replaces the API token entirely -- PyPI verifies this workflow's
+#   OIDC identity, so there is no long-lived secret to leak.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 2.7.0 (must match pyproject.toml)"
+        required: true
+        type: string
+      publish_to_pypi:
+        description: "Publish to PyPI (requires the trusted publisher above)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  # Never release what was not verified at the exact commit being released.
+  verify:
+    name: py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install pytest kyber-py dilithium-py sympy
+      - run: python -m pytest tests/ -q
+      - run: python -m pq_verify.cli --acvp-all --fail-on-finding
+
+  build:
+    name: build, attest and release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the tag and the release
+      id-token: write        # OIDC, for signing the attestations
+      attestations: write    # store the SLSA provenance and SBOM attestation
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The version must agree with the repository
+        id: meta
+        run: |
+          set -euo pipefail
+          WANT="${{ inputs.version }}"
+          # A release whose metadata disagrees with its tag is the same class of
+          # defect as a requires-python that does not match the code.
+          HAVE=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          if [ "$WANT" != "$HAVE" ]; then
+            echo "::error::pyproject.toml says $HAVE, release asked for $WANT"
+            exit 1
+          fi
+          CODE=$(python -c "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"',pathlib.Path('pq_verify/__init__.py').read_text()).group(1))")
+          if [ "$WANT" != "$CODE" ]; then
+            echo "::error::__version__ is $CODE, release asked for $WANT"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$WANT" >/dev/null 2>&1; then
+            echo "::error::tag v$WANT already exists; releases are immutable"
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$WANT from $(git rev-parse --short HEAD)"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"     # build at the declared floor
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: The wheel must carry the pinned vectors
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install dist/*.whl
+          /tmp/fresh/bin/pq-verify --version
+          /tmp/fresh/bin/pq-verify --emit-prompt ML-KEM-512 --prompt-out /tmp/p.json
+          python - <<'PY'
+          import json
+          d = json.load(open("/tmp/p.json"))
+          assert d["questionCount"] == 80, d["questionCount"]
+          assert "pinned" in d["vectorSource"], d["vectorSource"]
+          print("vectors present:", d["questionCount"], "questions")
+          PY
+
+      # SLSA provenance. Verifiable by anyone, with no trust in this repo:
+      #   gh attestation verify pq_verify-<v>-py3-none-any.whl \
+      #      --repo bigDSanalyst/pq-verify
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist/
+          format: spdx-json
+          output-file: pq-verify-${{ inputs.version }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: "dist/*.whl"
+          sbom-path: pq-verify-${{ inputs.version }}.spdx.json
+
+      - name: Checksums
+        run: |
+          cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Release notes from the changelog
+        run: |
+          # One source of truth: the notes are the CHANGELOG section, not a
+          # second description that can drift from it.
+          awk '/^## \[${{ inputs.version }}\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > NOTES.md
+          if [ ! -s NOTES.md ]; then
+            echo "::error::CHANGELOG.md has no section for ${{ inputs.version }}"
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "### Verifying this release"
+            echo ""
+            echo '```bash'
+            echo "gh attestation verify pq_verify-${{ inputs.version }}-py3-none-any.whl \\"
+            echo "   --repo ${{ github.repository }}"
+            echo '```'
+            echo ""
+            echo "Built by \`.github/workflows/release.yml\` from commit \`${{ steps.meta.outputs.sha }}\`,"
+            echo "after the full suite and all 855 NIST ACVP vectors passed on Python 3.9 through 3.13."
+            echo "An SPDX SBOM is attached and attested."
+          } >> NOTES.md
+
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --target "${{ steps.meta.outputs.sha }}" \
+            --title "pq-verify v${{ inputs.version }}" \
+            --notes-file NOTES.md \
+            dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt \
+            "pq-verify-${{ inputs.version }}.spdx.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  pypi:
+    name: publish to PyPI
+    needs: build
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # trusted publishing; no API token anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: rm -f dist/SHA256SUMS.txt
+      - uses: pypa/gh-action-pypi-publish@release/v1
