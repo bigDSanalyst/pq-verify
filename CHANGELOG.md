@@ -101,6 +101,14 @@ Users of 2.6.7 or earlier on shared or multi-user hosts should upgrade.
   3.9, 3.10, 3.11, 3.12 and 3.13, plus a job that installs the built wheel in a
   clean environment at the declared floor and checks the pinned vectors shipped
   inside it. The matrix covers the entire range `requires-python` declares.
+- **A release workflow** (`.github/workflows/release.yml`) that re-runs the full
+  matrix at the commit being released, builds at the declared floor, emits
+  **SLSA build provenance** and an attested **SPDX SBOM**, creates the tag and
+  release, and publishes to PyPI via Trusted Publishing — no API token stored
+  anywhere. Provenance cannot be retrofitted, so artifacts built outside this
+  workflow can never carry it. Guards refuse to release if `pyproject.toml`,
+  `__version__` and the requested version disagree, if the tag already exists,
+  or if `CHANGELOG.md` has no section for the version.
 - **SECURITY.md**, including the trust boundary that was never written down:
   auditing an untrusted library executes it, by design.
 - Guards that hold metadata and code together: every module must parse at the

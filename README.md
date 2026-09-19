@@ -267,6 +267,30 @@ Vector provenance and per-file sha256 are recorded in `pq_verify/vectors/MANIFES
 A scheduled GitHub Action watches upstream and opens an issue when NIST changes
 something, so re-pinning is a deliberate, reviewed act rather than a live dependency.
 
+## Verifying a release
+
+Releases are built by `.github/workflows/release.yml` on GitHub's runners, from
+a reviewed commit, after the full suite and all 855 NIST ACVP vectors pass on
+Python 3.9 through 3.13. Each artifact carries **SLSA build provenance** and an
+attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
+says:
+
+```bash
+gh attestation verify pq_verify-2.7.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
+```
+
+That tells you which workflow built the file, from which commit, on whose
+runners — not that we assert it, but that GitHub signed it. Provenance cannot
+be added to an artifact after the fact, which is why a release built anywhere
+else can never have it.
+
+The SBOM is short: **pq-verify has no unconditional runtime dependencies.**
+`kyber-py`, `dilithium-py`, `sympy` and `slh-dsa` are optional extras used to
+cross-check against independent implementations; the package itself installs
+with none of them.
+
+---
+
 ## What a result is bound to
 
 Every report states its binding as a field, not as prose:
