@@ -50,7 +50,7 @@ pip install "pq-verify[full]"
 pq-verify --acvp-all            # 855/855, offline, no configuration
 ```
 
-That is the whole installation. It is a command-line tool: Python 3.8+, `gcc`,
+That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
 and nothing else. No notebook, no network, no service. The NIST vectors ship
 inside the package, so air-gapped environments work out of the box.
 
@@ -336,12 +336,12 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
 ## Requirements
 
 **Minimum (core engines + ~149 self-tests):**
-- Python 3.8+ — syntax is checked against 3.8 by the test suite; execution is
-  exercised on 3.10 through 3.13. No 3.9+ or 3.10+ standard-library feature is
-  used, so 3.8 and 3.9 are supported but not run here. `requires-python` and
-  the code are held together mechanically: a module that stops parsing at the
-  declared floor fails the suite, and the suite imports the package on every
-  older interpreter it finds on PATH.
+- Python 3.9+ — **every version of the declared range (3.9, 3.10, 3.11, 3.12,
+  3.13) runs the full test suite and all 855 ACVP vectors in CI.** The floor is
+  3.9 rather than 3.8 because `pq-verify[full]` cannot resolve below it:
+  `kyber-py` and `dilithium-py` both require `>=3.9`. `requires-python` and the
+  code are held together mechanically — a module that stops parsing at the
+  declared floor fails the suite, and widening the floor fails it too.
 - gcc and g++ (the C/C++ engines compile at runtime)
 
 **For the full 160/160 self-suite and the 855/855 ACVP claim:**

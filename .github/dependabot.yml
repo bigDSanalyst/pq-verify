@@ -1,0 +1,13 @@
+# Keeps the CI actions current. A verification tool's own supply chain should
+# not be the weakest link in it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

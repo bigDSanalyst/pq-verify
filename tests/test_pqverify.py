@@ -711,9 +711,11 @@ def test_every_module_parses_at_the_declared_python_floor():
     # Moving the floor DOWN is a claim nothing here can check: the scan below
     # is parse-only, and no interpreter older than this is on PATH to run. So
     # widening requires exercising it first, not editing one line of metadata.
-    assert floor >= (3, 8), (
-        f"requires-python was widened to {floor[0]}.{floor[1]}, which has "
-        f"never been exercised -- run the suite there before claiming it")
+    assert floor >= (3, 9), (
+        f"requires-python was widened to {floor[0]}.{floor[1]}. 3.9 is the "
+        f"floor CI actually runs, and the documented `pq-verify[full]` install "
+        f"cannot resolve below it -- kyber-py and dilithium-py both require "
+        f">=3.9. Exercise a lower version before claiming it.")
     for path in _shipped_modules():
         try:
             ast.parse(path.read_text(), filename=str(path),
@@ -808,3 +810,220 @@ def test_package_imports_on_every_older_interpreter_present():
         assert r.returncode == 0, (
             f"pq-verify does not import on python3.{minor}, which "
             f"requires-python advertises:\n{r.stderr.strip()[-600:]}")
+
+
+# ----------------------------------------------------------------------
+# Untrusted load paths and generated-file handling
+#
+# Two demonstrated defects, kept as the exploits that proved them:
+#   * ./libgf2_cfl.so was loaded from the working directory, and CDLL runs a
+#     library's constructors -- arbitrary code execution inside the process
+#     doing the verifying, in a tool whose normal use is "cd into the vendor's
+#     build tree and run it".
+#   * Generated C went to fixed /tmp paths, and open(path, 'w') follows
+#     symlinks -- arbitrary file overwrite for any local user.
+# ----------------------------------------------------------------------
+
+def _gcc_or_skip():
+    import shutil
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+
+
+def test_engine_workdir_is_private_and_unpredictable():
+    import os
+    import stat
+    from pq_verify.core import _pqv_workdir
+    d = _pqv_workdir()
+    assert os.path.isdir(d)
+    mode = stat.S_IMODE(os.stat(d).st_mode)
+    assert mode == 0o700, f"scratch directory is {oct(mode)}, must be 0700"
+    # mkdtemp's suffix is random; a fixed name is what made the old paths
+    # predictable enough to squat on
+    assert os.path.basename(d) != "pqv-"
+    assert _pqv_workdir() == d, "workdir must be stable within a process"
+
+
+def test_no_hardcoded_tmp_paths_remain():
+    """A fixed path under a world-writable directory is the whole bug class."""
+    import pathlib
+    import re
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "pq_verify" / "core.py").read_text()
+    offenders = []
+    for i, line in enumerate(src.splitlines(), 1):
+        if re.search(r"""['"]/tmp/""", line) and not line.lstrip().startswith("#"):
+            offenders.append(f"{i}: {line.strip()[:90]}")
+    assert not offenders, "fixed /tmp paths are back:\n  " + "\n  ".join(offenders)
+
+
+def test_generated_sources_do_not_land_on_predictable_paths():
+    import glob
+    import os
+    from pq_verify.core import compile_all, _pqv_workdir
+    _gcc_or_skip()
+
+    def _snapshot():
+        out = {}
+        for pat in ("/tmp/pqv_*.c", "/tmp/libpqv_*.so"):
+            for f in glob.glob(pat):
+                try:
+                    out[f] = os.stat(f).st_mtime_ns
+                except OSError:
+                    pass
+        return out
+
+    before = _snapshot()
+    compile_all()
+    after = _snapshot()
+    assert after == before, (
+        "the run created or rewrote a fixed path under /tmp: "
+        f"{sorted(set(after) ^ set(before)) or 'contents changed'}")
+    wd = _pqv_workdir()
+    produced = glob.glob(os.path.join(wd, "pqv_*.c"))
+    assert produced, "engine sources should be written inside the private workdir"
+
+
+def test_cfl_benchmark_ignores_a_library_in_the_working_directory(tmp_path,
+                                                                  monkeypatch):
+    """The exploit, as a test. CDLL runs constructors; this must not reach one."""
+    import subprocess
+    _gcc_or_skip()
+    marker = tmp_path / "executed"
+    src = tmp_path / "evil.c"
+    src.write_text(
+        '#include <stdio.h>\n'
+        '__attribute__((constructor)) static void run(void) {\n'
+        '    FILE *f = fopen("%s", "w");\n'
+        '    if (f) { fprintf(f, "x"); fclose(f); }\n'
+        '}\n' % marker)
+    lib = tmp_path / "libgf2_cfl.so"
+    if subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(lib), str(src)],
+                      capture_output=True).returncode != 0:
+        pytest.skip("could not build the probe library")
+
+    from pq_verify.core import audit_c_cfl
+    monkeypatch.delenv("PQV_CFL_SO", raising=False)
+    monkeypatch.chdir(tmp_path)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = audit_c_cfl({})
+    assert not marker.exists(), (
+        "a library in the working directory was loaded and its constructor ran")
+    assert r is not None, "the benchmark must still report via the Python path"
+
+
+def test_cfl_library_opt_in_requires_an_absolute_path(tmp_path, monkeypatch):
+    from pq_verify.core import audit_c_cfl
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PQV_CFL_SO", "libgf2_cfl.so")     # relative
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        audit_c_cfl({})
+    assert "absolute path" in out.getvalue()
+
+
+def test_engine_compilation_does_not_use_a_shell():
+    """os.system() meant the compiler's diagnostics went to /dev/null, where a
+    broken build looked exactly like a missing compiler."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "pq_verify" / "core.py").read_text()
+    for i, line in enumerate(src.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        assert "os.system(" not in line, f"core.py:{i} shells out: {line.strip()[:80]}"
+
+
+def test_acvp_gate_fails_when_the_reference_implementations_are_missing(
+        monkeypatch):
+    """A broken dependency install must not report green.
+
+    Without kyber-py and dilithium-py the ACVP suites verify nothing and report
+    0/0. Until 2.7.0 `--acvp-all --fail-on-finding` exited 0 for that, so a CI
+    job whose pip step silently failed looked identical to one that checked all
+    855 vectors.
+    """
+    import sys
+    from pq_verify.core import DEGRADED
+
+    before = {k: list(v) for k, v in DEGRADED.items()}
+    try:
+        # make `from kyber_py... import` and `from dilithium_py... import` fail
+        for mod in ("kyber_py", "kyber_py.ml_kem",
+                    "dilithium_py", "dilithium_py.ml_dsa"):
+            monkeypatch.setitem(sys.modules, mod, None)
+        code, out = _cli("--acvp-all", "--fail-on-finding")
+    finally:
+        for k, v in before.items():
+            DEGRADED[k][:] = v
+
+    assert code == 1, "a run that verified nothing passed the gate"
+    assert "0/0" in out
+    assert "CANNOT VERIFY" in out
+
+
+# ----------------------------------------------------------------------
+# A response file is untrusted input
+#
+# --verify-response reads a file someone else produced. Three of these crashed
+# with an uncaught traceback before 2.7.0. A crash is not a verdict: the tool's
+# whole premise is that a check which did not run must say so, and a traceback
+# says nothing at all.
+# ----------------------------------------------------------------------
+
+_MALFORMED = {
+    "deep_nest":       "[" * 2000 + "]" * 2000,
+    "bare_scalar":     "42",
+    "bare_string":     '"hello"',
+    "not_json":        "{not json at all",
+    "null_groups":     {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": None}]},
+    "groups_not_list": {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": {"a": 1}}]},
+    "tests_scalar":    {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203",
+                            "testGroups": [{"tgId": 1, "tests": 5}]}]},
+    "tcid_unhashable": {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": {"a": 1}, "ek": "00"}]}]}]},
+    "tcid_huge":       {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": 10 ** 400, "ek": "00"}]}]}]},
+    "tcid_bool":       {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": True, "ek": "00"}]}]}]},
+    "suite_not_str":   {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": 123, "testGroups": []}]},
+    "paramset_object": {"parameterSet": {"x": 1}, "suites": []},
+    "promptid_list":   {"parameterSet": "ML-KEM-512", "promptId": [1, 2], "suites": []},
+    "artifact_weird":  {"parameterSet": "ML-KEM-512", "artifact": [1, 2, 3], "suites": []},
+    "raw_nonstr_alg":  {"algorithm": 7, "mode": "keyGen", "revision": "FIPS203",
+                        "testGroups": []},
+}
+
+
+@pytest.mark.parametrize("name", sorted(_MALFORMED))
+def test_malformed_response_never_crashes_and_never_verifies(name, tmp_path):
+    """The two invariants that matter for an untrusted file.
+
+    It must not raise -- a traceback is not a verdict -- and it must never come
+    back VERIFIED, because nothing in a malformed document was checked.
+    """
+    import json as _json
+    body = _MALFORMED[name]
+    p = tmp_path / "response.json"
+    p.write_text(body if isinstance(body, str) else _json.dumps(body))
+    r = _run(str(p))                       # raises on regression; that is the test
+    assert r["verified"] is False, f"{name} reported VERIFIED"
+    assert r["status"] in ("CANNOT VERIFY", "INCOMPLETE", "FINDINGS PRESENT")
+    assert r["passed"] <= r["total"]
+
+
+def test_oversized_answer_is_a_finding_not_a_crash(tmp_path):
+    import json as _json
+    p = tmp_path / "r.json"
+    p.write_text(_json.dumps({"parameterSet": "ML-KEM-512", "suites": [
+        {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+            {"tgId": 1, "tests": [{"tcId": 1, "ek": "AB" * 300000, "dk": "00"}]}]}]}))
+    r = _run(str(p))
+    assert r["verified"] is False
+    assert r["findings"]

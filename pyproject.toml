@@ -7,7 +7,7 @@ name = "pq-verify"
 version = "2.7.0"
 description = "Independent verification for ML-KEM / ML-DSA implementations — native field NTT verification, NIST ACVP, lattice parameter security, Coq certificates."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -22,7 +22,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
