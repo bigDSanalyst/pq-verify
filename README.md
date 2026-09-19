@@ -1,4 +1,4 @@
-# pq-verify v2.7.0 — PQC Implementation Verification
+# pq-verify v2.8.0 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -26,7 +26,11 @@ A three-layer audit of any ML-KEM/ML-DSA implementation:
 | **Compliance** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 = 855/855 ACVP vectors (pinned) |
 | **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
 
-Plus per-layer side-channel leakage analysis with protection-allocation recommendations.
+| **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
+
+Plus per-layer algebraic protection allocation: which NTT layers are worth
+masking, computed from the transform's structure. That is a design input, not
+a measurement — see [Scope](#scope).
 
 Every result is **reproducible** — deterministic output, SHA-256 fingerprint, re-runnable by your own auditors.
 
@@ -70,6 +74,15 @@ a build with the transform inlined — ask it the questions instead:
 pq-verify --emit-prompt ML-DSA-65 --prompt-out prompt.json   # 205 questions, no answers
 #   ... the implementer runs them, wherever it lives, and returns a response ...
 pq-verify --verify-response response.json                    # byte-exact, per test case
+```
+
+Nothing in production negotiates bare ML-KEM. To check the part ACVP cannot
+see — how the two halves of a hybrid key agreement are put together:
+
+```bash
+pq-verify --emit-hybrid-prompt X25519MLKEM768 --prompt-out hybrid.json
+#   ... fill in the wire bytes from one handshake ...
+pq-verify --verify-hybrid hybrid.json                        # RFC 10024 composition
 ```
 
 `DEMO.ipynb` runs the same thing in Colab if you prefer a notebook.
@@ -122,6 +135,7 @@ With no library at all, it runs the NIST ACVP suites:
 | `library` | — | compiled `.so` containing the NTT to audit |
 | `symbol` | — | exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
 | `acvp` | `true` | run ACVP suites; `live` fetches NIST's current vectors |
+| `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step if anything is reported |
 
 Outputs: `verified`, `findings`, `sarif-file`. A complete workflow is in
@@ -147,6 +161,9 @@ runs rather than in a terminal someone has to read.
 | `PQV003` | Root of unity has the wrong multiplicative order |
 | `PQV004` | Non-circular known-answer test failed |
 | `PQV005` | Boundary/edge-case vector failed |
+| `PQV006` | Vendor answer differs from the pinned NIST value |
+| `PQV007` | Hybrid key agreement does not compose the way RFC 10024 pins it |
+| `PQV000` | The run could not verify this — not a pass and not a failure |
 
 `--fail-on-finding` exits non-zero, so it can gate a merge.
 
@@ -240,6 +257,9 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 | `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |
 | `verify_response(file)` | Check a response byte-exact against the pinned answers |
 | `available_parameter_sets()` | Parameter sets the pinned bundle can pose questions for |
+| `emit_hybrid_prompt(group)` | Write what to supply for a hybrid group (RFC 10024) |
+| `verify_hybrid(file)` | Check a hybrid transcript's composition against RFC 10024 |
+| `HYBRID_GROUPS` | The pinned registry: codepoints, component order, lengths |
 
 ---
 
@@ -276,7 +296,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.7.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.8.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
@@ -299,6 +319,7 @@ Every report states its binding as a field, not as prose:
 |------|-----------|
 | `--audit-so`, `--audit-kem` | `sha256 <hash>` — that file performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
+| `--verify-hybrid` | `none — vendor-supplied transcript` |
 | `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
 
 The binding is recorded independently of the verdict, because they are
@@ -332,11 +353,104 @@ its full count. A run that did not verify does not pass a CI gate.
 
 ---
 
+## Hybrid key agreement (RFC 10024)
+
+Nothing in production negotiates bare ML-KEM. Every deployment that has turned
+post-quantum TLS on runs a **hybrid** group, and `X25519MLKEM768` is what
+Chrome, Firefox, OpenSSL, BoringSSL and the large CDNs agree on today.
+
+The ML-KEM half of that handshake is covered by `--acvp` and `--audit-kem`.
+The **composition** is not — and the composition is where the bugs are,
+because RFC 10024 does not use one order:
+
+| Group | Codepoint | Key share | Shared secret |
+|---|---|---|---|
+| `X25519MLKEM768` | `0x11EC` | ML-KEM ‖ ECDHE | ML-KEM ‖ ECDHE |
+| `SecP256r1MLKEM768` | `0x11EB` | ECDHE ‖ ML-KEM | ECDHE ‖ ML-KEM |
+| `SecP384r1MLKEM1024` | `0x11ED` | ECDHE ‖ ML-KEM | ECDHE ‖ ML-KEM |
+
+The first row is reversed relative to its own name. The RFC says so itself,
+and calls it historical. So an implementation can pass **every ACVP vector
+byte-for-byte** and still be wrong, because ACVP never sees the concatenation.
+
+The failure is silent in the worst way: two peers that make the same mistake
+interoperate happily with each other and with nobody else, and the peer that
+got it right sees only a `decrypt_error` with no indication of which side is
+at fault.
+
+```bash
+pq-verify --emit-hybrid-prompt list          # the groups this build knows
+pq-verify --emit-hybrid-prompt X25519MLKEM768 --prompt-out hybrid.json
+pq-verify --verify-hybrid hybrid.json
+```
+
+What gets checked, from one handshake's wire bytes:
+
+- every length against the value RFC 10024 pins for that group
+- the encapsulation key against the FIPS 203 §7.2 check the RFC makes a
+  **MUST** for the server — validated here against NIST's own 20 labelled
+  `encapsulationKeyCheck` cases, so it agrees with NIST rather than with itself
+- the ECDHE share as an uncompressed point on the curve (RFC 9846 §4.3.8.2)
+- the X25519 all-zero shared-secret check, which the RFC also makes a MUST
+- and, when you supply an ephemeral private scalar, the ECDHE shared secret
+  **recomputed** and compared byte-for-byte at the offset the group pins
+
+When a check fails, pq-verify tests the other order explicitly:
+
+```
+**FAIL**  clientShare ML-KEM-768 encapsulation key (FIPS 203 §7.2)
+          there is no valid encapsulation key at offset 0, but there IS one
+          at the offset the other order gives — the components are
+          concatenated the wrong way round. RFC 10024 pins
+          kem_ek ‖ ecdh_pub for X25519MLKEM768
+```
+
+That is a root cause, not a mismatch. The discriminator is sound rather than
+heuristic: random bytes pass the FIPS 203 §7.2 check with probability below
+2⁻¹⁴⁰, so "a valid encapsulation key is sitting at the other offset" is not a
+coincidence.
+
+No private KEM key is ever requested. A field you cannot supply is reported as
+`NOT CHECKED` and stays out of the ratio; a check that does not exist for a
+group — X25519 has no structural share check, and inventing one would report a
+check that did not happen — is reported as `N/A` and does not hold the verdict
+at `PARTIAL`.
+
+---
+
 ## Scope
 
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
 
 The algebraic core is proven natively where the proof is exact; the full implementation is proven byte-exact against NIST's own bytes. We make the claims we can prove.
+
+### Side channels are not measured
+
+pq-verify compares values. It never executes an implementation under
+measurement, collects no traces, and observes no timing, power or
+electromagnetic behaviour. **It cannot detect an implementation that computes
+the correct answer and leaks the key while doing it.**
+
+This is not hypothetical. KyberSlash and Clangover were byte-exact correct
+against every vector and still recovered secret material through timing. A
+tool that checked only what pq-verify checks would have passed both.
+
+So every report carries the scope as a field rather than leaving it to be
+inferred:
+
+```json
+"side_channel": {
+  "measured": false,
+  "summary": "not measured — execution time, power and electromagnetic behaviour were not observed"
+}
+```
+
+`--leakage` is not an exception to this. It computes, from the NTT's algebraic
+structure, how much of the secret each butterfly layer would determine *if*
+that layer's intermediates were exposed — a design input for allocating
+masking. It does not observe execution and makes no claim that this
+implementation leaks those values. Establishing that requires leakage
+assessment against the deployed binary on the deployed hardware.
 
 ---
 
@@ -344,16 +458,17 @@ The algebraic core is proven natively where the proof is exact; the full impleme
 
 ```
 pq_verify/
-  __init__.py              Public API (15 functions)
-  core.py                  The stack (~6,100 lines, 6 field-native engines)
+  __init__.py              Public API
+  core.py                  The stack (6 field-native engines)
   cli.py                   Command-line interface
   response.py              Prompt/response verification for un-loadable builds
+  hybrid.py                RFC 10024 hybrid key-agreement composition
   report.py                Native JSON + SARIF 2.1.0 output
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 pyproject.toml             Build config + console-script entry point
 dist/
-  pq_verify-2.7.0-py3-none-any.whl    Installable wheel
-  pq_verify-2.7.0.tar.gz              Source distribution
+  pq_verify-2.8.0-py3-none-any.whl    Installable wheel
+  pq_verify-2.8.0.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 855/855
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)

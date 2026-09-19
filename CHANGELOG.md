@@ -3,6 +3,94 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] — 2026-09-19
+
+### Added
+
+- **`--verify-hybrid` / `--emit-hybrid-prompt` — RFC 10024 hybrid key
+  agreement.** Nothing in production negotiates bare ML-KEM; every deployment
+  that has turned post-quantum TLS on runs a hybrid group. The ML-KEM half is
+  covered by `--acvp` and `--audit-kem`. The *composition* was not, and the
+  composition is where the bugs are, because RFC 10024 does not use one order:
+
+  | Group | Codepoint | Key share | Shared secret |
+  |---|---|---|---|
+  | `X25519MLKEM768` | `0x11EC` | ML-KEM ‖ ECDHE | ML-KEM ‖ ECDHE |
+  | `SecP256r1MLKEM768` | `0x11EB` | ECDHE ‖ ML-KEM | ECDHE ‖ ML-KEM |
+  | `SecP384r1MLKEM1024` | `0x11ED` | ECDHE ‖ ML-KEM | ECDHE ‖ ML-KEM |
+
+  The first row is reversed relative to its own name — the RFC says so and
+  calls it historical. An implementation can pass **every ACVP vector
+  byte-for-byte** and still be wrong, because ACVP never sees the
+  concatenation, and the failure is silent: two peers that make the same
+  mistake interoperate with each other and with nobody else.
+
+  From one handshake's wire bytes, `--verify-hybrid` checks the lengths, the
+  component split, the FIPS 203 §7.2 encapsulation key check the RFC makes a
+  MUST, ECDHE point validity (RFC 9846 §4.3.8.2), the X25519 all-zero check,
+  and — given an ephemeral private scalar — the ECDHE shared secret
+  recomputed and compared byte-for-byte at the pinned offset.
+
+  When a check fails it tests the other order explicitly and says so: *"there
+  is no valid encapsulation key at offset 0, but there IS one at the offset
+  the other order gives"*. That is a root cause rather than a mismatch, and it
+  is sound rather than heuristic — random bytes pass the FIPS 203 §7.2 check
+  with probability below 2⁻¹⁴⁰.
+
+  New rule `PQV007` (`HybridCompositionMismatch`). The report is
+  `artifact: none — vendor-supplied transcript`, on the same terms as
+  `--verify-response`. No private KEM key is ever requested.
+
+- **`side_channel` on every machine-readable report.** Functional conformance
+  and leakage are independent properties, and this tool only measures the
+  first. KyberSlash and Clangover were byte-exact correct against every vector
+  and still recovered secret material through timing; a tool that checked only
+  what pq-verify checks would have passed both. Rather than leave that to be
+  inferred, every native report and the SARIF output now carry
+  `"measured": false` with the reason. Native report schemas move to
+  `schema_version` 1.1.
+
+### Changed
+
+- **`--leakage` is described as what it is.** It was presented as
+  "side-channel leakage analysis", which a reader hears as a measurement. It
+  is an *algebraic protection allocation*: it computes, from the NTT's
+  structure, how much of the secret each butterfly layer would determine if
+  that layer's intermediates were exposed. Nothing is executed under
+  observation and no trace is collected. The computation is unchanged; the
+  claim around it now matches it.
+
+### Fixed
+
+- **QUICKSTART documented a file that has not existed since this became a pip
+  package.** It told readers to `exec(open('pq_verify_v2_6_1.py').read())`,
+  listed "eight public functions", and gave the floor as Python 3.8 — below
+  the declared `requires-python`. Rewritten against what the tool actually
+  does, and three guards added: every flag shown on a `pq-verify` command line
+  must be one the parser accepts, every file the docs name must exist, and a
+  documented Python floor must equal `requires-python`. All three were
+  confirmed by reintroducing the exact defects.
+- A stale line count in `pq_verify/__init__.py` ("the real 5451-line stack"),
+  deleted rather than corrected — a number nothing computes will drift again.
+
+### Verification
+
+- 49 new tests (83 → 141), green on 3.9, 3.12 and 3.13.
+- The ECDH and X25519 reference is checked against RFC 7748 §5.2/§6.1 and the
+  NIST CAVS 14.1 ECC CDH vectors before it is used to judge any transcript; a
+  verifier whose own arithmetic is wrong would score a correct transcript as
+  broken.
+- The curve parameters are self-validating at import (base point on the curve,
+  n·G at infinity), so a mistyped constant cannot reach a verdict.
+- The FIPS 203 §7.2 check agrees with all 20 of NIST's own labelled
+  `encapsulationKeyCheck` cases for ML-KEM-768 and ML-KEM-1024.
+- 14 mutations were applied to the new guards — reversed orders, a disabled
+  modulus bound, each wrong-order diagnostic removed, skips counted as passes,
+  the side-channel field dropped. All 14 were caught. One initially survived:
+  the swapped-shared-secret test asserted over the findings as a whole, so the
+  ML-KEM diagnostic covered for the disabled ECDHE one. The test now asserts
+  per check.
+
 ## [2.7.0] — 2026-09-19
 
 ### Security

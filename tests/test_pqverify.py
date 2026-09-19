@@ -25,7 +25,7 @@ from pq_verify import (
 # ----------------------------------------------------------------------
 
 def test_version():
-    assert pq_verify.__version__ == "2.7.0"
+    assert pq_verify.__version__ == "2.8.0"
 
 
 def test_public_api_present():
@@ -1225,3 +1225,631 @@ def test_the_tests_badge_is_computed_not_typed():
     assert "actions/workflows/tests.yml/badge.svg" in readme, (
         "the tests badge must be the workflow status badge, not a literal")
     assert "badge/tests-" not in readme, "a hand-typed tests badge is back"
+
+
+# ======================================================================
+# Hybrid key agreement — RFC 10024 composition (pq_verify.hybrid)
+#
+# The part of a post-quantum deployment that ACVP cannot reach. Both
+# components can pass every NIST vector byte-for-byte while the
+# concatenation is wrong, so these tests exercise the composition itself:
+# the pinned orders, the offsets, and — most of all — that a wrong order is
+# named as a wrong order rather than reported as an opaque mismatch.
+# ======================================================================
+
+import gzip
+import json as _json
+import secrets as _secrets
+
+from pq_verify import hybrid as _hyb
+from pq_verify.hybrid import (
+    CURVES,
+    GROUPS,
+    ek_modulus_check,
+    layout,
+    part_size,
+    verify_hybrid,
+    x25519,
+)
+
+_X_BASE = b"\x09" + b"\x00" * 31
+
+
+def _kem_vectors():
+    """Real ML-KEM ek/ct/K from the pinned ACVP bundle, per parameter set."""
+    from pq_verify.core import _bundle_path
+    with gzip.open(_bundle_path(), "rt") as fh:
+        bundle = _json.load(fh)
+    proj = bundle["ML-KEM-encapDecap-FIPS203/internalProjection.json"]
+    out = {}
+    for g in proj["testGroups"]:
+        if g.get("function") == "encapsulation":
+            t = g["tests"][0]
+            out[g["parameterSet"]] = (t["ek"], t["c"], t["k"])
+    return out
+
+
+@pytest.fixture(scope="module")
+def kem_vectors():
+    return _kem_vectors()
+
+
+def _ecdh_keypair(ec, seed):
+    if ec == "X25519":
+        d = seed
+        return d, x25519(d, _X_BASE)
+    c = CURVES[ec]
+    d = (int.from_bytes(seed, "big") % (c.n - 1)) + 1
+    pt = c.mul(d, c.g)
+    return (d.to_bytes(c.flen, "big"),
+            b"\x04" + pt[0].to_bytes(c.flen, "big")
+            + pt[1].to_bytes(c.flen, "big"))
+
+
+def _agree(ec, priv, pub):
+    return x25519(priv, pub) if ec == "X25519" else CURVES[ec].ecdh(priv, pub)
+
+
+def _transcript(group, kem_vectors, swap_share=None, swap_secret=False,
+                drop=()):
+    """A genuine transcript: NIST's ML-KEM values, real ECDH, pinned layout.
+
+    Deterministic seeds keep the fixture reproducible; these are test keys
+    and exist only inside the test process.
+    """
+    g = GROUPS[group]
+    ek, ct, k = (bytes.fromhex(h) for h in kem_vectors[g["kem"]])
+    ec = g["ecdh"]
+    n = part_size(group, "ecdh_priv")
+    cd, cp = _ecdh_keypair(ec, bytes(range(1, n + 1)))
+    sd, sp = _ecdh_keypair(ec, bytes(range(101, 101 + n)))
+    ss_ec = _agree(ec, cd, sp)
+    assert ss_ec == _agree(ec, sd, cp), "the two sides must agree"
+    pool = {"kem_ek": ek, "kem_ct": ct, "kem_ss": k}
+
+    def cat(field, mine, swap):
+        order = list(g[field])
+        if swap:
+            order.reverse()
+        return b"".join(mine.get(p, pool.get(p, b"")) for p in order)
+
+    doc = {
+        "schema": "pq-verify/hybrid-transcript",
+        "group": group,
+        "clientShare": cat("client_share", {"ecdh_pub": cp},
+                           swap_share == "client").hex(),
+        "serverShare": cat("server_share", {"ecdh_pub": sp},
+                           swap_share == "server").hex(),
+        "sharedSecret": cat("shared_secret", {"ecdh_ss": ss_ec},
+                            swap_secret).hex(),
+        "clientEcdhPrivate": cd.hex(),
+        "serverEcdhPrivate": sd.hex(),
+        "mlkemSharedSecret": k.hex(),
+    }
+    for key in drop:
+        doc.pop(key, None)
+    return doc
+
+
+def _write_transcript(tmp_path, name, doc):
+    p = tmp_path / name
+    p.write_text(_json.dumps(doc))
+    return str(p)
+
+
+# ---- the reference this module judges with ---------------------------
+
+def test_hybrid_reference_passes_its_published_vectors():
+    """RFC 7748 §5.2/§6.1 and NIST CAVS ECC CDH for P-256 and P-384.
+
+    A verifier whose own arithmetic is wrong would score a correct
+    transcript as broken, which is worse than not running at all.
+    """
+    ok, total, bad = _hyb.selftest()
+    assert total == 7
+    assert ok == total, bad
+
+
+def test_curve_parameters_are_self_validating():
+    """A mistyped constant cannot survive all three properties at once."""
+    for name, c in CURVES.items():
+        assert c.on_curve(c.g), f"{name}: base point off the curve"
+        assert c.mul(c.n, c.g) is None, f"{name}: n*G is not infinity"
+
+
+def test_a_corrupted_curve_constant_is_caught():
+    """Mutation guard: the import-time check must actually reject a bad b."""
+    good = CURVES["P-256"]
+    bad = _hyb._Curve("P-256-mutant", p=good.p, b=good.b ^ 1,
+                      gx=good.g[0], gy=good.g[1], n=good.n, flen=good.flen)
+    with pytest.raises(AssertionError):
+        _hyb._check_curve(bad)
+
+
+# ---- the pinned RFC 10024 layout -------------------------------------
+
+def test_rfc10024_orders_are_pinned_literally():
+    """The orders differ between groups, and that is the whole point.
+
+    Written out here rather than derived, so that a change to the registry
+    has to be made twice, deliberately, in two files.
+    """
+    expected = {
+        "X25519MLKEM768": {
+            "codepoint": 0x11EC,
+            "client_share": ("kem_ek", "ecdh_pub"),
+            "server_share": ("kem_ct", "ecdh_pub"),
+            "shared_secret": ("kem_ss", "ecdh_ss"),
+            "sizes": (1216, 1120, 64),
+        },
+        "SecP256r1MLKEM768": {
+            "codepoint": 0x11EB,
+            "client_share": ("ecdh_pub", "kem_ek"),
+            "server_share": ("ecdh_pub", "kem_ct"),
+            "shared_secret": ("ecdh_ss", "kem_ss"),
+            "sizes": (1249, 1153, 64),
+        },
+        "SecP384r1MLKEM1024": {
+            "codepoint": 0x11ED,
+            "client_share": ("ecdh_pub", "kem_ek"),
+            "server_share": ("ecdh_pub", "kem_ct"),
+            "shared_secret": ("ecdh_ss", "kem_ss"),
+            "sizes": (1665, 1665, 80),
+        },
+    }
+    assert set(GROUPS) == set(expected)
+    for name, want in expected.items():
+        g = GROUPS[name]
+        assert g["codepoint"] == want["codepoint"], name
+        for i, field in enumerate(
+                ("client_share", "server_share", "shared_secret")):
+            assert tuple(g[field]) == want[field], f"{name}/{field}"
+            assert g[field + "_size"] == want["sizes"][i], f"{name}/{field}"
+
+
+def test_x25519mlkem768_is_the_reversed_one():
+    """The named group whose order contradicts its own name.
+
+    RFC 10024 calls this out explicitly. If this ever stops being true the
+    registry is wrong, not the RFC.
+    """
+    assert GROUPS["X25519MLKEM768"]["client_share"][0] == "kem_ek"
+    assert GROUPS["SecP256r1MLKEM768"]["client_share"][0] == "ecdh_pub"
+    assert (GROUPS["X25519MLKEM768"]["shared_secret"]
+            != GROUPS["SecP256r1MLKEM768"]["shared_secret"])
+
+
+def test_pinned_totals_match_the_component_sums():
+    """RFC 10024 states both numbers; they must agree."""
+    _hyb._check_registry()
+    for name, g in GROUPS.items():
+        for field in ("client_share", "server_share", "shared_secret"):
+            assert (sum(part_size(name, p) for p in g[field])
+                    == g[field + "_size"]), f"{name}/{field}"
+
+
+def test_a_wrong_pinned_size_is_caught_at_import():
+    """Mutation guard: the registry check must reject a transcription error."""
+    saved = GROUPS["X25519MLKEM768"]["client_share_size"]
+    GROUPS["X25519MLKEM768"]["client_share_size"] = 1215
+    try:
+        with pytest.raises(AssertionError):
+            _hyb._check_registry()
+    finally:
+        GROUPS["X25519MLKEM768"]["client_share_size"] = saved
+    _hyb._check_registry()
+
+
+# ---- FIPS 203 §7.2, against NIST's own labelled cases ----------------
+
+def test_ek_check_agrees_with_nists_labelled_cases():
+    """NIST publishes encapsulationKeyCheck cases with a pass/fail label.
+
+    This is the check RFC 10024 makes a MUST for the server, and it is what
+    makes the wrong-order diagnostic definitive rather than a guess — so it
+    is checked against NIST's answers, not against itself.
+    """
+    from pq_verify.core import _bundle_path
+    with gzip.open(_bundle_path(), "rt") as fh:
+        bundle = _json.load(fh)
+    proj = bundle["ML-KEM-encapDecap-FIPS203/internalProjection.json"]
+    seen = 0
+    for g in proj["testGroups"]:
+        if g.get("function") != "encapsulationKeyCheck":
+            continue
+        ps = g["parameterSet"]
+        if ps not in ("ML-KEM-768", "ML-KEM-1024"):
+            continue
+        for t in g["tests"]:
+            seen += 1
+            got = ek_modulus_check(bytes.fromhex(t["ek"]), ps)
+            assert got == t["testPassed"], (
+                f"{ps} tcId {t['tcId']}: pq-verify says {got}, "
+                f"NIST says {t['testPassed']} ({t.get('reason')})")
+    assert seen == 20, f"expected NIST's 20 labelled cases, saw {seen}"
+
+
+def test_random_bytes_are_not_mistaken_for_an_encapsulation_key():
+    """The discriminator has to actually discriminate."""
+    for _ in range(8):
+        assert not ek_modulus_check(_secrets.token_bytes(1184), "ML-KEM-768")
+
+
+def test_ek_check_rejects_a_wrong_length():
+    assert not ek_modulus_check(b"\x00" * 1183, "ML-KEM-768")
+
+
+# ---- end to end -------------------------------------------------------
+
+@pytest.mark.parametrize("group", sorted(GROUPS))
+def test_a_conforming_transcript_verifies(group, kem_vectors, tmp_path):
+    path = _write_transcript(tmp_path, "t.json", _transcript(group, kem_vectors))
+    res = verify_hybrid(path, verbose=False)
+    assert res["status"] == "VERIFIED", res["findings"]
+    assert res["verified"] is True
+    assert res["passed"] == res["total"] > 0
+    assert res["skipped"] == 0
+    assert not res["findings"]
+
+
+@pytest.mark.parametrize("group", sorted(GROUPS))
+def test_a_swapped_key_share_is_named_as_a_wrong_order(group, kem_vectors,
+                                                       tmp_path):
+    path = _write_transcript(tmp_path, "t.json",
+                  _transcript(group, kem_vectors, swap_share="client"))
+    res = verify_hybrid(path, verbose=False)
+    assert not res["verified"]
+    joined = " ".join(res["findings"])
+    assert "wrong way round" in joined, res["findings"]
+    assert group in joined
+
+
+@pytest.mark.parametrize("group", sorted(GROUPS))
+def test_a_swapped_shared_secret_is_named_as_swapped_halves(group,
+                                                            kem_vectors,
+                                                            tmp_path):
+    path = _write_transcript(tmp_path, "t.json",
+                  _transcript(group, kem_vectors, swap_secret=True))
+    res = verify_hybrid(path, verbose=False)
+    assert not res["verified"]
+
+    # Asserted per check, not over the findings as a whole. Checked in
+    # aggregate, this test passed with the ECDHE diagnostic disabled, because
+    # the ML-KEM one said "swapped" and covered for it. Each check that can
+    # detect the reversal has to say so on its own.
+    by_name = {c["name"]: c for c in res["checks"]}
+    ec, kem = GROUPS[group]["ecdh"], GROUPS[group]["kem"]
+    must_diagnose = [f"client {ec} shared secret recomputed",
+                     f"server {ec} shared secret recomputed",
+                     f"sharedSecret {kem} half placement"]
+    for name in must_diagnose:
+        c = by_name[name]
+        assert c["passed"] is False, f"{name} should have failed"
+        assert "swapped" in c["detail"], f"{name}: {c['detail']}"
+        # and it must say where the value SHOULD be, not just that it is wrong
+        assert "RFC 10024 pins" in c["detail"], f"{name}: {c['detail']}"
+
+
+def test_an_all_zero_x25519_secret_is_a_finding(kem_vectors, tmp_path):
+    """RFC 10024 makes the contributory-behaviour check a MUST."""
+    doc = _transcript("X25519MLKEM768", kem_vectors)
+    sec = bytearray(bytes.fromhex(doc["sharedSecret"]))
+    off = next(o for p, o, _n in layout("X25519MLKEM768", "shared_secret")
+               if p == "ecdh_ss")
+    sec[off:off + 32] = b"\x00" * 32
+    doc["sharedSecret"] = bytes(sec).hex()
+    res = verify_hybrid(_write_transcript(tmp_path, "z.json", doc), verbose=False)
+    assert not res["verified"]
+    assert any("all zero" in f for f in res["findings"]), res["findings"]
+
+
+def test_a_partial_transcript_is_partial_not_verified(kem_vectors, tmp_path):
+    """The skip-that-looks-like-a-pass failure mode, on this path too."""
+    doc = _transcript("X25519MLKEM768", kem_vectors,
+                      drop=("clientEcdhPrivate", "serverEcdhPrivate",
+                            "mlkemSharedSecret"))
+    res = verify_hybrid(_write_transcript(tmp_path, "p.json", doc), verbose=False)
+    assert res["status"] == "PARTIAL"
+    assert res["verified"] is False
+    assert res["skipped"] > 0
+    # and the skipped checks are not in the denominator
+    assert res["passed"] == res["total"]
+
+
+def test_not_applicable_is_not_the_same_as_not_checked(kem_vectors, tmp_path):
+    """X25519 has no structural share check; that is not a gap in the input."""
+    res = verify_hybrid(
+        _write_transcript(tmp_path, "t.json", _transcript("X25519MLKEM768", kem_vectors)),
+        verbose=False)
+    assert res["not_applicable"] == 2
+    assert res["skipped"] == 0
+    assert res["status"] == "VERIFIED"
+
+
+def test_a_wrong_length_share_is_a_finding_not_a_crash(kem_vectors, tmp_path):
+    doc = _transcript("X25519MLKEM768", kem_vectors)
+    doc["clientShare"] = doc["clientShare"][:-2]
+    res = verify_hybrid(_write_transcript(tmp_path, "s.json", doc), verbose=False)
+    assert not res["verified"]
+    assert any("1216" in f for f in res["findings"]), res["findings"]
+
+
+# ---- untrusted input --------------------------------------------------
+
+_BAD_TRANSCRIPTS = {
+    "not-json": "{",
+    "not-an-object": "[1, 2, 3]",
+    "no-group": '{"clientShare": "00"}',
+    "unknown-group": '{"group": "X25519Kyber768Draft00"}',
+    "group-not-a-string": '{"group": 17}',
+    "group-is-null": '{"group": null}',
+    "nothing-supplied": '{"group": "X25519MLKEM768"}',
+    "shares-are-numbers": '{"group": "X25519MLKEM768", "clientShare": 5}',
+    "shares-are-lists": '{"group": "X25519MLKEM768", "clientShare": []}',
+    "odd-hex": '{"group": "X25519MLKEM768", "clientShare": "abc"}',
+    "not-hex": '{"group": "X25519MLKEM768", "clientShare": "zzzz"}',
+    "share-is-nested": '{"group": "X25519MLKEM768", "clientShare": {"a": 1}}',
+    "private-not-a-string": ('{"group": "X25519MLKEM768", '
+                             '"clientEcdhPrivate": 1, "clientShare": "00"}'),
+    "deeply-nested": "[" * 300 + "]" * 300,
+    "empty": "",
+    "null": "null",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_BAD_TRANSCRIPTS))
+def test_malformed_transcript_never_crashes_and_never_verifies(name, tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text(_BAD_TRANSCRIPTS[name])
+    res = verify_hybrid(str(p), verbose=False)
+    assert res["verified"] is False, name
+    assert res["findings"], name
+    assert res["status"] in ("CANNOT VERIFY", "FINDINGS PRESENT"), name
+
+
+def test_a_transcript_that_is_not_utf8_is_cannot_verify(tmp_path):
+    p = tmp_path / "bin.json"
+    p.write_bytes(b"\xff\xfe\x00binary")
+    res = verify_hybrid(str(p), verbose=False)
+    assert res["status"] == "CANNOT VERIFY"
+    assert not res["verified"]
+
+
+def test_a_missing_transcript_is_cannot_verify(tmp_path):
+    res = verify_hybrid(str(tmp_path / "nope.json"), verbose=False)
+    assert res["status"] == "CANNOT VERIFY"
+    assert any("unreadable" in f for f in res["findings"])
+
+
+# ---- reporting --------------------------------------------------------
+
+def test_hybrid_report_is_explicitly_unbound(kem_vectors, tmp_path):
+    from pq_verify.report import to_json_hybrid
+    res = verify_hybrid(
+        _write_transcript(tmp_path, "t.json", _transcript("X25519MLKEM768", kem_vectors)),
+        verbose=False)
+    doc = to_json_hybrid(res)
+    assert doc["schema"] == "pq-verify/hybrid-result"
+    assert doc["artifact"]["bound"] is False
+    assert doc["artifact"]["sha256"] is None
+    assert "none" in doc["artifact"]["summary"]
+    assert doc["group"] == "X25519MLKEM768"
+    assert doc["codepoint"] == "0x11EC"
+    assert doc["specification"] == "RFC 10024"
+    assert doc["transcript"]["sha256"]
+    assert doc["summary"]["checks_passed"] == doc["summary"]["checks_total"]
+
+
+def test_hybrid_report_separates_the_three_outcomes(kem_vectors, tmp_path):
+    from pq_verify.report import to_json_hybrid
+    doc = to_json_hybrid(verify_hybrid(
+        _write_transcript(tmp_path, "t.json",
+               _transcript("X25519MLKEM768", kem_vectors,
+                           drop=("clientEcdhPrivate",))),
+        verbose=False))
+    kinds = {c["result"] for c in doc["checks"]}
+    assert kinds <= {"pass", "fail", "not_checked", "not_applicable"}
+    assert "not_checked" in kinds
+    assert "not_applicable" in kinds
+    # a not-run check is in neither the numerator nor the denominator
+    ran = [c for c in doc["checks"] if c["result"] in ("pass", "fail")]
+    assert doc["summary"]["checks_total"] == len(ran)
+
+
+def test_hybrid_findings_map_to_their_own_rule():
+    from pq_verify.report import _rule_for, RULES
+    rid = _rule_for("hybrid: clientShare length — 3 bytes, RFC 10024 pins 1216")
+    assert rid == "PQV007"
+    assert RULES[rid]["name"] == "HybridCompositionMismatch"
+    assert RULES[rid]["level"] == "error"
+    # and it must not shadow the response rule
+    assert _rule_for("response: ML-KEM tcId 1 mismatch — x") == "PQV006"
+
+
+# ---- side-channel scope, on every report shape ------------------------
+
+def test_every_report_declares_the_side_channel_scope():
+    """Functional conformance says nothing about leakage, so say so.
+
+    KyberSlash and Clangover were byte-exact correct against every vector
+    and still recovered the key through timing. A report that is silent
+    about this invites "verified" to be read as "safe to deploy".
+    """
+    from pq_verify.report import (to_json, to_json_acvp, to_json_kem,
+                                  to_json_response, to_json_hybrid)
+    docs = [
+        to_json([{"name": "x", "passed": 1, "total": 1, "findings": []}]),
+        to_json_response({"parameter_set": "ML-KEM-768"}),
+        to_json_kem(None, param_set="ML-KEM-768"),
+        to_json_acvp({}),
+        to_json_hybrid({"group": "X25519MLKEM768"}),
+    ]
+    for doc in docs:
+        sc = doc.get("side_channel")
+        assert sc is not None, doc.get("schema")
+        assert sc["measured"] is False
+        assert "not measured" in sc["summary"]
+        assert sc["detail"]
+
+
+def test_side_channel_scope_is_not_shared_between_reports():
+    """A caller mutating one report must not change the next one."""
+    from pq_verify.report import to_json, SIDE_CHANNEL
+    d1 = to_json([])
+    d1["side_channel"]["measured"] = "tampered"
+    d2 = to_json([])
+    assert d2["side_channel"]["measured"] is False
+    assert SIDE_CHANNEL["measured"] is False
+
+
+def test_sarif_carries_the_side_channel_scope():
+    from pq_verify.report import to_sarif
+    props = to_sarif([])["runs"][0]["properties"]
+    assert "not measured" in props["pqVerifySideChannel"]
+
+
+# ---- CLI --------------------------------------------------------------
+
+def test_cli_verify_hybrid_gate(kem_vectors, tmp_path):
+    from pq_verify.cli import main as cli_main
+    good = _write_transcript(tmp_path, "good.json",
+                  _transcript("X25519MLKEM768", kem_vectors))
+    bad = _write_transcript(tmp_path, "bad.json",
+                 _transcript("X25519MLKEM768", kem_vectors, swap_secret=True))
+    out = tmp_path / "r.json"
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli_main(["--verify-hybrid", good, "--fail-on-finding"]) == 0
+        assert cli_main(["--verify-hybrid", bad, "--fail-on-finding"]) == 1
+        assert cli_main(["--verify-hybrid", good, "--json", str(out)]) == 0
+    doc = _json.loads(out.read_text())
+    assert doc["schema"] == "pq-verify/hybrid-result"
+    assert doc["verified"] is True
+
+
+def test_cli_emit_hybrid_prompt_round_trips(tmp_path):
+    from pq_verify.cli import main as cli_main
+    out = tmp_path / "q.json"
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli_main(["--emit-hybrid-prompt", "X25519MLKEM768",
+                         "--prompt-out", str(out)]) == 0
+    doc = _json.loads(out.read_text())
+    assert doc["schema"] == "pq-verify/hybrid-prompt"
+    assert doc["codepoint"] == "0x11EC"
+    assert doc["specification"] == "RFC 10024"
+    # the skeleton it hands back must be the shape --verify-hybrid reads
+    assert doc["response"]["schema"] == "pq-verify/hybrid-transcript"
+    assert doc["response"]["group"] == "X25519MLKEM768"
+    # and the documented layout must be the layout that is actually used
+    for field, key in (("client_share", "clientShare"),
+                       ("server_share", "serverShare"),
+                       ("shared_secret", "sharedSecret")):
+        got = [(e["component"], e["offset"], e["bytes"])
+               for e in doc["fields"][key]["layout"]]
+        assert got == layout("X25519MLKEM768", field)
+
+
+def test_cli_emit_hybrid_prompt_rejects_an_unknown_group(tmp_path):
+    from pq_verify.cli import main as cli_main
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli_main(["--emit-hybrid-prompt", "X25519Kyber768Draft00"]) == 2
+
+
+def test_the_prompt_never_asks_for_a_decapsulation_key():
+    """Asking for a private KEM key would be asking for the whole secret."""
+    from pq_verify.hybrid import build_hybrid_prompt
+    for group in GROUPS:
+        doc = build_hybrid_prompt(group)
+        blob = _json.dumps(doc).lower()
+        assert "decapsulationkey" not in blob
+        assert '"dk"' not in blob
+        assert set(doc["response"]) >= {"group", "clientShare"}
+
+
+# ======================================================================
+# Documentation that nothing checked
+#
+# QUICKSTART told readers to `exec(open('pq_verify_v2_6_1.py').read())` —
+# a file that has not existed since this became a pip package — and to use
+# Python 3.8, below the declared floor. Both were wrong for months because
+# prose is the one surface nothing executes. These guards execute it.
+# ======================================================================
+
+import pathlib as _pathlib
+import re as _re
+
+_REPO = _pathlib.Path(__file__).resolve().parent.parent
+_DOCS = ("README.md", "QUICKSTART.md")
+
+
+def _doc_text(name):
+    p = _REPO / name
+    if not p.exists():
+        pytest.skip(f"{name} not present (installed package, not a checkout)")
+    return p.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("doc", _DOCS)
+def test_every_documented_flag_exists(doc):
+    """A flag in the docs must be a flag the parser accepts.
+
+    Documentation is the most-read surface in the repository and the only one
+    nothing runs. This runs it.
+    """
+    from pq_verify.cli import build_parser
+    known = set()
+    for action in build_parser()._actions:
+        known.update(action.option_strings)
+    text = _doc_text(doc)
+    # Only flags on a pq-verify command line. A `pip install
+    # --break-system-packages` in the same file is someone else's flag, and
+    # a guard that cannot tell the difference gets switched off.
+    used = set()
+    for line in text.splitlines():
+        line = line.strip().lstrip("$ ").rstrip("\\").strip()
+        if not line.startswith("pq-verify"):
+            continue
+        used.update(_re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]+)",
+                                line.split("#")[0]))
+    assert used, f"{doc} shows no pq-verify command line at all"
+    unknown = sorted(f for f in used if f not in known)
+    assert not unknown, f"{doc} documents flags the CLI does not have: {unknown}"
+
+
+@pytest.mark.parametrize("doc", _DOCS)
+def test_docs_do_not_reference_files_that_do_not_exist(doc):
+    """No more `exec(open('pq_verify_v2_6_1.py').read())`."""
+    text = _doc_text(doc)
+    referenced = set(_re.findall(r"[\w./-]+\.(?:py|ipynb|cff|toml|yml)", text))
+    present = {q.name for q in _REPO.rglob("*") if q.is_file()
+               and ".git" not in q.parts}
+    missing = sorted(
+        r for r in referenced
+        if not (_REPO / r).exists()
+        and _pathlib.PurePath(r).name not in present
+        and not r.startswith("your_")
+    )
+    assert not missing, f"{doc} points at files that do not exist: {missing}"
+
+
+@pytest.mark.parametrize("doc", _DOCS)
+def test_documented_python_floor_matches_the_package(doc):
+    """QUICKSTART said 3.8+ while the package declared 3.9+ and meant it."""
+    pyproject = _REPO / "pyproject.toml"
+    if not pyproject.exists():
+        pytest.skip("no pyproject.toml in this checkout")
+    m = _re.search(r'requires-python\s*=\s*"[>=~^]*\s*(\d+\.\d+)',
+                   pyproject.read_text(encoding="utf-8"))
+    assert m, "requires-python not found in pyproject.toml"
+    floor = m.group(1)
+    for claimed in _re.findall(r"Python (\d+\.\d+)\+", _doc_text(doc)):
+        assert claimed == floor, (
+            f"{doc} claims Python {claimed}+, pyproject.toml declares {floor}+")
+
+
+def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented():
+    """The README prints the RFC 10024 table; it has to be this table."""
+    text = _doc_text("README.md")
+    for name, g in GROUPS.items():
+        assert name in text, f"README does not mention {name}"
+        assert f"0x{g['codepoint']:04X}" in text, (
+            f"README does not give the codepoint for {name}")

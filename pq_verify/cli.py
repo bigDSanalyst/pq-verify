@@ -6,10 +6,12 @@ pq-verify command-line interface.
     pq-verify --acvp               full NIST ACVP (all 12 ML-KEM groups)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
-    pq-verify --leakage            per-layer protection-allocation table
+    pq-verify --leakage            per-layer algebraic protection allocation
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
     pq-verify --emit-prompt SET    write the ACVP questions for SET
     pq-verify --verify-response F  check a response against the pinned answers
+    pq-verify --emit-hybrid-prompt G   write what to supply for hybrid group G
+    pq-verify --verify-hybrid F    check a hybrid transcript against RFC 10024
     pq-verify --version
 """
 import argparse
@@ -55,7 +57,9 @@ def build_parser():
     p.add_argument("--kem", metavar="K", type=int, choices=(2, 3, 4),
                    help="native full-KEM verification at module rank K")
     p.add_argument("--leakage", action="store_true",
-                   help="per-layer side-channel protection-allocation table")
+                   help="per-layer algebraic protection allocation: which NTT "
+                        "layers are worth masking, computed from the "
+                        "transform's structure. Nothing is measured")
     p.add_argument("--audit-so", nargs=2, metavar=("PATH", "SYM"),
                    help="audit an NTT symbol SYM inside compiled library PATH")
     p.add_argument("--audit-kem", nargs=2, metavar=("PATH", "PARAM_SET"),
@@ -75,6 +79,15 @@ def build_parser():
                    help="check a response file against the pinned expected "
                         "answers, byte-exact and per test case. The result is "
                         "NOT bound to any artifact and says so")
+    p.add_argument("--emit-hybrid-prompt", metavar="GROUP",
+                   help="write the fields needed to check a hybrid key "
+                        "agreement for GROUP (e.g. X25519MLKEM768) against "
+                        "RFC 10024. Pass 'list' for the known groups")
+    p.add_argument("--verify-hybrid", metavar="FILE",
+                   help="check a hybrid transcript against RFC 10024: "
+                        "component order, lengths, the FIPS 203 \u00a77.2 "
+                        "encapsulation key check, ECDHE point validity, and "
+                        "the recomputed ECDHE shared secret")
     p.add_argument("--json", metavar="FILE",
                    help="write results to FILE in pq-verify's native schema")
     p.add_argument("--sarif", metavar="FILE",
@@ -134,6 +147,27 @@ def main(argv=None):
         from .response import verify_response
         response_result = verify_response(args.verify_response, **_vsrc)
         ran_task = True
+    hybrid_result = None
+    if getattr(args, "emit_hybrid_prompt", None):
+        from .hybrid import emit_hybrid_prompt, GROUPS as _HG
+        ran_task = True
+        if args.emit_hybrid_prompt.lower() in ("list", "?"):
+            print("  hybrid groups known to this build (RFC 10024):")
+            for name in sorted(_HG, key=lambda k: _HG[k]["codepoint"]):
+                g = _HG[name]
+                print(f"    0x{g['codepoint']:04X}  {name:20s} "
+                      f"{g['kem']} + {g['ecdh']}")
+            return 0
+        try:
+            emit_hybrid_prompt(args.emit_hybrid_prompt,
+                               out_path=args.prompt_out)
+        except ValueError as exc:
+            print(f"  {exc}")
+            return 2
+    if getattr(args, "verify_hybrid", None):
+        from .hybrid import verify_hybrid
+        hybrid_result = verify_hybrid(args.verify_hybrid)
+        ran_task = True
 
     from .report import artifact_bound
 
@@ -191,8 +225,8 @@ def main(argv=None):
     # One native report per invocation, chosen most-specific-first, so two
     # tasks in one command cannot silently overwrite each other's file. The
     # exit code still reflects EVERY task that ran, not just the reported one.
-    from .report import (to_json, to_json_acvp, to_json_kem, to_json_response,
-                         to_sarif, artifact_unbound, write)
+    from .report import (to_json, to_json_acvp, to_json_hybrid, to_json_kem,
+                         to_json_response, to_sarif, artifact_unbound, write)
     from .core import VERSION
 
     exit_code = 0
@@ -245,6 +279,22 @@ def main(argv=None):
         # INCOMPLETE and CANNOT VERIFY are both "did not verify".
         if args.fail_on_finding and not response_result["verified"]:
             print(f"  FAILING: {response_result['status']}")
+            exit_code = 1
+
+    if hybrid_result is not None:
+        doc = to_json_hybrid(hybrid_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--verify-hybrid"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{hybrid_result.get('group')}:hybrid",
+                  "passed": hybrid_result.get("passed", 0),
+                  "total": hybrid_result.get("total", 0),
+                  "findings": hybrid_result.get("findings", [])}],
+                tool_version=VERSION, artifact=hybrid_result.get("artifact"))
+        # PARTIAL and CANNOT VERIFY are both "did not verify".
+        if args.fail_on_finding and not hybrid_result["verified"]:
+            print(f"  FAILING: hybrid {hybrid_result['status']}")
             exit_code = 1
 
     if acvp_results:

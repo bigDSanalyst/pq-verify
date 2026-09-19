@@ -6,6 +6,9 @@ authors:
     given-names: "Nicholas"
     alias: "iamweare"
     orcid: "https://orcid.org/0009-0007-6650-5879"
+# This names the archived Zenodo deposit, which is 2.7.0. It moves when a
+# new deposit exists, NOT when the package version changes — advertising a
+# DOI that does not resolve to the stated version would be worse than lagging.
 version: 2.7.0
 doi: "10.5281/zenodo.21739511"
 date-released: 2026-09-19

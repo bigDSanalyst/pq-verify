@@ -4,18 +4,19 @@ pq-verify — Independent verification for ML-KEM / ML-DSA implementations.
 Verifies that post-quantum cryptography implementations compute the
 FIPS 203/204 standard correctly: native field-native NTT verification,
 non-circular Known Answer Tests, NIST ACVP end-to-end (855/855), a
-Bai-Galbraith lattice parameter-security estimator, and per-layer
-side-channel leakage analysis. Coq-certified, reproducible.
+Bai-Galbraith lattice parameter-security estimator, RFC 10024 hybrid
+key-agreement composition, and per-layer algebraic protection allocation.
+Coq-certified, reproducible.
 
 Author: Nicholas Maino (iamweare) — Melbourne AU
 License: MIT
 """
 
-__version__ = "2.7.0"
+__version__ = "2.8.0"
 __author__ = "Nicholas Maino (iamweare)"
 __license__ = "MIT"
 
-# Re-export the public API from the core engine (the real 5451-line stack).
+# Re-export the public API from the core engine.
 from .core import (
     main,
     pqverify_kat,
@@ -36,6 +37,17 @@ from .core import (
 # path are explicitly NOT bound to an artifact; see pq_verify.response.
 from .response import emit_prompt, build_prompt, verify_response, \
     available_parameter_sets
+
+# Hybrid key agreement (RFC 10024) — the composition ACVP cannot see. Both
+# components can pass every NIST vector byte-for-byte while the concatenation
+# is wrong, and that is what every deployed post-quantum TLS stack actually
+# negotiates. See pq_verify.hybrid.
+from .hybrid import (
+    GROUPS as HYBRID_GROUPS,
+    build_hybrid_prompt,
+    emit_hybrid_prompt,
+    verify_hybrid,
+)
 
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
 try:
@@ -61,6 +73,10 @@ __all__ = [
     "build_prompt",
     "verify_response",
     "available_parameter_sets",
+    "HYBRID_GROUPS",
+    "build_hybrid_prompt",
+    "emit_hybrid_prompt",
+    "verify_hybrid",
     "check_encapsulation_key",
     "check_decapsulation_key",
 ]

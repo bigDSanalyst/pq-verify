@@ -54,6 +54,35 @@ jobs:
       - name: NIST ACVP — 855 pinned vectors, offline
         run: python -m pq_verify.cli --acvp-all --fail-on-finding
 
+      - name: Hybrid (RFC 10024) — prompt emits and round-trips
+        run: |
+          python -m pq_verify.cli --emit-hybrid-prompt list
+          python -m pq_verify.cli --emit-hybrid-prompt X25519MLKEM768 \
+            --prompt-out /tmp/hybrid-prompt.json
+          python - <<'PY'
+          import json
+          d = json.load(open("/tmp/hybrid-prompt.json"))
+          assert d["schema"] == "pq-verify/hybrid-prompt", d["schema"]
+          assert d["codepoint"] == "0x11EC", d["codepoint"]
+          assert d["specification"] == "RFC 10024", d["specification"]
+          # the client share must be ML-KEM first for this group; that
+          # reversal is the whole reason this check exists
+          first = d["fields"]["clientShare"]["layout"][0]
+          assert first["component"] == "kem_ek", first
+          assert first["bytes"] == 1184, first
+          print("hybrid prompt ok:", d["group"], d["codepoint"])
+          PY
+
+      - name: An unparseable transcript must not exit 0 under a gate
+        run: |
+          printf '{' > /tmp/bad-transcript.json
+          if python -m pq_verify.cli --verify-hybrid /tmp/bad-transcript.json \
+               --fail-on-finding; then
+            echo "FAIL: a transcript that could not be parsed passed the gate"
+            exit 1
+          fi
+          echo "cannot-verify correctly failed the gate"
+
   wheel:
     name: wheel installs and runs at the floor
     runs-on: ubuntu-latest
@@ -83,3 +112,7 @@ jobs:
           assert "pinned" in d["vectorSource"], d["vectorSource"]
           print("vectors present:", d["questionCount"], "questions from", d["vectorSource"])
           PY
+      - name: The wheel must carry the hybrid module
+        run: |
+          /tmp/fresh/bin/pq-verify --emit-hybrid-prompt list | tee /tmp/groups.txt
+          grep -q "0x11EC  X25519MLKEM768" /tmp/groups.txt

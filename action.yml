@@ -33,6 +33,15 @@ inputs:
     description: 'Also run FIPS 205 SLH-DSA key generation vectors.'
     required: false
     default: 'false'
+  hybrid-transcript:
+    description: >
+      Path to a hybrid key-agreement transcript to check against RFC 10024
+      (see `pq-verify --emit-hybrid-prompt`). Verifies the composition ACVP
+      cannot see: component order, offsets, lengths, the FIPS 203 §7.2
+      encapsulation key check, and the recomputed ECDHE shared secret.
+      Leave empty to skip.
+    required: false
+    default: ''
   fail-on-finding:
     description: 'Fail the workflow step if any finding is reported.'
     required: false
@@ -123,6 +132,34 @@ runs:
           pq-verify --acvp-all $EXTRA
           [ $? -ne 0 ] && STATUS=1
           echo "::endgroup::"
+        fi
+
+        # --- hybrid composition (RFC 10024) ---
+        # Independent of the library audit: a transcript is bytes, not a
+        # binary, so this runs whether or not `library` is set.
+        if [ -n "${{ inputs.hybrid-transcript }}" ]; then
+          if [ ! -f "${{ inputs.hybrid-transcript }}" ]; then
+            echo "::error::hybrid-transcript not found: ${{ inputs.hybrid-transcript }}"
+            exit 1
+          fi
+          echo "::group::Hybrid composition (RFC 10024)"
+          HARGS="--verify-hybrid ${{ inputs.hybrid-transcript }}"
+          [ "${{ inputs.fail-on-finding }}" = "true" ] && HARGS="$HARGS --fail-on-finding"
+          pq-verify $HARGS
+          HRC=$?
+          echo "::endgroup::"
+          {
+            echo "### pq-verify — hybrid composition"
+            echo ""
+            if [ $HRC -eq 0 ]; then
+              echo "**VERIFIED** — the transcript composes the way RFC 10024 pins it."
+            else
+              echo "**Did not verify** (exit $HRC). A hybrid group can pass every"
+              echo "ACVP vector and still concatenate its components wrongly;"
+              echo "see the step log for which offset is wrong."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+          [ $HRC -ne 0 ] && STATUS=$HRC
         fi
 
         # --- symbol audit of a compiled library ---
