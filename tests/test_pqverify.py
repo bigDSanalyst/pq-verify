@@ -959,3 +959,71 @@ def test_acvp_gate_fails_when_the_reference_implementations_are_missing(
     assert code == 1, "a run that verified nothing passed the gate"
     assert "0/0" in out
     assert "CANNOT VERIFY" in out
+
+
+# ----------------------------------------------------------------------
+# A response file is untrusted input
+#
+# --verify-response reads a file someone else produced. Three of these crashed
+# with an uncaught traceback before 2.7.0. A crash is not a verdict: the tool's
+# whole premise is that a check which did not run must say so, and a traceback
+# says nothing at all.
+# ----------------------------------------------------------------------
+
+_MALFORMED = {
+    "deep_nest":       "[" * 2000 + "]" * 2000,
+    "bare_scalar":     "42",
+    "bare_string":     '"hello"',
+    "not_json":        "{not json at all",
+    "null_groups":     {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": None}]},
+    "groups_not_list": {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": {"a": 1}}]},
+    "tests_scalar":    {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203",
+                            "testGroups": [{"tgId": 1, "tests": 5}]}]},
+    "tcid_unhashable": {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": {"a": 1}, "ek": "00"}]}]}]},
+    "tcid_huge":       {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": 10 ** 400, "ek": "00"}]}]}]},
+    "tcid_bool":       {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                               {"tgId": 1, "tests": [{"tcId": True, "ek": "00"}]}]}]},
+    "suite_not_str":   {"parameterSet": "ML-KEM-512", "suites": [
+                           {"suite": 123, "testGroups": []}]},
+    "paramset_object": {"parameterSet": {"x": 1}, "suites": []},
+    "promptid_list":   {"parameterSet": "ML-KEM-512", "promptId": [1, 2], "suites": []},
+    "artifact_weird":  {"parameterSet": "ML-KEM-512", "artifact": [1, 2, 3], "suites": []},
+    "raw_nonstr_alg":  {"algorithm": 7, "mode": "keyGen", "revision": "FIPS203",
+                        "testGroups": []},
+}
+
+
+@pytest.mark.parametrize("name", sorted(_MALFORMED))
+def test_malformed_response_never_crashes_and_never_verifies(name, tmp_path):
+    """The two invariants that matter for an untrusted file.
+
+    It must not raise -- a traceback is not a verdict -- and it must never come
+    back VERIFIED, because nothing in a malformed document was checked.
+    """
+    import json as _json
+    body = _MALFORMED[name]
+    p = tmp_path / "response.json"
+    p.write_text(body if isinstance(body, str) else _json.dumps(body))
+    r = _run(str(p))                       # raises on regression; that is the test
+    assert r["verified"] is False, f"{name} reported VERIFIED"
+    assert r["status"] in ("CANNOT VERIFY", "INCOMPLETE", "FINDINGS PRESENT")
+    assert r["passed"] <= r["total"]
+
+
+def test_oversized_answer_is_a_finding_not_a_crash(tmp_path):
+    import json as _json
+    p = tmp_path / "r.json"
+    p.write_text(_json.dumps({"parameterSet": "ML-KEM-512", "suites": [
+        {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+            {"tgId": 1, "tests": [{"tcId": 1, "ek": "AB" * 300000, "dk": "00"}]}]}]}))
+    r = _run(str(p))
+    assert r["verified"] is False
+    assert r["findings"]

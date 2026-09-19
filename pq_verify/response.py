@@ -356,16 +356,30 @@ def _flatten_answers(doc):
 
     def _take_raw(d):
         alg, mode, rev = d.get("algorithm"), d.get("mode"), d.get("revision")
-        if not (alg and mode and rev):
+        if not all(isinstance(x, str) and x for x in (alg, mode, rev)):
             return None
         return f"{alg}-{mode}-{rev}"
 
     def _absorb(suite, groups):
+        # Everything here came out of a file someone else wrote. A malformed
+        # response is CANNOT VERIFY, never a traceback: shapes are checked at
+        # every level rather than assumed, and a tcId must be usable as a key
+        # and match the integers ACVP uses.
+        if not isinstance(suite, str) or not isinstance(groups, list):
+            return
         bucket = answers.setdefault(suite, {})
-        for g in groups or []:
-            for t in g.get("tests") or []:
-                if "tcId" in t:
-                    bucket[t["tcId"]] = t
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            tests = g.get("tests")
+            if not isinstance(tests, list):
+                continue
+            for t in tests:
+                if not isinstance(t, dict):
+                    continue
+                tc = t.get("tcId")
+                if isinstance(tc, int) and not isinstance(tc, bool):
+                    bucket[tc] = t
 
     if isinstance(doc, list):
         for d in doc:
@@ -380,9 +394,13 @@ def _flatten_answers(doc):
         for k in ("implementation", "artifact", "toolVersion", "generated"):
             if k in doc:
                 meta[k] = doc[k]
+        if not isinstance(param_set, str):
+            param_set = None
+        if not isinstance(prompt_id, str):
+            prompt_id = None
         if isinstance(doc.get("suites"), list):
             for s in doc["suites"]:
-                if isinstance(s, dict) and s.get("suite"):
+                if isinstance(s, dict) and isinstance(s.get("suite"), str):
                     _absorb(s["suite"], s.get("testGroups"))
         elif doc.get("testGroups") is not None:
             s = _take_raw(doc)
