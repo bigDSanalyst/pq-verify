@@ -512,6 +512,12 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
     res["response_sha256"] = _file_sha256(response_path)
     try:
         doc = _read_json(response_path)
+    except RecursionError:
+        # Deeply nested JSON exhausts the decoder's stack, and how deep is too
+        # deep varies by interpreter -- 2000 levels survives on 3.12 and does
+        # not on 3.9. RecursionError is a RuntimeError, so it slipped past the
+        # ValueError handler and tracebacked out of the CLI on the older one.
+        return _stop("response file is nested too deeply to parse safely")
     except (ValueError, OSError, gzip.BadGzipFile) as exc:
         return _stop(f"response file is not readable JSON ({exc})")
 
