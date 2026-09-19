@@ -34,7 +34,10 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ## Proven (all tested on commodity hardware, Google Colab CPU)
 
-- **160/160** self-test across 6 field-native engines, 6 phases
+- **160/160** self-test across 6 field-native engines, 6 phases — in an
+  environment with every optional dependency present. Where one is missing the
+  dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
+  what it needed. It is never counted as a pass, and never as a failure either
 - **240/240** NIST ACVP ML-KEM vectors — keyGen + encaps + decaps byte-exact, KeyCheck bool-exact
 - **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
 - **Non-circular KAT** 100/100 against the independent FIPS reference
@@ -290,6 +293,11 @@ kinds of result apart without reading a footnote.
 The same discipline applies to coverage. A response answering 3 of 205
 questions reports `3 of 205 asked`, groups nobody answered print `NOT RUN`
 rather than `FAIL`, and the verdict is `INCOMPLETE` — never `3/3 PASS`.
+
+And to pq-verify's own suite, which is where it was missing longest. A check
+that could not run — `coqc` absent, `sympy` absent — prints `⊘`, stays out of
+the ratio, and registers the dependency it needed, so `integrity_report()` can
+never announce full coverage over a check that did not happen.
 Answering a different question set (`promptId` mismatch) is `CANNOT VERIFY`,
 which is reported separately from verified-and-failed: `PQV000` for an absent
 check, `PQV006` for an answer that is genuinely wrong.
@@ -348,7 +356,7 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
 - `dilithium-py` — **required** for `pqverify_mldsa_acvp()` (the 615 ML-DSA vectors)
 - `coq` — required for the Coq certificate verification tests
-- `sympy` — required for the Engine-6 Conjecture 7 exact-rational test (without it: 159/160)
+- `sympy` — required for the Engine-6 Conjecture 7 exact-rational test (without it that check reports as skipped, not failed)
 
 ```bash
 apt-get install -y coq gcc g++

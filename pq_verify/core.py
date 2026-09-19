@@ -785,12 +785,37 @@ class AuditResult:
         self.findings = []
         self.timestamp = datetime.now(timezone.utc).isoformat()
     def add_test(self, name, passed, detail="", time_us=0):
-        self.tests.append({'name': name, 'passed': passed, 'detail': detail, 'time_us': time_us})
+        self.tests.append({'name': name, 'passed': passed, 'detail': detail,
+                           'time_us': time_us, 'skipped': False})
+    def add_skip(self, name, reason, dep=None):
+        """A check that COULD NOT RUN. Not a pass, and not a failure.
+
+        A missing coqc is not evidence that a certificate is wrong, so
+        recording it as a failed test told the reader something untrue and
+        made the headline count unreadable -- 151/158 looked like seven broken
+        checks when nothing was broken. It also bypassed integrity_report()
+        entirely, so a run missing coq and sympy still announced 'full
+        coverage: every dependency present'.
+
+        This is the PQV000/PQV006 distinction -- cannot-verify versus
+        verified-and-failed -- applied to pq-verify's own suite, which had it
+        for everyone else's code and not its own.
+        """
+        self.tests.append({'name': name, 'passed': None, 'detail': reason,
+                           'time_us': 0, 'skipped': True, 'dep': dep})
+        if dep:
+            DEGRADED['deps'].append(dep)
+        DEGRADED['skipped_checks'].append(name)
     def add_finding(self, severity, description, evidence=""):
         self.findings.append({'severity': severity, 'description': description, 'evidence': evidence})
     def summary(self):
-        p = sum(1 for t in self.tests if t['passed'])
-        return p, len(self.tests), sum(1 for f in self.findings if f['severity']=='CRITICAL')
+        """(passed, runnable, critical). Skipped checks are NOT in the
+        denominator: a ratio that counts them reads as failures."""
+        runnable = [t for t in self.tests if not t.get('skipped')]
+        p = sum(1 for t in runnable if t['passed'])
+        return p, len(runnable), sum(1 for f in self.findings if f['severity']=='CRITICAL')
+    def n_skipped(self):
+        return sum(1 for t in self.tests if t.get('skipped'))
 
 # ================================================================
 # AUDIT FUNCTIONS
@@ -1338,10 +1363,17 @@ def print_report(results):
     print(f"{'='*70}")
     for r in results:
         p, t, c = r.summary()
+        sk = r.n_skipped()
         icon = '\u2705' if c == 0 and p == t else '\u274c'
-        print(f"\n  {icon} {r.engine}: {p}/{t} tests passed")
+        if p == t and sk:
+            icon = '\u26a0'
+        print(f"\n  {icon} {r.engine}: {p}/{t} tests passed"
+              + (f", {sk} skipped" if sk else ""))
         for test in r.tests:
-            s = '\u2705' if test['passed'] else '\u274c'
+            if test.get('skipped'):
+                s = '\u2298'          # could not run: neither pass nor fail
+            else:
+                s = '\u2705' if test['passed'] else '\u274c'
             tm = f" ({test['time_us']:.0f}\u03bcs)" if test['time_us'] > 0 else ""
             print(f"     {s} {test['name']}{tm}")
             if test['detail']:
@@ -1352,8 +1384,11 @@ def print_report(results):
     total_p = sum(r.summary()[0] for r in results)
     total_t = sum(r.summary()[1] for r in results)
     total_c = sum(r.summary()[2] for r in results)
+    total_s = sum(r.n_skipped() for r in results)
     print(f"\n{'='*70}")
-    print(f"  OVERALL: {total_p}/{total_t} tests passed")
+    print(f"  OVERALL: {total_p}/{total_t} tests passed"
+          + (f"  ({total_s} SKIPPED \u2014 could not run, see integrity below)"
+             if total_s else ""))
     if total_c == 0:
         print(f"  \u2705 No critical findings")
     else:
@@ -1372,7 +1407,8 @@ def save_json(results, filename):
         p, t, c = r.summary()
         report['engines'].append({
             'name': r.engine, 'tests': r.tests, 'findings': r.findings,
-            'summary': {'passed': p, 'total': t, 'critical': c}
+            'summary': {'passed': p, 'total': t, 'critical': c,
+                        'skipped': r.n_skipped()}
         })
     with open(filename, 'w') as f:
         json.dump(report, f, indent=2)
@@ -1985,9 +2021,9 @@ def audit_full_ntt(lib):
                        'coqc accepted' if proc.returncode == 0 else
                        (proc.stderr or '').strip()[-80:])
         except subprocess.TimeoutExpired:
-            r.add_test('NTT Coq certificate verified', False, 'coqc timed out')
+            r.add_skip('NTT Coq certificate verified', 'coqc timed out', 'coq')
     else:
-        r.add_test('NTT Coq certificate verified', False, 'coqc not in PATH')
+        r.add_skip('NTT Coq certificate verified', 'coqc not in PATH', 'coq')
 
     return r
 
@@ -2299,12 +2335,11 @@ def audit_aes_sbox(lib_gf2):
                    f'CMS5={cms_time*1e6:.0f}\u03bcs, engine={res.solve_time_us:.1f}\u03bcs, '
                    f'speedup={speedup:.0f}\u00d7')
     else:
-        # A benchmark that did not run is not a passed test.
-        DEGRADED['deps'].append('cryptominisat')
-        DEGRADED['skipped_checks'].append('CMS5 comparison')
-        r.add_test('CryptoMiniSat5 comparison', False,
-                   'SKIPPED \u2014 CMS5 not installed. This comparison did NOT run '
-                   '(apt install cryptominisat).')
+        # A benchmark that did not run is not a passed test -- and it is not a
+        # failed one either. add_skip records that and registers the dependency.
+        r.add_skip('CryptoMiniSat5 comparison',
+                   'CMS5 not installed, this comparison did NOT run '
+                   '(apt install cryptominisat)', 'cryptominisat')
     return r
 
 # ================================================================
@@ -2397,11 +2432,9 @@ def audit_fips205_params():
                    f"sign/verify={'OK' if valid else 'FAIL'}, "
                    f"tampered-rejected={'OK' if _tampered else 'FAIL'}")
     except ImportError:
-        DEGRADED['deps'].append('slh-dsa')
-        DEGRADED['skipped_checks'].append('SLH-DSA live roundtrip')
-        r.add_test('SLH-DSA live roundtrip', False,
-                   'SKIPPED \u2014 slh-dsa not installed, no live sign/verify was '
-                   'performed (pip install slh-dsa)')
+        r.add_skip('SLH-DSA live roundtrip',
+                   'slh-dsa not installed, no live sign/verify was performed '
+                   '(pip install slh-dsa)', 'slh-dsa')
     return r
 
 # ================================================================
@@ -2563,11 +2596,11 @@ def audit_coq_daemon():
     r = AuditResult('Coq Daemon')
     import shutil
     if not shutil.which('coqtop'):
-        r.add_test('Coq daemon', False, 'coqtop not in PATH')
+        r.add_skip('Coq daemon', 'coqtop not in PATH', 'coq')
         return r
     daemon = CoqDaemon()
     if not daemon.proc:
-        r.add_test('Coq daemon startup', False, 'failed to start')
+        r.add_skip('Coq daemon startup', 'coqtop failed to start', 'coq')
         return r
     r.add_test('Coq daemon startup', True, 'coqtop persistent process')
 
@@ -2791,7 +2824,7 @@ def audit_dqbf_pipeline(engines):
     r = AuditResult('DQBF Pipeline (Phase 4b)')
     lib_gf2 = engines.get('gf2')
     if not lib_gf2:
-        r.add_test('DQBF pipeline', False, 'GF(2) engine not available')
+        r.add_skip('DQBF pipeline', 'GF(2) engine not available (gcc?)')
         return r
     import time as _time
     t0 = _time.perf_counter()
@@ -3153,8 +3186,8 @@ def main(quick=False):
     import subprocess, shutil
     coqc_path = shutil.which('coqc')
     if coqc_path is None:
-        cert_r.add_test('Coq batch verified by coqc', False,
-                        'coqc not in PATH \u2014 !apt install coq -y -qq')
+        cert_r.add_skip('Coq batch verified by coqc',
+                        'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
     else:
         try:
             proc = subprocess.run([coqc_path, coq_file],
@@ -3163,9 +3196,10 @@ def main(quick=False):
                             'coqc accepted' if proc.returncode == 0 else
                             (proc.stderr or proc.stdout or '').strip()[-120:])
         except subprocess.TimeoutExpired:
-            cert_r.add_test('Coq batch verified by coqc', False, 'coqc timed out (60s)')
+            cert_r.add_skip('Coq batch verified by coqc', 'coqc timed out (60s)', 'coq')
         except Exception as e:
-            cert_r.add_test('Coq batch verified by coqc', False, str(e))
+            cert_r.add_skip('Coq batch verified by coqc',
+                            f'coqc could not be run: {str(e)[:80]}', 'coq')
     results.append(cert_r)
 
     # ============================================================
@@ -3210,6 +3244,10 @@ def main(quick=False):
     save_json(results, json_file)
     print(f"\n  Report saved: {json_file}")
     print(f"  Coq cert:    {coq_file}")
+    # Returned so the suite can be ASSERTED rather than merely run. Printing a
+    # tally that nothing checks is how seven skipped checks read as failures
+    # for as long as they did.
+    return results
 
 
 # ================================================================
@@ -3829,8 +3867,8 @@ def audit_engine6_quintic(lib):
                    'Res(f4)/Res(f2) = -884266719222068786621093750/97 '
                    'at z=0 and z=1/3125')
     except ImportError:
-        r.add_test('Conjecture 7: CY3 residue rigidity', False,
-                   'SymPy not available — pip install sympy')
+        r.add_skip('Conjecture 7: CY3 residue rigidity',
+                   'SymPy not available — pip install sympy', 'sympy')
     return r
 
 # ============================================================
@@ -4045,8 +4083,8 @@ def audit_engine6_coq():
     r.add_test('Coq certificate generated', True, cert_file)
     coqc = shutil.which('coqc')
     if not coqc:
-        r.add_test('Coq certificate verified by coqc', False,
-                   'coqc not in PATH — !apt install coq -y -qq')
+        r.add_skip('Coq certificate verified by coqc',
+                   'coqc not in PATH — !apt install coq -y -qq', 'coq')
         return r
     try:
         t0 = time.perf_counter()
@@ -4061,8 +4099,8 @@ def audit_engine6_coq():
         if not ok:
             r.add_finding('CRITICAL', 'Engine 6 Coq certificate rejected by coqc')
     except subprocess.TimeoutExpired:
-        r.add_test('Engine 6 Coq certificate verified by coqc', False,
-                   'coqc timed out (120s)')
+        r.add_skip('Engine 6 Coq certificate verified by coqc',
+                   'coqc timed out (120s)', 'coq')
     # Persistent daemon (throughput) — only when the harness CoqDaemon is loaded
     CoqDaemon = globals().get('CoqDaemon')
     if CoqDaemon is not None and shutil.which('coqtop'):
@@ -4090,8 +4128,8 @@ def audit_engine6_coq():
                            f'{n_ok}/2 submitted, {elapsed:.0f}ms '
                            '(daemon = throughput; coqc above = verification)')
         except Exception as e:
-            r.add_test('Conjecture 7 via persistent Coq daemon', False,
-                       f'daemon error: {str(e)[:80]}')
+            r.add_skip('Conjecture 7 via persistent Coq daemon',
+                       f'daemon error: {str(e)[:80]}', 'coq')
     return r
 
 # ============================================================

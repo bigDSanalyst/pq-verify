@@ -49,6 +49,33 @@ Users of 2.6.7 or earlier on shared or multi-user hosts should upgrade.
   build looked identical to a missing compiler. Engine compilation no longer
   goes through a shell.
 
+### Changed
+
+- **The self-suite now distinguishes a check that could not run from one that
+  ran and failed.** A missing `coqc` was recorded as a *failed* test, so the
+  headline read `151/158` — seven broken checks — when nothing was broken.
+  Worse, none of those ten sites registered with `integrity_report()`, so a run
+  without coq and sympy still announced *"full coverage: every engine built,
+  every dependency present"* while seven checks had silently not run. That is
+  the hole the whole `DEGRADED` mechanism exists to close, in the one codebase
+  it was never pointed at.
+
+  `AuditResult.add_skip()` adds the third state. Skipped checks are excluded
+  from the ratio, print as `⊘` rather than `❌`, and register their missing
+  dependency. The same run now reports `151/151 passed (7 SKIPPED)` and names
+  all four absent dependencies — `coq`, `cryptominisat`, `slh-dsa`, `sympy` —
+  where it previously named two.
+
+  This is the `PQV000` / `PQV006` distinction — cannot-verify versus
+  verified-and-failed — applied to pq-verify's own suite, which had it for
+  everyone else's code and not its own. A tool that ran and rejected a
+  certificate is still a failure; only absence, timeout and startup failure
+  became skips.
+
+- **`main()` returns its results**, so the self-suite can be asserted rather
+  than merely run. It printed a tally nothing checked, which is how seven
+  skipped checks read as failures for as long as they did.
+
 ### Added
 
 - **`--emit-prompt <paramset>` / `--verify-response <file>`** — verification for

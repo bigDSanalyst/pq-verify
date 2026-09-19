@@ -1027,3 +1027,100 @@ def test_oversized_answer_is_a_finding_not_a_crash(tmp_path):
     r = _run(str(p))
     assert r["verified"] is False
     assert r["findings"]
+
+
+# ----------------------------------------------------------------------
+# The self-suite's own honesty
+#
+# pq-verify drew the cannot-verify / verified-and-failed line for everyone
+# else's code (PQV000 vs PQV006) and not for its own suite. A missing coqc was
+# recorded as a FAILED test, so 151/158 read as seven broken checks when
+# nothing was broken -- and worse, those sites never registered with
+# integrity_report(), which would announce "full coverage: every dependency
+# present" while seven checks had silently not run.
+# ----------------------------------------------------------------------
+
+import contextlib as _ctx
+
+
+@_ctx.contextmanager
+def _isolated_degraded():
+    """DEGRADED is module-global; snapshot and restore it around a test."""
+    from pq_verify.core import DEGRADED
+    before = {k: list(v) for k, v in DEGRADED.items()}
+    for v in DEGRADED.values():
+        v.clear()
+    try:
+        yield DEGRADED
+    finally:
+        for k, v in before.items():
+            DEGRADED[k][:] = v
+
+
+def test_a_skipped_check_is_neither_passed_nor_failed():
+    from pq_verify.core import AuditResult
+    with _isolated_degraded():
+        r = AuditResult("probe")
+        r.add_test("ran and passed", True)
+        r.add_test("ran and failed", False)
+        r.add_skip("could not run", "tool absent", "sometool")
+        p, t, c = r.summary()
+        assert (p, t) == (1, 2), "a skipped check must not be in the denominator"
+        assert r.n_skipped() == 1
+
+
+def test_integrity_report_sees_a_check_that_could_not_run():
+    """The hole. add_skip must reach integrity_report, or a run that verified
+    less than it claims will still announce full coverage."""
+    from pq_verify.core import AuditResult, integrity_report
+    with _isolated_degraded():
+        ok, lines = integrity_report(verbose=False)
+        assert ok is True, "fixture should start clean"
+        r = AuditResult("probe")
+        r.add_skip("could not run", "tool absent", "sometool")
+        ok, lines = integrity_report(verbose=False)
+        assert ok is False, "a check that did not run was invisible to integrity"
+        assert any("sometool" in l for l in lines)
+        assert any("could not run" in l for l in lines)
+
+
+def test_missing_coq_reaches_the_integrity_report():
+    """The concrete case that was broken: coqc absent used to be invisible."""
+    import shutil
+    from pq_verify.core import audit_coq_daemon, integrity_report
+    if shutil.which("coqtop"):
+        pytest.skip("coqtop is installed; this checks the absent case")
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = audit_coq_daemon()
+        assert r.n_skipped() >= 1, "absent coqtop must be a skip, not a failure"
+        assert r.summary()[0] == r.summary()[1], "nothing should be marked failed"
+        ok, lines = integrity_report(verbose=False)
+        assert ok is False and any("coq" in l for l in lines)
+
+
+@pytest.mark.slow
+def test_self_suite_has_no_failing_checks():
+    """Runs the whole engine stack and asserts on it.
+
+    The suite printed a tally that nothing checked, which is how seven skipped
+    checks read as failures for as long as they did. Every non-passing check
+    must now be a skip that names the dependency it needs.
+    """
+    from pq_verify.core import main as run_selftest
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = run_selftest(quick=True)
+        assert results, "the self-suite returned nothing to assert on"
+        failed = [(r.engine, t["name"], t.get("detail", ""))
+                  for r in results for t in r.tests
+                  if not t.get("skipped") and not t["passed"]]
+        assert not failed, f"self-suite has genuine failures: {failed[:5]}"
+        critical = [f for r in results for f in r.findings
+                    if f["severity"] == "CRITICAL"]
+        assert not critical, f"critical findings: {critical[:3]}"
+        # every skip must be attributable, or it is just a quiet hole
+        for r in results:
+            for t in r.tests:
+                if t.get("skipped"):
+                    assert t.get("detail"), f"{t['name']} skipped without a reason"
