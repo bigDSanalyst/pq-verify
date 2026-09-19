@@ -10,7 +10,7 @@
 
 **Independent verification for ML-KEM (Kyber) and ML-DSA (Dilithium) implementations.**
 
-You deploy post-quantum cryptography. pq-verify proves your implementation computes the FIPS 203/204 standard correctly — in the native finite field, against NIST's own test vectors, with machine-checkable certificates. Plus FIPS 205 SLH-DSA parameter validation across all 12 parameter sets.
+You deploy post-quantum cryptography. pq-verify checks that an implementation computes the FIPS 203/204 standard correctly — the transform verified in the native finite field, the full ML-KEM scheme byte-exact against NIST's own test vectors, with machine-checkable certificates for the algebraic identities. Plus FIPS 205 SLH-DSA parameter validation across all 12 parameter sets.
 
 It does not compute PQC. It verifies the implementations that do: liboqs, BoringSSL, OpenSSL+OQS, HSM firmware, or your own code.
 
@@ -155,12 +155,19 @@ pq-verify has been run against four upstream projects — all verify clean, with
 negative controls that correctly fail. Exact commits, build commands and
 per-check output are in [AUDITS.md](AUDITS.md).
 
-| Implementation | Result |
-|---|---|
-| liboqs (`mlkem-native` / `mldsa-native`) | ML-KEM and ML-DSA verified |
-| PQClean | ML-KEM and ML-DSA verified |
-| pq-crystals reference | Kyber and Dilithium verified |
-| BoringSSL | vector cross-check, byte-exact |
+| Implementation | What was audited | Result |
+|---|---|---|
+| liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
+| PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
+| PQClean ML-KEM-768 | **full scheme** — keygen, encaps, decaps | 60/60 byte-exact |
+| pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
+| BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
+
+Most rows are **NTT-level**: the transform is checked against an independently
+computed FIPS reference. Full-scheme auditing of a third party's
+keygen/encaps/decaps is available for ML-KEM (`--audit-kem`); the equivalent
+for ML-DSA signing is not implemented, because most libraries do not export
+the derandomised entry points NIST's seeded vectors require.
 
 ---
 
@@ -177,7 +184,7 @@ no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
 
 | Engine | Field | What it verifies |
 |---|---|---|
-| **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space enumeration** (full solution spaces, 2⁵⁶ verified) |
+| **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space basis** computation (256 vars / 200 eqs → ~56 free; particular solution and basis vectors verified against the system) |
 | **Z₃₃₂₉** | ML-KEM | Kyber NTT butterflies, Montgomery arithmetic, Freivalds verification |
 | **Z₈₃₈₀₄₁₇** | ML-DSA | Dilithium NTT butterflies — the *complete* 8-layer transform, 32-bit Freivalds |
 | **Cubic + ECC** | — | B(a,b) decomposition, elliptic curve point validation, BSGS |
@@ -315,7 +322,8 @@ sample_report.json         Example output (what your auditors receive)
 README.md / QUICKSTART.md / LICENSE / CITATION.cff
 ```
 
-Install: `pip install dist/pq_verify-2.6.7-py3-none-any.whl`
+Install: `pip install "pq-verify[full]"` — or download the wheel from
+[Releases](https://github.com/bigDSanalyst/pq-verify/releases).
 
 ---
 
@@ -344,7 +352,7 @@ pip install kyber-py dilithium-py sympy --break-system-packages
 **Optional (1 test each, everything works without them):**
 - `cryptominisat` — the CMS5 speed-comparison benchmark
 - `slh-dsa` — SLH-DSA live roundtrip (parameters still validate without it)
-- network access — `pqverify_acvp()` fetches NIST vectors from GitHub live; for air-gapped use, pass `prompt_dir=` pointing at local vector files
+- network access — `pqverify_acvp()` fetches NIST vectors from GitHub live; for air-gapped use the pinned vectors are used by default, or pass `vector_dir=` pointing at your own local vector set
 
 **Deliberately NOT required** (a deployment advantage):
 - No numpy, scipy, or PyTorch — pure Python + ctypes + inline C
