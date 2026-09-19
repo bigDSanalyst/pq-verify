@@ -668,3 +668,143 @@ def test_incomplete_response_fails_the_gate(tmp_path):
     code, out = _cli("--verify-response", str(bad), "--fail-on-finding")
     assert code == 1
     assert "CANNOT VERIFY" in out
+
+
+# ----------------------------------------------------------------------
+# Python floor — the declared one and the real one must be the same
+# ----------------------------------------------------------------------
+
+def _declared_floor():
+    """(major, minor) from pyproject's requires-python. Regex, not tomllib,
+    because tomllib itself is 3.11+ and this test has to run at the floor."""
+    import pathlib
+    import re
+    txt = (pathlib.Path(__file__).resolve().parent.parent
+           / "pyproject.toml").read_text()
+    m = re.search(r'^requires-python\s*=\s*"[^0-9]*(\d+)\.(\d+)', txt,
+                  re.MULTILINE)
+    assert m, "pyproject.toml has no parseable requires-python"
+    return int(m.group(1)), int(m.group(2))
+
+
+def _shipped_modules():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent / "pq_verify"
+    mods = sorted(root.rglob("*.py"))
+    assert len(mods) >= 5, f"expected the package's modules, found {mods}"
+    return mods
+
+
+def test_every_module_parses_at_the_declared_python_floor():
+    """The package must actually run on the Python it advertises.
+
+    Six f-strings in core.py carried a backslash inside the expression part,
+    which is PEP 701 syntax and parses only on 3.12+. requires-python still
+    said >=3.8, so pip installed happily on 3.11 and every import raised
+    SyntaxError -- a claim that held right up until someone acted on it.
+
+    This asserts metadata and code agree, so the next one fails here rather
+    than in an adopter's CI.
+    """
+    import ast
+    floor = _declared_floor()
+    # Moving the floor DOWN is a claim nothing here can check: the scan below
+    # is parse-only, and no interpreter older than this is on PATH to run. So
+    # widening requires exercising it first, not editing one line of metadata.
+    assert floor >= (3, 8), (
+        f"requires-python was widened to {floor[0]}.{floor[1]}, which has "
+        f"never been exercised -- run the suite there before claiming it")
+    for path in _shipped_modules():
+        try:
+            ast.parse(path.read_text(), filename=str(path),
+                      feature_version=floor)
+        except SyntaxError as exc:
+            raise AssertionError(
+                f"{path.name}:{exc.lineno} does not parse on Python "
+                f"{floor[0]}.{floor[1]}, which pyproject.toml advertises: "
+                f"{exc.msg}") from None
+
+
+def _needs_precise_fstring_positions():
+    """This detector is only sound on 3.12+.
+
+    Before 3.12 an f-string's inner nodes carry the enclosing literal's
+    position, so get_source_segment hands back the whole f-string and any
+    escape in the LITERAL part reads as an offender. Skipping is honest;
+    reporting false positives on 3.11 would not be.
+    """
+    import sys
+    if sys.version_info < (3, 12):
+        pytest.skip("f-string node positions are only exact on Python 3.12+")
+
+
+def _pep701_offenders(src):
+    """Backslash escapes inside f-string expression parts: 3.12+ syntax only.
+
+    Checked by shape rather than by parsing at the floor, because
+    ast.parse(feature_version=...) does NOT gate f-string tokenising -- a 3.12
+    interpreter accepts PEP 701 whatever feature_version it is handed, so the
+    parse-at-the-floor test above cannot see this class of defect at all.
+    """
+    import ast
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        for v in node.values:
+            if not isinstance(v, ast.FormattedValue):
+                continue
+            seg = ast.get_source_segment(src, v) or ""
+            if "\\" in seg:
+                out.append((v.lineno, seg))
+    return out
+
+
+def test_shape_guard_catches_the_bug_it_exists_for():
+    """The guard is worthless if it cannot see the mutation it was written for."""
+    _needs_precise_fstring_positions()
+    reintroduced = '''print(f"{'\\u2705' if ok else '\\u274c'} done")'''
+    assert _pep701_offenders(reintroduced), (
+        "the shape guard no longer detects a backslash inside an f-string "
+        "expression -- the defect it was written for could return unnoticed")
+    assert not _pep701_offenders('m = OK if ok else BAD\nprint(f"{m} done")')
+
+
+def test_no_glyph_escapes_remain_inside_f_string_expressions():
+    """The specific defect, by shape rather than by line number."""
+    _needs_precise_fstring_positions()
+    for path in _shipped_modules():
+        found = _pep701_offenders(path.read_text())
+        assert not found, (
+            f"{path.name}:{found[0][0]} puts a backslash inside an f-string "
+            f"expression ({found[0][1][:40]}) -- PEP 701, 3.12+ only")
+
+
+def test_package_imports_on_every_older_interpreter_present():
+    """Strongest evidence available: actually run it on older Pythons.
+
+    Skips where none are installed, so it never blocks a single-version CI,
+    but turns any older interpreter on PATH into a real compatibility check.
+    """
+    import pathlib
+    import shutil
+    import subprocess
+    import sys
+
+    floor = _declared_floor()
+    root = str(pathlib.Path(__file__).resolve().parent.parent)
+    older = []
+    for minor in range(floor[1], sys.version_info.minor):
+        exe = shutil.which(f"python3.{minor}")
+        if exe:
+            older.append((minor, exe))
+    if not older:
+        pytest.skip(f"no interpreter older than 3.{sys.version_info.minor} "
+                    f"on PATH at or above the declared floor 3.{floor[1]}")
+    for minor, exe in older:
+        r = subprocess.run(
+            [exe, "-c", "import pq_verify; print(pq_verify.__version__)"],
+            capture_output=True, text=True, cwd=root)
+        assert r.returncode == 0, (
+            f"pq-verify does not import on python3.{minor}, which "
+            f"requires-python advertises:\n{r.stderr.strip()[-600:]}")

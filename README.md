@@ -322,7 +322,12 @@ Install: `pip install dist/pq_verify-2.6.7-py3-none-any.whl`
 ## Requirements
 
 **Minimum (core engines + ~149 self-tests):**
-- Python 3.8+
+- Python 3.8+ — syntax is checked against 3.8 by the test suite; execution is
+  exercised on 3.10 through 3.13. No 3.9+ or 3.10+ standard-library feature is
+  used, so 3.8 and 3.9 are supported but not run here. `requires-python` and
+  the code are held together mechanically: a module that stops parsing at the
+  declared floor fails the suite, and the suite imports the package on every
+  older interpreter it finds on PATH.
 - gcc and g++ (the C/C++ engines compile at runtime)
 
 **For the full 160/160 self-suite and the 855/855 ACVP claim:**
