@@ -58,3 +58,6 @@ pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: exercises the full engine stack end to end (~45s)",
+]
