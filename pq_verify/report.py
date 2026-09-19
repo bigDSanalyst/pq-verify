@@ -79,6 +79,19 @@ RULES = {
                  "the standard correctly for that input."),
         "level": "error",
     },
+    "PQV007": {
+        "name": "HybridCompositionMismatch",
+        "short": "Hybrid key agreement does not compose the way RFC 10024 pins it",
+        "full": ("A hybrid transcript's components are not laid out as "
+                 "RFC 10024 requires for the negotiated group: a wrong "
+                 "length, a component at the wrong offset, an encapsulation "
+                 "key that fails the FIPS 203 Section 7.2 check the RFC makes "
+                 "a MUST, an invalid ECDHE point, or a shared secret whose "
+                 "halves are in the wrong order. Both components can pass "
+                 "every ACVP vector while this is wrong, because ACVP never "
+                 "sees the concatenation."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -92,6 +105,7 @@ _FINDING_MAP = (
     ("cannot verify", "PQV000"),
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
+    ("hybrid:",     "PQV007"),
     ("NTT:",        "PQV001"),
     ("Freivalds",   "PQV002"),
     ("Primitiv",    "PQV003"),
@@ -106,6 +120,29 @@ def _rule_for(finding_text):
         if needle in finding_text:
             return rule
     return "PQV001"
+
+
+# What this tool does not observe, stated as a field rather than left for the
+# reader to infer. Functional conformance and side-channel behaviour are
+# independent: KyberSlash and Clangover were byte-exact correct against every
+# vector and still leaked the key through timing. A report that is silent
+# about this invites "verified" to be read as "safe to deploy".
+SIDE_CHANNEL = {
+    "measured": False,
+    "summary": ("not measured — execution time, power and electromagnetic "
+                "behaviour were not observed"),
+    "detail": ("pq-verify compares values against NIST's published answers. "
+               "It does not execute the implementation under measurement and "
+               "cannot detect a timing-dependent, cache-dependent or "
+               "power-dependent implementation that computes the correct "
+               "result. Establishing that requires leakage assessment against "
+               "the deployed binary on the deployed hardware."),
+}
+
+
+def side_channel_scope():
+    """The scope declaration carried by every report. Copied, not shared."""
+    return dict(SIDE_CHANNEL)
 
 
 def artifact_bound(path):
@@ -140,7 +177,7 @@ def to_json(results, extra=None, artifact=None):
     findings = sum(len(r.get("findings", [])) for r in results)
     doc = {
         "schema": "pq-verify/scan-result",
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "summary": {
             "targets": len(results),
@@ -159,6 +196,7 @@ def to_json(results, extra=None, artifact=None):
             }
             for r in results
         ],
+        "side_channel": side_channel_scope(),
     }
     if artifact is not None:
         doc["artifact"] = artifact
@@ -171,13 +209,14 @@ def to_json_response(result):
     """Native schema for a prompt/response run (pq_verify.response)."""
     doc = {
         "schema": "pq-verify/response-result",
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "parameter_set": result.get("parameter_set"),
         "status": result.get("status"),
         "verified": result.get("verified", False),
         "artifact": result.get("artifact") or artifact_unbound(
             "vendor-supplied response"),
+        "side_channel": side_channel_scope(),
         "prompt": {
             "prompt_id": result.get("prompt_id"),
             "response_prompt_id": result.get("response_prompt_id"),
@@ -212,9 +251,10 @@ def _envelope(schema, artifact, reason="no binary was loaded"):
     """Common head of every native report: what it is, when, and what it binds to."""
     return {
         "schema": schema,
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "artifact": artifact if artifact is not None else artifact_unbound(reason),
+        "side_channel": side_channel_scope(),
     }
 
 
@@ -285,6 +325,45 @@ def to_json_acvp(suites, artifact=None):
     doc["verified"] = bool(t) and p == t
     doc["status"] = "VERIFIED" if doc["verified"] else (
         "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    return doc
+
+
+def to_json_hybrid(result):
+    """Native schema for a hybrid composition run (pq_verify.hybrid).
+
+    `checks_total` counts only what actually ran. A check with no input is
+    reported under `not_checked`, and one that does not exist for this group
+    under `not_applicable` — neither is ever folded into the passing count.
+    """
+    doc = _envelope("pq-verify/hybrid-result", result.get("artifact"),
+                    reason="vendor-supplied transcript")
+    doc["group"] = result.get("group")
+    doc["codepoint"] = result.get("codepoint")
+    doc["specification"] = result.get("specification")
+    doc["status"] = result.get("status")
+    doc["verified"] = bool(result.get("verified"))
+    doc["transcript"] = {
+        "file": result.get("transcript_file"),
+        "sha256": result.get("transcript_sha256"),
+        "implementation": result.get("implementation"),
+    }
+    doc["layout"] = result.get("layout", {})
+    doc["summary"] = {
+        "checks_passed": result.get("passed", 0),
+        "checks_total": result.get("total", 0),
+        "not_checked": result.get("skipped", 0),
+        "not_applicable": result.get("not_applicable", 0),
+        "findings": len(result.get("findings", [])),
+    }
+    doc["checks"] = [
+        {"name": c["name"],
+         "result": ("not_applicable" if c.get("kind") == "not_applicable"
+                    else "not_checked" if c.get("skipped")
+                    else "pass" if c["passed"] else "fail"),
+         "detail": c.get("detail", "")}
+        for c in result.get("checks", [])
+    ]
+    doc["findings"] = result.get("findings", [])
     return doc
 
 
@@ -379,8 +458,10 @@ def to_sarif(results, tool_version="unknown", source_root=None, artifact=None):
     }
     if run_artifacts:
         run["runs"][0]["artifacts"] = run_artifacts
+    props = {"pqVerifySideChannel": SIDE_CHANNEL["summary"]}
     if artifact:
-        run["runs"][0]["properties"] = {"pqVerifyArtifact": artifact["summary"]}
+        props["pqVerifyArtifact"] = artifact["summary"]
+    run["runs"][0]["properties"] = props
     return run
 
 

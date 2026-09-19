@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.7.0 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.8.0 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -35,7 +35,7 @@ import os, sys, ctypes, time, random, json, math, hashlib, struct
 import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 
 # Status glyphs as names rather than escapes inlined into f-string expressions.
 # A backslash inside an f-string expression is PEP 701 syntax (Python 3.12+);
@@ -4902,15 +4902,22 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
 
 
 # ================================================================
-# PUBLIC API: pqverify_leakage — per-layer NTT side-channel analysis
+# PUBLIC API: pqverify_leakage — per-layer algebraic protection allocation
 # ================================================================
 
 def pqverify_leakage(q=3329, zeta=17, n=256):
-    """Compute per-layer algebraic leakage scores for the NTT.
+    """Per-layer algebraic protection allocation for the NTT.
 
-    For each butterfly layer, measures how many secret coefficients
-    are determined by leaking that layer's intermediate values.
-    Returns protection allocation table.
+    For each butterfly layer, computes how many secret coefficients would be
+    determined IF that layer's intermediate values were exposed — the rank of
+    the linear system an attacker would then hold. It answers "which layers
+    are worth spending masking on", from the transform's algebraic structure.
+
+    This is computed, not measured. Nothing is executed under observation, no
+    trace is collected, and no claim is made about whether this particular
+    implementation actually leaks those values. Establishing that requires
+    leakage assessment against the deployed binary on the deployed hardware;
+    every pq-verify report says so in its side_channel field.
 
     Usage:
         pqverify_leakage()                    # Kyber
@@ -4974,7 +4981,7 @@ def pqverify_leakage(q=3329, zeta=17, n=256):
 
     # Compute cumulative rank per layer
     print("=" * 60)
-    print(f"  NTT ALGEBRAIC LEAKAGE ANALYSIS (q={q}, n={n})")
+    print(f"  NTT ALGEBRAIC PROTECTION ALLOCATION (q={q}, n={n})")
     print("=" * 60)
     print(f"\n  {'Layer':>5} | {'Len':>4} | {'#BF':>4} | {'Layer Rank':>10} | "
           f"{'Cumul Rank':>10} | {'New Info':>8} | {'Risk':>10}")

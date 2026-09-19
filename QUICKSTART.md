@@ -1,85 +1,141 @@
-# pq-verify v2.7.0 — Quickstart
-
-## 1. Run the self-test (confirms the tool works on your machine)
-
-Google Colab, or any Linux with `gcc` + Python 3.8+:
+# pq-verify — Quickstart
 
 ```bash
-apt-get install -y coq && pip install kyber-py dilithium-py sympy   # for full 158/158 + 855/855
+pip install "pq-verify[full]"
+pq-verify --version
 ```
 
-```python
-exec(open('pq_verify_v2_6_1.py').read())
+`[full]` pulls in `kyber-py`, `dilithium-py` and `sympy`, which the ACVP
+suites and the parameter estimator need. Plain `pip install pq-verify` works
+too — the checks that need those dependencies then report as **SKIPPED**
+rather than passing or failing, and the run is marked DEGRADED so a CI green
+cannot come from a check that never ran.
+
+---
+
+## 1. Confirm the tool works here
+
+```bash
+pq-verify                 # the self-suite
+pq-verify --quick         # a fast subset
 ```
 
-Expected: a 7-phase report ending in `OVERALL: 158/158 tests passed` (fewer, with some reported `SKIPPED`, when an optional dependency is absent).
-Without coq/kyber-py/sympy you'll see fewer (those tests report as failures, not skips).
+Ending in `OVERALL: 158/158 tests passed`, or fewer with some reported
+`SKIPPED` when an optional dependency is absent. A skipped check stays out of
+the ratio and names the dependency it needed.
 
-After loading, eight public functions are available: `main`, `pqverify_acvp`,
-`pqverify_params`, `pqverify_kem`, `pqverify_kat`, `pqverify_load_so`,
-`pqverify_scan`, and `pqverify_leakage`.
+```bash
+pq-verify --acvp-all      # 855/855 pinned NIST ACVP vectors (ML-KEM + ML-DSA)
+```
+
+---
 
 ## 2. Verify your own implementation
 
-### Option A — you have a compiled .so
+### A — a compiled `.so` you can load
 
-Edit the CONFIG block in `vendor_audit_template.py`:
-
-```python
-SO_PATH    = "/path/to/your_library.so"
-NTT_SYMBOL = "ntt"                # see "find your symbol" below
-ALGORITHM  = "ML-KEM-1024"        # or ML-KEM-512/768, ML-DSA-44/65/87
+```bash
+pq-verify --audit-so /path/to/libmlkem768.so ntt
+pq-verify --audit-kem /path/to/libmlkem768.so ML-KEM-768
 ```
 
-Then:
+The report binds to the file: `artifact: sha256 <hash>`.
 
-```python
-exec(open('pq_verify_v2_6_1.py').read())          # load the engine
-exec(open('vendor_audit_template.py').read())      # runs the audit
+Don't know the symbol? `nm -D lib.so | grep -i ntt`. Many libraries inline the
+NTT as `static`, so it is never exported — in that case either build a small
+`.so` exposing `void ntt(int16_t[256])`, or use the prompt/response route
+below.
+
+> `--audit-so` and `--audit-kem` **execute the vendor's library**: `dlopen`
+> runs its constructors before pq-verify calls anything. Audit binaries you
+> would already be willing to run. See [SECURITY.md](SECURITY.md).
+
+### B — an implementation you cannot load (HSM, sealed binary, inlined build)
+
+Ask it the questions instead:
+
+```bash
+pq-verify --emit-prompt list                                  # what can be asked
+pq-verify --emit-prompt ML-DSA-65 --prompt-out prompt.json    # questions, no answers
+#   ... the implementer runs them, wherever it lives, and returns a response ...
+pq-verify --verify-response response.json                     # byte-exact, per test case
 ```
 
-Output: console report + `pqverify_vendor_report.json` (machine-readable,
-with a reproducible SHA-256 fingerprint).
+A passing response shows the responder computes FIPS 203/204/205 correctly for
+those inputs. It does **not** identify the binary that did it, so the report
+says `artifact: none — vendor-supplied response` as a field, not a footnote.
+A response covering 3 of 205 questions reports `3 of 205 asked` and
+`INCOMPLETE` — never `3/3 PASS`.
 
-### Find your symbol (if you don't know it)
+### C — a hybrid handshake (what deployments actually negotiate)
 
-```python
-discover_symbols("/path/to/your_library.so")
+```bash
+pq-verify --emit-hybrid-prompt list
+pq-verify --emit-hybrid-prompt X25519MLKEM768 --prompt-out hybrid.json
+pq-verify --verify-hybrid hybrid.json
 ```
 
-Lists exported NTT symbols. Note: many libraries inline the NTT as a
-`static` function, so it won't be exported — in that case a small dedicated
-`.so` exposing `void ntt(int16_t[256])` is the cleanest path.
+Checks the composition RFC 10024 pins — component order, offsets, lengths, the
+FIPS 203 §7.2 encapsulation key check, ECDHE point validity, and the
+recomputed ECDHE shared secret. Both halves can pass every ACVP vector while
+the concatenation is wrong; that is what this catches.
 
-### Option B — you have a Python implementation
-
-```python
-exec(open('pq_verify_v2_6_1.py').read())
-# your_ntt(list[int]) -> list[int] defined in this session
-pqverify_scan(globals())     # auto-discovers and audits it
-```
+---
 
 ## 3. Individual checks
 
-```python
-pqverify_kem(k=4)                      # native full-KEM, ML-KEM-1024 / Level 5
-pqverify_kat(your_ntt, k=4)            # non-circular KAT vs FIPS definition
-pqverify_leakage()                     # per-layer protection-allocation table
+```bash
+pq-verify --params ML-KEM-1024      # parameter security (primal-uSVP + hybrid)
+pq-verify --kem 4                   # native full-KEM at module rank 4
+pq-verify --leakage                 # per-layer algebraic protection allocation
 ```
 
-`k` selects the security level: 2 → Level 1, 3 → Level 3, 4 → Level 5
-(Dilithium: 4/6/8 with `family='dilithium', q=8380417, zeta=1753`).
+Or from Python:
 
-## 4. Reproducibility
+```python
+import pq_verify
+pq_verify.pqverify_acvp_all()
+pq_verify.pqverify_params("ML-KEM-768")
+pq_verify.verify_hybrid("hybrid.json")
+```
 
-The report is deterministic: same input → identical output → identical
-SHA-256 fingerprint. Re-run any audit and compare fingerprints to confirm
-the result wasn't tampered with.
+`pq_verify.__all__` lists the public API.
+
+---
+
+## 4. CI
+
+```bash
+pq-verify --acvp-all --fail-on-finding --require-full-coverage \
+          --json report.json --sarif report.sarif
+```
+
+- `--fail-on-finding` exits non-zero for findings, `INCOMPLETE`,
+  `CANNOT VERIFY`, and a suite short of its full count.
+- `--require-full-coverage` exits non-zero if any dependency was missing, so a
+  degraded run cannot report green.
+- `--sarif` is ingested natively by GitHub Code Scanning, DefectDojo, Snyk and
+  AWS Security Hub.
+
+There is a packaged action — see [Use it in CI](README.md#use-it-in-ci).
+
+---
+
+## 5. Reproducibility
+
+Vectors are **pinned inside the wheel**, so a run is deterministic: same input
+→ identical output → identical SHA-256 fingerprint. `--live` fetches NIST's
+current vectors instead, which is useful for detecting drift and by definition
+not reproducible.
+
+---
 
 ## Notes
 
-- Free Colab sessions are per-tab and reset after ~90 min idle. Keep the
-  `.py` files in Google Drive and `exec()` them from there to avoid re-uploading.
-- Engines compile at runtime via gcc/g++ — first run takes a few seconds.
-- Never install torchtext in the same Colab environment (unrelated, but it
-  corrupts the runtime).
+- Requires Python 3.9+. Engines compile at runtime via `gcc`/`g++`, so the
+  first run takes a few seconds; without a compiler those checks report as
+  SKIPPED.
+- Google Colab works: `pip install "pq-verify[full]"` then `!pq-verify`.
+  `DEMO.ipynb` in this repository is a one-click version.
+- pq-verify does not measure side channels. See
+  [Scope](README.md#side-channels-are-not-measured).
