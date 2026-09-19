@@ -931,3 +931,31 @@ def test_engine_compilation_does_not_use_a_shell():
         if line.lstrip().startswith("#"):
             continue
         assert "os.system(" not in line, f"core.py:{i} shells out: {line.strip()[:80]}"
+
+
+def test_acvp_gate_fails_when_the_reference_implementations_are_missing(
+        monkeypatch):
+    """A broken dependency install must not report green.
+
+    Without kyber-py and dilithium-py the ACVP suites verify nothing and report
+    0/0. Until 2.7.0 `--acvp-all --fail-on-finding` exited 0 for that, so a CI
+    job whose pip step silently failed looked identical to one that checked all
+    855 vectors.
+    """
+    import sys
+    from pq_verify.core import DEGRADED
+
+    before = {k: list(v) for k, v in DEGRADED.items()}
+    try:
+        # make `from kyber_py... import` and `from dilithium_py... import` fail
+        for mod in ("kyber_py", "kyber_py.ml_kem",
+                    "dilithium_py", "dilithium_py.ml_dsa"):
+            monkeypatch.setitem(sys.modules, mod, None)
+        code, out = _cli("--acvp-all", "--fail-on-finding")
+    finally:
+        for k, v in before.items():
+            DEGRADED[k][:] = v
+
+    assert code == 1, "a run that verified nothing passed the gate"
+    assert "0/0" in out
+    assert "CANNOT VERIFY" in out
