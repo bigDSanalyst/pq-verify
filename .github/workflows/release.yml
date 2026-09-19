@@ -29,6 +29,13 @@ on:
         required: false
         default: true
         type: boolean
+      publish_only:
+        description: "Publish an ALREADY RELEASED version to PyPI. Skips verify
+          and build; uploads the exact artifacts attached to the existing
+          release, after checking them against its published SHA256SUMS."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -41,6 +48,7 @@ jobs:
   # Never release what was not verified at the exact commit being released.
   verify:
     name: py${{ matrix.python }}
+    if: ${{ !inputs.publish_only }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -60,6 +68,7 @@ jobs:
 
   build:
     name: build, attest and release
+    if: ${{ !inputs.publish_only }}
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -188,7 +197,7 @@ jobs:
   pypi:
     name: publish to PyPI
     needs: build
-    if: ${{ inputs.publish_to_pypi }}
+    if: ${{ inputs.publish_to_pypi && !inputs.publish_only }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -199,4 +208,45 @@ jobs:
           name: dist
           path: dist
       - run: rm -f dist/SHA256SUMS.txt
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Publishing was deliberately held on the first 2.7.0 run, and there was then
+  # no way back: a skipped job cannot be re-run, and re-triggering the workflow
+  # trips the "tag already exists" guard. This is that path.
+  #
+  # It uploads the artifacts ALREADY ATTACHED to the release -- the exact bytes
+  # that carry the SLSA attestation -- rather than rebuilding, so what lands on
+  # PyPI is what was attested, with the same digests. Rebuilding would produce
+  # a different wheel than the one SHA256SUMS.txt on the release describes.
+  publish-existing:
+    name: publish an existing release to PyPI
+    if: ${{ inputs.publish_only }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # trusted publishing
+      contents: read         # read the release assets
+    steps:
+      - name: Fetch the released artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "v${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.whl' --pattern '*.tar.gz' --pattern 'SHA256SUMS.txt' \
+            --dir dist
+          ls -la dist
+
+      - name: They must match the checksums the release published
+        run: |
+          set -euo pipefail
+          cd dist
+          # Refuse to publish anything whose bytes differ from what the release
+          # says it shipped -- otherwise PyPI and the attestation disagree.
+          sha256sum -c SHA256SUMS.txt
+          rm -f SHA256SUMS.txt
+          echo "artifacts match the released digests"
+
       - uses: pypa/gh-action-pypi-publish@release/v1
