@@ -1,7 +1,7 @@
 """
 pq-verify command-line interface.
 
-    pq-verify                      run the 160-test self-suite
+    pq-verify                      run the 158-check self-suite
     pq-verify --quick              fast subset of the self-suite
     pq-verify --acvp               full NIST ACVP (all 12 ML-KEM groups)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)

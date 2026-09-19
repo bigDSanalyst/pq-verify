@@ -1,9 +1,9 @@
 # pq-verify v2.7.0 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
-![version](https://img.shields.io/badge/version-2.7.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)
+[![tests](https://github.com/bigDSanalyst/pq-verify/actions/workflows/tests.yml/badge.svg)](https://github.com/bigDSanalyst/pq-verify/actions/workflows/tests.yml)
+![self-suite](https://img.shields.io/badge/self--suite-158%20checks-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21739511.svg)](https://doi.org/10.5281/zenodo.21739511)
@@ -34,7 +34,7 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ## Proven (all tested on commodity hardware, Google Colab CPU)
 
-- **160/160** self-test across 6 field-native engines, 6 phases — in an
+- **158/158** self-test across 6 field-native engines, 6 phases — in an
   environment with every optional dependency present. Where one is missing the
   dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
   what it needed. It is never counted as a pass, and never as a failure either
@@ -78,7 +78,7 @@ pq-verify --verify-response response.json                    # byte-exact, per t
 <summary>Other install routes</summary>
 
 ```python
-exec(open('pq_verify/core.py').read())   # 160-test self-suite + loads the API
+exec(open('pq_verify/core.py').read())   # 158-check self-suite + loads the API
 
 pqverify_acvp()                    # full NIST ACVP, all parameter sets
 pqverify_params('ML-KEM-1024')     # parameter security check
@@ -226,7 +226,7 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 
 | Function | Purpose |
 |----------|---------|
-| `main()` | 160-test self-suite |
+| `main()` | 158-check self-suite |
 | `pqverify_acvp()` | Full NIST ACVP end-to-end ML-KEM (240/240, all groups) |
 | `pqverify_mldsa_acvp()` | Full NIST ACVP end-to-end ML-DSA (615/615, FIPS 204) |
 | `pqverify_slhdsa_acvp()` | NIST ACVP SLH-DSA keyGen (120/120, FIPS 205, all 12 parameter sets) |
@@ -349,7 +349,7 @@ pq_verify/
   cli.py                   Command-line interface
   response.py              Prompt/response verification for un-loadable builds
   report.py                Native JSON + SARIF 2.1.0 output
-tests/test_pqverify.py     53-test pytest suite
+tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 pyproject.toml             Build config + console-script entry point
 dist/
   pq_verify-2.7.0-py3-none-any.whl    Installable wheel
@@ -376,7 +376,7 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
   declared floor fails the suite, and widening the floor fails it too.
 - gcc and g++ (the C/C++ engines compile at runtime)
 
-**For the full 160/160 self-suite and the 855/855 ACVP claim:**
+**For the full 158/158 self-suite and the 855/855 ACVP claim:**
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
 - `dilithium-py` — **required** for `pqverify_mldsa_acvp()` (the 615 ML-DSA vectors)
 - `coq` — required for the Coq certificate verification tests

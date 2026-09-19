@@ -3,7 +3,7 @@ pq-verify — Independent verification for ML-KEM / ML-DSA implementations.
 
 Verifies that post-quantum cryptography implementations compute the
 FIPS 203/204 standard correctly: native field-native NTT verification,
-non-circular Known Answer Tests, NIST ACVP end-to-end (270/270), a
+non-circular Known Answer Tests, NIST ACVP end-to-end (855/855), a
 Bai-Galbraith lattice parameter-security estimator, and per-layer
 side-channel leakage analysis. Coq-certified, reproducible.
 
