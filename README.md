@@ -76,6 +76,15 @@ pq-verify --emit-prompt ML-DSA-65 --prompt-out prompt.json   # 205 questions, no
 pq-verify --verify-response response.json                    # byte-exact, per test case
 ```
 
+**This route is weaker than `--audit-so`, and the report says so.** A passing
+response shows that whoever produced it computes the standard correctly for
+those inputs. It does not show *which binary did it* — there is no signature
+over the computation and no binding to code. So the result carries
+`artifact: none — vendor-supplied response` where a loaded library would carry
+its SHA-256. Use it when the alternative is no verification at all, not when
+you can point at a file. See [What a result is bound
+to](#what-a-result-is-bound-to).
+
 Nothing in production negotiates bare ML-KEM. To check the part ACVP cannot
 see — how the two halves of a hybrid key agreement are put together:
 
@@ -538,6 +547,13 @@ Archived on Zenodo with a citable DOI:
 
 The DOI above resolves to this specific release. The companion paper is
 [10.5281/zenodo.19302050](https://doi.org/10.5281/zenodo.19302050).
+
+**The citation version can lag the package version, on purpose.**
+`CITATION.cff` names the last version deposited on Zenodo, not the newest
+release — a DOI that does not resolve to the version printed beside it would
+be worse than one that is a release behind. For the current version see
+[Releases](https://github.com/bigDSanalyst/pq-verify/releases) or the PyPI
+badge at the top.
 
 ## Contact
 
