@@ -1129,12 +1129,17 @@ def test_self_suite_has_no_failing_checks():
 # ----------------------------------------------------------------------
 # Numbers claimed in the documentation
 #
-# The README badge read `tests 160/160` while the suite recorded 158 checks.
-# It is a static shields.io image with the number typed into the URL, so
-# nothing computed it and nothing caught it -- the same shape as a
-# requires-python that does not match the code, on the most-read surface in
-# the repository. Related stale claims: 885/885 combined ACVP (it is 855) and
-# 270/270 ML-KEM (it is 240).
+# The README badge read `tests 160/160` while the suite recorded 158 in CI.
+# The badge was RIGHT and the correction to 158 was wrong: CI installs neither
+# coq nor slh-dsa, and two checks did not exist at all without them, so the
+# denominator itself moved with the environment. Measuring in an incomplete
+# environment and calling the difference a stale badge is the same error in
+# the opposite direction. The count is now environment-independent (see
+# audit_coq_daemon and the engine-6 certificate) and the documented figure is
+# 160 again.
+#
+# Related stale claims, both genuinely wrong: 885/885 combined ACVP (it is
+# 855) and 270/270 ML-KEM (it is 240).
 #
 # These pin the documented numbers to measured ones.
 # ----------------------------------------------------------------------
