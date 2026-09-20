@@ -20,7 +20,7 @@ pq-verify                 # the self-suite
 pq-verify --quick         # a fast subset
 ```
 
-Ending in `OVERALL: 158/158 tests passed`, or fewer with some reported
+Ending in `OVERALL: 160/160 tests passed`, or fewer with some reported
 `SKIPPED` when an optional dependency is absent. A skipped check stays out of
 the ratio and names the dependency it needed.
 
