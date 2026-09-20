@@ -14,8 +14,8 @@ report and have not had a reply — no details.
 
 | Version | Supported |
 |---------|-----------|
-| 2.7.x   | yes |
-| < 2.7   | no — upgrade |
+| 2.8.x   | yes |
+| < 2.8   | no — upgrade |
 
 ## What pq-verify does on purpose
 

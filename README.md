@@ -6,7 +6,7 @@
 ![self-suite](https://img.shields.io/badge/self--suite-158%20checks-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21739511.svg)](https://doi.org/10.5281/zenodo.21739511)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22851661.svg)](https://doi.org/10.5281/zenodo.22851661)
 
 **Independent verification for ML-KEM (Kyber) and ML-DSA (Dilithium) implementations.**
 
@@ -531,27 +531,27 @@ MIT. The verifier is open-source — builds trust, enables adoption. Commercial 
 Archived on Zenodo with a citable DOI:
 
 > Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
-> implementations* (v2.7.0). Zenodo. https://doi.org/10.5281/zenodo.21739511
+> implementations* (v2.8.0). Zenodo. https://doi.org/10.5281/zenodo.22851661
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
   title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
-  version   = {2.7.0},
+  version   = {2.8.0},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.21739511},
-  url       = {https://doi.org/10.5281/zenodo.21739511}
+  doi       = {10.5281/zenodo.22851661},
+  url       = {https://doi.org/10.5281/zenodo.22851661}
 }
 ```
 
 The DOI above resolves to this specific release. The companion paper is
 [10.5281/zenodo.19302050](https://doi.org/10.5281/zenodo.19302050).
 
-**The citation version can lag the package version, on purpose.**
-`CITATION.cff` names the last version deposited on Zenodo, not the newest
-release — a DOI that does not resolve to the version printed beside it would
-be worse than one that is a release behind. For the current version see
+`CITATION.cff` names the version deposited on Zenodo. When a release is newer
+than the last deposit, the citation lags on purpose until a new one exists — a
+DOI that does not resolve to the version printed beside it would be worse than
+one a release behind. For the current version see
 [Releases](https://github.com/bigDSanalyst/pq-verify/releases) or the PyPI
 badge at the top.
 
