@@ -25,7 +25,7 @@ Colab:
   Cell 1: !apt-get install -y -qq gcc g++ coq
           !pip install -q kyber-py dilithium-py sympy --break-system-packages
   Cell 2: exec(open('pq_verify_v2_6_1.py').read())
-  Cell 3: main()                # 158/158
+  Cell 3: main()                # 160/160
           pqverify_acvp_all()   # 855/855
 
 Author: Nicholas Maino (iamweare)
@@ -2432,7 +2432,7 @@ def audit_fips205_params():
                    f"sign/verify={'OK' if valid else 'FAIL'}, "
                    f"tampered-rejected={'OK' if _tampered else 'FAIL'}")
     except ImportError:
-        r.add_skip('SLH-DSA live roundtrip',
+        r.add_skip('SLH-DSA-SHA2-128s live roundtrip',
                    'slh-dsa not installed, no live sign/verify was performed '
                    '(pip install slh-dsa)', 'slh-dsa')
     return r
@@ -2595,12 +2595,19 @@ def audit_coq_daemon():
     """Test persistent coqtop daemon for batch proof checking."""
     r = AuditResult('Coq Daemon')
     import shutil
+    # Every check this function can report must be REGISTERED on every path.
+    # Returning early without one does not make it pass or fail -- it makes it
+    # vanish, so the suite's own total changes with the environment and a
+    # documented count cannot be right in both. Skips carry the same names as
+    # the tests they stand in for, so two runs can be diffed.
     if not shutil.which('coqtop'):
-        r.add_skip('Coq daemon', 'coqtop not in PATH', 'coq')
+        r.add_skip('Coq daemon startup', 'coqtop not in PATH', 'coq')
+        r.add_skip('Batch 16 theorems', 'coqtop not in PATH', 'coq')
         return r
     daemon = CoqDaemon()
     if not daemon.proc:
         r.add_skip('Coq daemon startup', 'coqtop failed to start', 'coq')
+        r.add_skip('Batch 16 theorems', 'coqtop failed to start', 'coq')
         return r
     r.add_test('Coq daemon startup', True, 'coqtop persistent process')
 
@@ -4083,7 +4090,9 @@ def audit_engine6_coq():
     r.add_test('Coq certificate generated', True, cert_file)
     coqc = shutil.which('coqc')
     if not coqc:
-        r.add_skip('Coq certificate verified by coqc',
+        r.add_skip('Conjecture 7 + genus-2 residue theorem verified by coqc',
+                   'coqc not in PATH — !apt install coq -y -qq', 'coq')
+        r.add_skip('Conjecture 7 via persistent Coq daemon',
                    'coqc not in PATH — !apt install coq -y -qq', 'coq')
         return r
     try:
@@ -4103,6 +4112,9 @@ def audit_engine6_coq():
                    'coqc timed out (120s)', 'coq')
     # Persistent daemon (throughput) — only when the harness CoqDaemon is loaded
     CoqDaemon = globals().get('CoqDaemon')
+    if CoqDaemon is None or not shutil.which('coqtop'):
+        r.add_skip('Conjecture 7 via persistent Coq daemon',
+                   'coqtop not in PATH', 'coq')
     if CoqDaemon is not None and shutil.which('coqtop'):
         try:
             daemon = CoqDaemon()
