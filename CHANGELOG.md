@@ -3,7 +3,7 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.8.0] — 2026-09-19
+## [2.8.0] — 2026-09-20
 
 ### Added
 
