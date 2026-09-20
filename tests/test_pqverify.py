@@ -1853,3 +1853,47 @@ def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented():
         assert name in text, f"README does not mention {name}"
         assert f"0x{g['codepoint']:04X}" in text, (
             f"README does not give the codepoint for {name}")
+
+
+def test_internal_doc_links_resolve():
+    """A link to a heading that does not exist is a dead end for a reader.
+
+    Cheap to write, cheap to break: a heading gets renamed and every anchor
+    pointing at it silently stops working. GitHub renders the link happily
+    and scrolls nowhere.
+    """
+    import pathlib as _pl
+    files = ("README.md", "QUICKSTART.md", "SECURITY.md", "CHANGELOG.md",
+             "AUDITS.md")
+    present = {n: _pl.Path(_REPO / n) for n in files
+               if (_REPO / n).exists()}
+    if not present:
+        pytest.skip("docs not present in this checkout")
+
+    def anchors(text):
+        out = set()
+        for line in text.splitlines():
+            m = _re.match(r"^#{1,6}\s+(.*?)\s*$", line)
+            if m:
+                t = m.group(1).replace("`", "")
+                out.add(_re.sub(r"[^\w\s-]", "", t).strip().lower()
+                        .replace(" ", "-"))
+        return out
+
+    text = {n: p.read_text(encoding="utf-8") for n, p in present.items()}
+    anch = {n: anchors(t) for n, t in text.items()}
+    broken = []
+    for name, body in text.items():
+        for label, target in _re.findall(r"\[([^\]]+)\]\(([^)]+)\)", body):
+            if target.startswith("#"):
+                if target[1:] not in anch[name]:
+                    broken.append(f"{name}: [{label}]({target}) — no such heading")
+            elif ".md#" in target:
+                f, _, a = target.partition("#")
+                f = f.split("/")[-1]
+                if f in anch and a not in anch[f]:
+                    broken.append(f"{name}: [{label}]({target}) — no such heading in {f}")
+            elif not target.startswith(("http", "mailto")):
+                if not (_REPO / target).exists():
+                    broken.append(f"{name}: [{label}]({target}) — file does not exist")
+    assert not broken, "broken internal doc links:\n  " + "\n  ".join(broken)
