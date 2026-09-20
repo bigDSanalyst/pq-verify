@@ -23,8 +23,8 @@ Test Phases:
 
 Colab:
   Cell 1: !apt-get install -y -qq gcc g++ coq
-          !pip install -q kyber-py dilithium-py sympy --break-system-packages
-  Cell 2: exec(open('pq_verify_v2_6_1.py').read())
+          !pip install -q "pq-verify[full]"
+  Cell 2: from pq_verify import main, pqverify_acvp_all
   Cell 3: main()                # 160/160
           pqverify_acvp_all()   # 855/855
 
@@ -3978,7 +3978,7 @@ def audit_engine6_cfl(engines):
     fol_to_qbf = g.get('fol_to_qbf')
     if not all([cfl_lex, cfl_parse, cfl_to_fol, fol_to_qbf]):
         r.add_test('CFL pipeline integration', False,
-                   'harness CFL front-end not loaded — run pq_verify_v2 first '
+                   'harness CFL front-end not loaded — import pq_verify first '
                    '(CFL integration requires the stack)')
         return r
     t0 = time.perf_counter()

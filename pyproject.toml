@@ -34,9 +34,9 @@ dependencies = []
 # ML-DSA ACVP needs dilithium-py; ML-KEM ACVP needs kyber-py (both optional, in [full])
 
 [project.optional-dependencies]
-# Required to reproduce the 270/270 ACVP claim and the live KEM roundtrip.
-# sympy is required for the Engine-6 Conjecture 7 exact-rational residue test;
-# without it the self-suite reports 159/160.
+# Required to reproduce the 855/855 ACVP claim (ML-KEM 240 + ML-DSA 615) and
+# the live KEM roundtrip. sympy is required for the Engine-6 Conjecture 7
+# exact-rational residue test; without it the self-suite reports 159/160.
 full = ["kyber-py", "dilithium-py", "sympy", "slh-dsa"]
 # Developer tooling.
 dev = ["pytest>=7.0", "kyber-py", "dilithium-py", "sympy", "slh-dsa"]

@@ -1129,12 +1129,17 @@ def test_self_suite_has_no_failing_checks():
 # ----------------------------------------------------------------------
 # Numbers claimed in the documentation
 #
-# The README badge read `tests 160/160` while the suite recorded 158 checks.
-# It is a static shields.io image with the number typed into the URL, so
-# nothing computed it and nothing caught it -- the same shape as a
-# requires-python that does not match the code, on the most-read surface in
-# the repository. Related stale claims: 885/885 combined ACVP (it is 855) and
-# 270/270 ML-KEM (it is 240).
+# The README badge read `tests 160/160` while the suite recorded 158 in CI.
+# The badge was RIGHT and the correction to 158 was wrong: CI installs neither
+# coq nor slh-dsa, and two checks did not exist at all without them, so the
+# denominator itself moved with the environment. Measuring in an incomplete
+# environment and calling the difference a stale badge is the same error in
+# the opposite direction. The count is now environment-independent (see
+# audit_coq_daemon and the engine-6 certificate) and the documented figure is
+# 160 again.
+#
+# Related stale claims, both genuinely wrong: 885/885 combined ACVP (it is
+# 855) and 270/270 ML-KEM (it is 240).
 #
 # These pin the documented numbers to measured ones.
 # ----------------------------------------------------------------------
@@ -1897,3 +1902,91 @@ def test_internal_doc_links_resolve():
                 if not (_REPO / target).exists():
                     broken.append(f"{name}: [{label}]({target}) — file does not exist")
     assert not broken, "broken internal doc links:\n  " + "\n  ".join(broken)
+
+
+# ----------------------------------------------------------------------
+# Instructions live in module docstrings and templates too
+#
+# PR #6 rewrote QUICKSTART, which told readers to
+# `exec(open('pq_verify_v2_6_1.py').read())`. The guard added with it
+# scanned README.md and QUICKSTART.md — so the identical instruction
+# survived in core.py's own docstring and in vendor_audit_template.py for
+# another two releases. A guard that checks the files you were thinking
+# about is a guard against one instance, not against the class.
+#
+# These scan every text-bearing file in the repository.
+# ----------------------------------------------------------------------
+
+_HISTORY_FILES = {"CHANGELOG.md", "test_pqverify.py", "SECURITY.md"}
+
+
+def _repo_text_files():
+    out = {}
+    for q in _REPO.rglob("*"):
+        if not q.is_file() or ".git" in q.parts:
+            continue
+        if q.suffix not in (".py", ".md", ".yml", ".yaml", ".ipynb", ".toml",
+                            ".cff"):
+            continue
+        try:
+            out[q.relative_to(_REPO).as_posix()] = q.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+    return out
+
+
+def test_nothing_tells_anyone_to_exec_a_standalone_script():
+    """Those files are not shipped, and the 2.6.x ones carry CWE-426/CWE-59.
+
+    `exec(open(...))` of a version-named script is how this project was used
+    before it was a package. Any surviving instruction sends a reader to an
+    artifact that is not in the release, cannot be upgraded, and — for every
+    2.6.x build — loads `./libgf2_cfl.so` from the working directory.
+    """
+    offenders = []
+    pat = _re.compile(r"exec\(\s*open\(\s*['\"]pq_verify_v2[^'\"]*['\"]")
+    for name, text in _repo_text_files().items():
+        if _pathlib.PurePath(name).name in _HISTORY_FILES:
+            continue          # these describe the defect on purpose
+        for m in pat.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            offenders.append(f"{name}:{line}: {m.group(0)}")
+    assert not offenders, (
+        "instructions to exec a standalone script remain:\n  "
+        + "\n  ".join(offenders))
+
+
+def test_no_file_claims_a_python_floor_the_package_does_not(  ):
+    """The 3.8 claim that caused the 2.6.7 incident, hunted everywhere.
+
+    It was corrected in README and QUICKSTART and survived in
+    vendor_audit_template.py, which is the file a vendor is told to edit.
+    """
+    pyproject = _REPO / "pyproject.toml"
+    if not pyproject.exists():
+        pytest.skip("no pyproject.toml in this checkout")
+    m = _re.search(r'requires-python\s*=\s*"[>=~^]*\s*(\d+)\.(\d+)',
+                   pyproject.read_text(encoding="utf-8"))
+    assert m, "requires-python not found"
+    floor = (int(m.group(1)), int(m.group(2)))
+    offenders = []
+    for name, text in _repo_text_files().items():
+        if _pathlib.PurePath(name).name in _HISTORY_FILES:
+            continue
+        lines = text.splitlines()
+        for mm in _re.finditer(r"Python (\d+)\.(\d+)\+", text):
+            got = (int(mm.group(1)), int(mm.group(2)))
+            if got == floor:
+                continue
+            lineno = text[:mm.start()].count("\n") + 1
+            context = " ".join(lines[max(0, lineno - 2):lineno + 1]).lower()
+            # "PEP 701 syntax (Python 3.12+)" states which interpreters accept
+            # a language feature. That is not a claim about what this package
+            # requires, and it is true. Only requirement claims are checked.
+            if any(w in context for w in ("pep ", "syntax", "f-string",
+                                          "backslash", "interpreter")):
+                continue
+            offenders.append(
+                f"{name}:{lineno}: claims Python {got[0]}.{got[1]}+, "
+                f"package declares {floor[0]}.{floor[1]}+")
+    assert not offenders, "\n  " + "\n  ".join(offenders)
