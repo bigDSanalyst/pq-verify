@@ -6,12 +6,12 @@ authors:
     given-names: "Nicholas"
     alias: "iamweare"
     orcid: "https://orcid.org/0009-0007-6650-5879"
-# This names the archived Zenodo deposit, which is 2.7.0. It moves when a
-# new deposit exists, NOT when the package version changes — advertising a
-# DOI that does not resolve to the stated version would be worse than lagging.
-version: 2.7.0
-doi: "10.5281/zenodo.21739511"
-date-released: 2026-09-19
+# This names the archived Zenodo deposit. It moves when a NEW DEPOSIT EXISTS,
+# not when the package version changes — advertising a DOI that does not
+# resolve to the stated version would be worse than lagging a release behind.
+version: 2.8.0
+doi: "10.5281/zenodo.22851661"
+date-released: 2026-09-20
 license: MIT
 repository-code: "https://github.com/bigDSanalyst/pq-verify"
 references:
