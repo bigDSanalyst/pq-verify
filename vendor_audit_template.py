@@ -5,10 +5,10 @@ pq-verify — VENDOR AUDIT TEMPLATE
 Audit your compiled ML-KEM / ML-DSA implementation and produce a
 machine-readable verification report with a reproducible fingerprint.
 
-USAGE (Google Colab or any Linux + Python 3.8+ + gcc):
-    1. Load the engine:   exec(open('pq_verify_v2_6_0.py').read())
+USAGE (Google Colab or any Linux + Python 3.9+ + gcc):
+    1. Install:           pip install "pq-verify[full]"
     2. Edit the CONFIG block below (3 lines).
-    3. Run this file:     exec(open('vendor_audit_template.py').read())
+    3. Run this file:     python vendor_audit_template.py
 
 Output: console report + pqverify_vendor_report.json
 """
