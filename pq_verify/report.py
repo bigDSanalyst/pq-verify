@@ -289,9 +289,27 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                       "findings": 0 if p == t else 1}
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}
-    doc["findings"] = [] if p == t else [
-        f"stage {k}: {v[0]}/{v[1]} match NIST byte-for-byte"
-        for k, v in (result.get("detail") or {}).items() if v[0] != v[1]]
+    keycheck = result.get("keycheck") or {}
+    doc["keycheck"] = keycheck
+    findings = []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] == v[1]:
+            continue
+        m = keycheck.get(k)
+        if m is None:
+            findings.append(f"stage {k}: {v[0]}/{v[1]} match NIST byte-for-byte")
+            continue
+        sec = "7.2" if k == "ekCheck" else "7.3"
+        if m.get("accepted_invalid"):
+            findings.append(
+                f"stage {k}: accepted {m['accepted_invalid']} key(s) NIST marks "
+                f"invalid (FIPS 203 §{sec}); this API does not perform the "
+                f"input check, so every caller must")
+        if m.get("rejected_valid"):
+            findings.append(
+                f"stage {k}: rejected {m['rejected_valid']} key(s) NIST marks valid")
+    doc["findings"] = findings
+    doc["summary"]["findings"] = len(findings)
     return doc
 
 

@@ -65,7 +65,13 @@ def build_parser():
     p.add_argument("--audit-kem", nargs=2, metavar=("PATH", "PARAM_SET"),
                    help="audit a full ML-KEM implementation (keygen/encaps/decaps) "
                         "in PATH against NIST vectors, e.g. "
-                        "--audit-kem lib.so ML-KEM-768")
+                        "--audit-kem lib.so ML-KEM-768. Includes NIST's invalid "
+                        "keys, which the library must refuse")
+    for _role, _ex in (("keypair", "keypair_derand"), ("encaps", "enc_derand"),
+                       ("decaps", "dec")):
+        p.add_argument(f"--kem-{_role}", metavar="SYM",
+                       help=f"with --audit-kem: the {_role} symbol, when "
+                            f"auto-detection of *_{_ex} finds none or several")
     p.add_argument("--emit-prompt", metavar="PARAM_SET",
                    help="write the ACVP question set for PARAM_SET (e.g. "
                         "ML-DSA-65) to a file, for implementations that cannot "
@@ -189,7 +195,9 @@ def main(argv=None):
             return 2
         print(f"  artifact: {kem_artifact['summary']}")
         try:
-            kem_result = pqverify_audit_kem(_p, _ps)
+            kem_result = pqverify_audit_kem(
+                _p, _ps, keypair=args.kem_keypair, encaps=args.kem_encaps,
+                decaps=args.kem_decaps)
         except OSError as exc:
             # Not loadable by the dynamic linker: cannot verify, not a failure.
             kem_result = None

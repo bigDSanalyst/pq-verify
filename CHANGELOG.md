@@ -7,6 +7,16 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--audit-kem` bound the wrong function on mlkem-native.** Symbols were
+  picked by substring, taking the first name containing `keypair` and
+  `derand`. On mlkem-native that is the internal `indcpa_keypair_derand`, so
+  a correct, formally verified library was reported as FINDINGS PRESENT
+  (35/60). Its decaps (`_dec`, not `kem_dec`) was not found at all, so from
+  the CLI it could not be audited. Symbols are now matched by exact suffix
+  across PQClean, mlkem-native and liboqs naming, internal K-PKE routines are
+  excluded, a library exporting several parameter sets resolves to the one
+  asked for, and an ambiguous match is refused instead of guessed.
+
 - **Pinned NIST vectors re-cut to NIST's corrected files.** The bundle shipped
   two files from before NIST fixed them:
 
@@ -35,6 +45,16 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`--audit-kem` negative testing.** The audit now feeds the library NIST's
+  invalid keys: `ekCheck` (5 encapsulation keys with a coefficient ≥ q,
+  FIPS 203 §7.2) and `dkCheck` (5 decapsulation keys with a corrupted H(ek),
+  §7.3). Each must be refused with a nonzero return while the valid ones are
+  accepted. A full audit is now 80 checks. mlkem-native passes 80/80 at all
+  three parameter sets; PQClean's `clean` ML-KEM accepts all ten invalid
+  keys (70/80): its API has no rejection path, so the check falls to every
+  caller. Details in AUDITS.md.
+- `--kem-keypair` / `--kem-encaps` / `--kem-decaps` name the entry points
+  when auto-detection finds none or several.
 - Reports name the vector revision, e.g. `vectors: pinned (NIST ACVP-Server
   ad33b3d)`, and ACVP / `--audit-kem` results carry it as `vectors`.
   `MANIFEST.json` records each file's NIST commit and now covers the two

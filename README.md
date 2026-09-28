@@ -188,7 +188,8 @@ per-check output are in [AUDITS.md](AUDITS.md).
 |---|---|---|
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
-| PQClean ML-KEM-768 | **full scheme** — keygen, encaps, decaps | 60/60 byte-exact |
+| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys | 80/80 each |
+| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys | 60/60 byte-exact; accepts all 10 invalid keys → 70/80 |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 
