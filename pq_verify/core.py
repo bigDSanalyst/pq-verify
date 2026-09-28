@@ -2390,14 +2390,15 @@ def audit_fips204_params():
                        f"sig={len(sig)}/{params['sig']} verify={'OK' if valid else 'FAIL'}")
     except ImportError:
         # Without dilithium-py there is nothing to check these constants
-        # AGAINST -- asserting them true compares them with themselves.
-        DEGRADED['deps'].append('dilithium-py')
-        DEGRADED['skipped_checks'].append('FIPS 204 parameter validation')
+        # AGAINST -- asserting them true compares them with themselves. That
+        # is a check that could not run. It used to be recorded as a FAILED
+        # row whose detail read "SKIPPED": the text and the status disagreed.
         for name, params in fips204.items():
-            r.add_test(f'{name} params (unverified)', False,
-                       f"SKIPPED \u2014 dilithium-py not installed, constants "
-                       f"not checked against an implementation "
-                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})")
+            r.add_skip(f'{name} FIPS 204 sizes',
+                       f"dilithium-py not installed \u2014 constants not "
+                       f"checked against an implementation "
+                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})",
+                       'dilithium-py')
     return r
 
 # ================================================================
