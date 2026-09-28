@@ -1990,3 +1990,128 @@ def test_no_file_claims_a_python_floor_the_package_does_not(  ):
                 f"{name}:{lineno}: claims Python {got[0]}.{got[1]}+, "
                 f"package declares {floor[0]}.{floor[1]}+")
     assert not offenders, "\n  " + "\n  ".join(offenders)
+
+
+# ----------------------------------------------------------------------
+# Optional Python references: a missing one is a skip that names itself
+#
+# kyber-py and dilithium-py are extras. Without them the ML-KEM and ML-DSA
+# size and roundtrip checks have nothing to run against, which is a check
+# that could not run -- not one that failed. kyber-py used to break all
+# three halves of that promise at once: its absence was a FAILED row, it
+# was never named in integrity_report(), and one failed row replaced three
+# per-parameter-set rows so the suite total moved.
+#
+# The modules are blocked through sys.modules rather than skipped when
+# present, so these run identically on a base install and a [dev] install.
+# ----------------------------------------------------------------------
+
+_OPTIONAL_REFERENCES = {
+    "kyber-py": ("kyber_py", "kyber_py.ml_kem"),
+    "dilithium-py": ("dilithium_py", "dilithium_py.ml_dsa"),
+}
+
+
+def _audit_rows(block, monkeypatch):
+    """Run the reference-dependent audits with `block` unimportable."""
+    import sys
+    from pq_verify.core import (audit_fips203_params, audit_kyber_roundtrip,
+                                audit_fips204_params)
+    for dist in block:
+        for mod in _OPTIONAL_REFERENCES[dist]:
+            monkeypatch.setitem(sys.modules, mod, None)
+    rows = []
+    for fn in (audit_fips203_params, audit_kyber_roundtrip,
+               audit_fips204_params):
+        with contextlib.redirect_stdout(io.StringIO()):
+            rows.extend(fn().tests)
+    return rows
+
+
+@pytest.mark.parametrize("missing", ["kyber-py", "dilithium-py"])
+def test_a_missing_reference_library_is_skipped_and_named(missing, monkeypatch):
+    from pq_verify.core import integrity_report
+    with _isolated_degraded():
+        rows = _audit_rows([missing], monkeypatch)
+        failed = [t["name"] for t in rows
+                  if not t.get("skipped") and t["passed"] is not True]
+        assert not failed, f"absent {missing} reported as failure: {failed}"
+        mine = [t for t in rows if t.get("dep") == missing]
+        assert mine and all(t["skipped"] for t in mine)
+        ok, lines = integrity_report(verbose=False)
+        assert not ok
+        assert any(missing in l and "dependencies missing" in l for l in lines), (
+            f"{missing} is not named as missing: {lines}")
+
+
+def test_the_check_set_does_not_depend_on_the_reference_libraries(monkeypatch):
+    """Same names, same count, with or without the extras installed.
+
+    The suite's documented total is only true if absence changes a row's
+    status and never whether the row exists. The kyber-py path violated
+    this: one failed row stood in for four.
+    """
+    with _isolated_degraded():
+        absent = [t["name"] for t in _audit_rows(list(_OPTIONAL_REFERENCES),
+                                                 monkeypatch)]
+    monkeypatch.undo()
+    try:
+        import kyber_py.ml_kem, dilithium_py.ml_dsa  # noqa: F401
+    except ImportError:
+        pytest.skip("comparison needs the extras installed; the absent "
+                    "half is covered by the test above")
+    with _isolated_degraded():
+        present = [t["name"] for t in _audit_rows([], monkeypatch)]
+    assert absent == present
+    assert len(absent) == 7   # 3 ML-KEM sizes + 1 roundtrip + 3 ML-DSA sizes
+
+
+def test_an_installed_reference_that_errors_still_fails(monkeypatch):
+    """Only the import is a skip. A broken kyber-py is a finding."""
+    import types, sys
+    from pq_verify.core import audit_fips203_params, audit_kyber_roundtrip
+
+    class _Broken:
+        def keygen(self):
+            raise RuntimeError("simulated kyber-py fault")
+    fake = types.ModuleType("kyber_py.ml_kem")
+    fake.ML_KEM_512 = fake.ML_KEM_768 = fake.ML_KEM_1024 = _Broken()
+    monkeypatch.setitem(sys.modules, "kyber_py", types.ModuleType("kyber_py"))
+    monkeypatch.setitem(sys.modules, "kyber_py.ml_kem", fake)
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            rows = audit_fips203_params().tests + audit_kyber_roundtrip().tests
+    assert len(rows) == 4
+    assert all(t["passed"] is False and not t.get("skipped") for t in rows)
+    assert all("simulated kyber-py fault" in t["detail"] for t in rows)
+
+
+def test_batch_keypair_api_separates_absent_from_broken(monkeypatch):
+    """batch_verify_keypairs feeds the self-suite's Batch Verification row.
+
+    It folded every import problem into one 'error', and the suite recorded
+    any error as a failure -- so a base install printed a cross for an
+    optional dependency. Absence is now flagged as 'unavailable' (a skip);
+    a kyber-py that is present but broken is still an error (a failure).
+    """
+    import sys, types
+    from pq_verify.core import batch_verify_keypairs
+    monkeypatch.setitem(sys.modules, "kyber_py", None)
+    monkeypatch.setitem(sys.modules, "kyber_py.ml_kem", None)
+    absent = batch_verify_keypairs(2)
+    assert absent.get("unavailable") is True
+
+    broken = types.ModuleType("kyber_py")
+    monkeypatch.setitem(sys.modules, "kyber_py", broken)
+    monkeypatch.delitem(sys.modules, "kyber_py.ml_kem", raising=False)
+    monkeypatch.setattr(broken, "__path__", [], raising=False)
+    # a package that exists but whose submodule raises on import
+    class _Finder:
+        def find_spec(self, name, path=None, target=None):
+            if name == "kyber_py.ml_kem":
+                raise RuntimeError("simulated broken install")
+            return None
+    monkeypatch.setattr(sys, "meta_path", [_Finder()] + sys.meta_path)
+    failed = batch_verify_keypairs(2)
+    assert not failed.get("unavailable")
+    assert "simulated broken install" in failed["error"]

@@ -1479,27 +1479,42 @@ def audit_keygen(lib, n_inst=10000):
 def audit_fips203_params():
     """FIPS 203 parameter validation for ML-KEM-512/768/1024."""
     r = AuditResult('FIPS 203 Parameters')
+    fips = {
+        'ML-KEM-512':  {'ek': 800,  'dk': 1632, 'ct': 768,  'ss': 32},
+        'ML-KEM-768':  {'ek': 1184, 'dk': 2400, 'ct': 1088, 'ss': 32},
+        'ML-KEM-1024': {'ek': 1568, 'dk': 3168, 'ct': 1568, 'ss': 32},
+    }
+    # Only the import decides "could not run". A missing kyber-py raises
+    # ModuleNotFoundError, whose message is never empty -- so the old
+    # `except Exception` recorded it as a FAILURE, and the DEGRADED append
+    # hidden in the other arm of the conditional never ran. One skip per
+    # parameter set, named as the test is, keeps the suite's total at 160.
     try:
         from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
-        fips = {
-            'ML-KEM-512':  {'ek': 800,  'dk': 1632, 'ct': 768,  'ss': 32, 'obj': ML_KEM_512},
-            'ML-KEM-768':  {'ek': 1184, 'dk': 2400, 'ct': 1088, 'ss': 32, 'obj': ML_KEM_768},
-            'ML-KEM-1024': {'ek': 1568, 'dk': 3168, 'ct': 1568, 'ss': 32, 'obj': ML_KEM_1024},
-        }
-        for name, p in fips.items():
-            pk, sk = p['obj'].keygen()
-            ss1, ct = p['obj'].encaps(pk)
-            ss2 = p['obj'].decaps(sk, ct)
-            ok = (len(pk)==p['ek'] and len(sk)==p['dk'] and len(ct)==p['ct']
-                  and len(ss1)==p['ss'] and ss1==ss2)
-            r.add_test(f'{name} FIPS 203 sizes', ok,
-                       f"ek={len(pk)}/{p['ek']} dk={len(sk)}/{p['dk']} "
-                       f"ct={len(ct)}/{p['ct']} ss={len(ss1)}/{p['ss']} "
-                       f"roundtrip={'OK' if ss1==ss2 else 'FAIL'}")
-    except Exception as e:
-        r.add_test('FIPS 203 (kyber-py)', False,
-                   f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed \u2014 pip install kyber-py' if not DEGRADED['deps'].append('kyber-py') else '')
+    except ImportError:
+        for name in fips:
+            r.add_skip(f'{name} FIPS 203 sizes',
+                       'kyber-py not installed \u2014 pip install kyber-py',
+                       'kyber-py')
+        return r
+    impl = {'ML-KEM-512': ML_KEM_512, 'ML-KEM-768': ML_KEM_768,
+            'ML-KEM-1024': ML_KEM_1024}
+    for name, p in fips.items():
+        # An installed kyber-py that errors is a real failure, and stays one.
+        try:
+            pk, sk = impl[name].keygen()
+            ss1, ct = impl[name].encaps(pk)
+            ss2 = impl[name].decaps(sk, ct)
+        except Exception as e:
+            r.add_test(f'{name} FIPS 203 sizes', False,
+                       f'{type(e).__name__}: {e}')
+            continue
+        ok = (len(pk)==p['ek'] and len(sk)==p['dk'] and len(ct)==p['ct']
+              and len(ss1)==p['ss'] and ss1==ss2)
+        r.add_test(f'{name} FIPS 203 sizes', ok,
+                   f"ek={len(pk)}/{p['ek']} dk={len(sk)}/{p['dk']} "
+                   f"ct={len(ct)}/{p['ct']} ss={len(ss1)}/{p['ss']} "
+                   f"roundtrip={'OK' if ss1==ss2 else 'FAIL'}")
     return r
 
 def audit_exhaustive_inverses(lib):
@@ -1567,8 +1582,14 @@ def audit_twiddle_completeness(lib):
 def audit_kyber_roundtrip():
     """kyber-py 100-iteration ML-KEM-768 roundtrip stress test."""
     r = AuditResult('Kyber Roundtrip')
+    name = 'ML-KEM-768 \u00d7 100 roundtrips'
     try:
         from kyber_py.ml_kem import ML_KEM_768
+    except ImportError:
+        r.add_skip(name, 'kyber-py not installed \u2014 pip install kyber-py',
+                   'kyber-py')
+        return r
+    try:
         fails = 0
         t0 = time.perf_counter()
         for _ in range(100):
@@ -1577,12 +1598,10 @@ def audit_kyber_roundtrip():
             ss2 = ML_KEM_768.decaps(sk, ct)
             if ss1 != ss2: fails += 1
         elapsed = time.perf_counter() - t0
-        r.add_test('ML-KEM-768 \u00d7 100 roundtrips', fails == 0,
+        r.add_test(name, fails == 0,
                    f'{fails} failures, {elapsed:.1f}s, {elapsed/100*1000:.0f}ms/op')
     except Exception as e:
-        r.add_test('kyber-py roundtrip', False,
-                   f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed' if not DEGRADED['deps'].append('kyber-py') else '')
+        r.add_test(name, False, f'{type(e).__name__}: {e}')
     return r
 
 def audit_boundary_values(lib):
@@ -2371,14 +2390,15 @@ def audit_fips204_params():
                        f"sig={len(sig)}/{params['sig']} verify={'OK' if valid else 'FAIL'}")
     except ImportError:
         # Without dilithium-py there is nothing to check these constants
-        # AGAINST -- asserting them true compares them with themselves.
-        DEGRADED['deps'].append('dilithium-py')
-        DEGRADED['skipped_checks'].append('FIPS 204 parameter validation')
+        # AGAINST -- asserting them true compares them with themselves. That
+        # is a check that could not run. It used to be recorded as a FAILED
+        # row whose detail read "SKIPPED": the text and the status disagreed.
         for name, params in fips204.items():
-            r.add_test(f'{name} params (unverified)', False,
-                       f"SKIPPED \u2014 dilithium-py not installed, constants "
-                       f"not checked against an implementation "
-                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})")
+            r.add_skip(f'{name} FIPS 204 sizes',
+                       f"dilithium-py not installed \u2014 constants not "
+                       f"checked against an implementation "
+                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})",
+                       'dilithium-py')
     return r
 
 # ================================================================
@@ -3002,9 +3022,16 @@ def batch_verify_keypairs(n_instances, seed=None):
     import time as _time
     try:
         from kyber_py.ml_kem import ML_KEM_768
-    except Exception:
+    except ImportError:
+        # 'unavailable' separates "could not run" from "ran and broke", so a
+        # caller can report the first as a skip rather than a failure.
         return {'total': n_instances, 'passed': 0, 'failed': n_instances,
-                'error': 'kyber-py not available', 'total_ms': 0}
+                'error': 'kyber-py not available', 'unavailable': True,
+                'total_ms': 0}
+    except Exception as e:
+        return {'total': n_instances, 'passed': 0, 'failed': n_instances,
+                'error': f'kyber-py failed to load: {type(e).__name__}: {e}',
+                'total_ms': 0}
     report = {'total': n_instances, 'passed': 0, 'failed': 0, 'failures': []}
     t0 = _time.perf_counter()
     for i in range(n_instances):
@@ -3042,7 +3069,11 @@ def audit_batch_api(engines, quick=False):
     # Keypair batch (small count — kyber-py is slow)
     n_kp = 10 if quick else 50
     rpt = batch_verify_keypairs(n_kp, seed=42)
-    if rpt.get('error'):
+    if rpt.get('unavailable'):
+        r.add_skip(f'Batch ML-KEM-768 keypairs ({n_kp})',
+                   'kyber-py not installed \u2014 pip install kyber-py',
+                   'kyber-py')
+    elif rpt.get('error'):
         r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', False, rpt['error'])
     else:
         r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', rpt['failed'] == 0,
