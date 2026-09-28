@@ -3022,9 +3022,16 @@ def batch_verify_keypairs(n_instances, seed=None):
     import time as _time
     try:
         from kyber_py.ml_kem import ML_KEM_768
-    except Exception:
+    except ImportError:
+        # 'unavailable' separates "could not run" from "ran and broke", so a
+        # caller can report the first as a skip rather than a failure.
         return {'total': n_instances, 'passed': 0, 'failed': n_instances,
-                'error': 'kyber-py not available', 'total_ms': 0}
+                'error': 'kyber-py not available', 'unavailable': True,
+                'total_ms': 0}
+    except Exception as e:
+        return {'total': n_instances, 'passed': 0, 'failed': n_instances,
+                'error': f'kyber-py failed to load: {type(e).__name__}: {e}',
+                'total_ms': 0}
     report = {'total': n_instances, 'passed': 0, 'failed': 0, 'failures': []}
     t0 = _time.perf_counter()
     for i in range(n_instances):
@@ -3062,7 +3069,11 @@ def audit_batch_api(engines, quick=False):
     # Keypair batch (small count — kyber-py is slow)
     n_kp = 10 if quick else 50
     rpt = batch_verify_keypairs(n_kp, seed=42)
-    if rpt.get('error'):
+    if rpt.get('unavailable'):
+        r.add_skip(f'Batch ML-KEM-768 keypairs ({n_kp})',
+                   'kyber-py not installed \u2014 pip install kyber-py',
+                   'kyber-py')
+    elif rpt.get('error'):
         r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', False, rpt['error'])
     else:
         r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', rpt['failed'] == 0,
