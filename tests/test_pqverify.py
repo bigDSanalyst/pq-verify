@@ -204,6 +204,48 @@ def test_watcher_covers_every_bundled_vector():
         f"add them to TARGETS in tools/check_vectors.py")
 
 
+def _load_watcher():
+    import importlib.util, pathlib
+    path = (pathlib.Path(__file__).resolve().parent.parent
+            / "tools" / "check_vectors.py")
+    if not path.exists():
+        pytest.skip("watcher not present in this layout")
+    spec = importlib.util.spec_from_file_location("check_vectors", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_watcher_compares_upstream_to_the_shipped_bundle(tmp_path):
+    """The watcher must flag a bundle that lags upstream even when upstream
+    matches its own baseline.
+
+    Comparing upstream only to the baseline let the ML-KEM encapDecap and
+    ML-DSA sigVer bundles sit two NIST fixes behind while every weekly run
+    reported "no change".
+    """
+    import json
+    w = _load_watcher()
+    current = {"A/x.json": {"sha256": "aa" * 32, "bytes": 1},
+               "B/y.json": {"sha256": "bb" * 32, "bytes": 1},
+               "C/z.json": {"sha256": "cc" * 32, "bytes": 1}}
+    manifest = tmp_path / "MANIFEST.json"
+    manifest.write_text(json.dumps({
+        "A/x.json": {"sha256": "aa" * 32, "bytes": 1},     # current
+        "B/y.json": {"sha256": "00" * 32, "bytes": 1},     # behind
+    }))                                                     # C: unmanifested
+    history = {"B/y.json": {"bb" * 32: {"first_seen": "2026-08-07"}}}
+
+    out = "\n".join(w.bundle_behind(current, history, str(manifest)))
+    assert "[A/x.json]" not in out
+    assert "[B/y.json] BUNDLE BEHIND UPSTREAM" in out
+    assert "first seen 2026-08-07" in out
+    assert "[C/z.json] shipped in the bundle but missing from MANIFEST" in out
+
+    manifest.write_text(json.dumps(current))
+    assert w.bundle_behind(current, {}, str(manifest)) == []
+
+
 def test_mldsa_freivalds_engine():
     """The 32-bit Freivalds engine must accept a correct ML-DSA NTT and reject
     a wrong one -- including a 7-layer (ML-KEM-shaped) transform.
