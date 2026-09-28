@@ -5698,6 +5698,49 @@ _KEM_SIZES = {  # (ek, dk, ct, ss) per FIPS 203
 }
 
 
+# Public ML-KEM entry points by name suffix, across the naming schemes in use:
+#   PQClean       PQCLEAN_MLKEM768_CLEAN_crypto_kem_{keypair_derand,enc_derand,dec}
+#   mlkem-native  PQCP_MLKEM_NATIVE_MLKEM768_{keypair_derand,enc_derand,dec}
+#   liboqs        OQS_KEM_ml_kem_768_{keypair_derand,encaps_derand,decaps}
+_KEM_SYMBOL_PATTERNS = {
+    'keypair': r'(?:^|_)keypair_derand$',
+    'encaps':  r'(?:^|_)(?:enc|encaps)_derand$',
+    'decaps':  r'(?:^|_)(?:dec|decaps)$',
+}
+# Internal K-PKE routines share those suffixes (mlkem-native exports
+# indcpa_keypair_derand) but have different outputs. Binding one reports a
+# correct library as faulty.
+_KEM_INTERNAL_MARKERS = ('indcpa', 'cpapke', 'kpke')
+
+
+def _resolve_kem_symbols(exported, param_set, explicit=None):
+    """Pick keypair/encaps/decaps from a library's exported symbols.
+
+    Returns ({role: symbol or None}, {role: [candidates]} for any role with
+    more than one candidate). An ambiguous role is never guessed: a wrong
+    binding produces a false finding against a correct library.
+    """
+    import re as _re
+    explicit = explicit or {}
+    level = param_set.rsplit('-', 1)[-1]
+    found, ambiguous = {}, {}
+    for role, pat in _KEM_SYMBOL_PATTERNS.items():
+        if explicit.get(role):
+            found[role] = explicit[role]
+            continue
+        cands = [e for e in exported
+                 if _re.search(pat, e.lower())
+                 and not any(m in e.lower() for m in _KEM_INTERNAL_MARKERS)]
+        # A library exporting several parameter sets (liboqs) names each one.
+        same_level = [e for e in cands if level in e]
+        if same_level:
+            cands = same_level
+        found[role] = cands[0] if len(cands) == 1 else None
+        if len(cands) > 1:
+            ambiguous[role] = sorted(cands)
+    return found, ambiguous
+
+
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
                        decaps=None, prompt_dir=None, vector_dir=None, live=False,
                        verbose=True):
@@ -5715,13 +5758,19 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         keygen : NIST (d,z)  -> vendor ek,dk   must match NIST byte-for-byte
         encaps : NIST (ek,m) -> vendor c,K     must match NIST byte-for-byte
         decaps : NIST (dk,c) -> vendor K       must match NIST byte-for-byte
+        ekCheck: NIST's invalid ek (coefficient >= q) must be refused and
+                 its valid ek accepted, by encaps (FIPS 203 §7.2)
+        dkCheck: the same for decaps and a corrupted H(ek) (FIPS 203 §7.3)
+    Refusal means a nonzero return, the PQClean / mlkem-native / liboqs
+    convention.
 
     Requires DERANDOMISED entry points, because NIST's vectors are seeded. A
     library exposing only randomised keygen/encaps cannot be checked for
     byte-exactness -- only for self-consistency, which is not verification.
     PQClean names them *_crypto_kem_keypair_derand / *_crypto_kem_enc_derand.
 
-    Symbols are auto-detected from the library if not given explicitly.
+    Symbols are auto-detected by exact suffix (internal K-PKE routines
+    excluded) if not given explicitly; an ambiguous match is refused.
     """
     import ctypes as _ct, os as _o, subprocess as _sp
     so_path = _o.path.abspath(_o.path.expanduser(so_path))
@@ -5741,18 +5790,18 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     except Exception:
         exported = []
 
-    def _find(explicit, *needles):
-        if explicit:
-            return explicit
-        for e in exported:
-            low = e.lower()
-            if all(n in low for n in needles):
-                return e
+    found, ambiguous = _resolve_kem_symbols(
+        exported, param_set,
+        {'keypair': keypair, 'encaps': encaps, 'decaps': decaps})
+    kp, en, de = found['keypair'], found['encaps'], found['decaps']
+    if ambiguous:
+        print(f"  Cannot audit {so_path}: more than one candidate for")
+        for role, cands in ambiguous.items():
+            print(f"    {role}: {', '.join(cands)}")
+        print(f"    Name the symbol explicitly (--kem-{next(iter(ambiguous))} "
+              f"or {next(iter(ambiguous))}=) rather than let pq-verify guess.")
+        DEGRADED['skipped_checks'].append(f'KEM audit ({param_set})')
         return None
-
-    kp = _find(keypair, 'keypair', 'derand')
-    en = _find(encaps, 'enc', 'derand')
-    de = _find(decaps, 'kem_dec')
     missing = [n for n, v in (('keypair_derand', kp), ('enc_derand', en),
                               ('dec', de)) if v is None]
     if missing:
@@ -5797,6 +5846,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         print("=" * 68)
 
     tally = {}
+    keycheck = {}
     def _rec(stage, ok):
         p, t = tally.get(stage, (0, 0))
         tally[stage] = (p + int(ok), t + 1)
@@ -5836,6 +5886,29 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                      (_ct.c_ubyte * dk_n)(*bytes.fromhex(t['dk'])))
                 ok = bytes(ss).hex().upper() == t['k'].upper()
                 _rec('decaps', ok)
+            elif fn in ('encapsulationKeyCheck', 'decapsulationKeyCheck'):
+                # Negative testing: NIST's invalid keys (coefficients >= q,
+                # a corrupted H(ek)) must be refused, valid ones accepted.
+                # FIPS 203 §7.2/§7.3 require the check; a library that skips
+                # it leaves it to every caller. Refusal is a nonzero return,
+                # the convention of PQClean, mlkem-native and liboqs.
+                if fn == 'encapsulationKeyCheck':
+                    stage = 'ekCheck'
+                    rc = f_en((_ct.c_ubyte * ct_n)(), (_ct.c_ubyte * ss_n)(),
+                              (_ct.c_ubyte * ek_n)(*bytes.fromhex(t['ek'])),
+                              (_ct.c_ubyte * 32)())
+                else:
+                    stage = 'dkCheck'
+                    rc = f_de((_ct.c_ubyte * ss_n)(), (_ct.c_ubyte * ct_n)(),
+                              (_ct.c_ubyte * dk_n)(*bytes.fromhex(t['dk'])))
+                accepted = rc == 0
+                _rec(stage, accepted == bool(t['testPassed']))
+                m = keycheck.setdefault(stage, {'accepted_invalid': 0,
+                                                'rejected_valid': 0})
+                if accepted and not t['testPassed']:
+                    m['accepted_invalid'] += 1
+                elif not accepted and t['testPassed']:
+                    m['rejected_valid'] += 1
 
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
@@ -5845,14 +5918,30 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 p, t = tally[stage]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {stage:8s} "
                       f"{p}/{t}  byte-exact vs NIST")
+        for stage, what, sec in (('ekCheck', 'encapsulation', '7.2'),
+                                 ('dkCheck', 'decapsulation', '7.3')):
+            if stage in tally:
+                p, t = tally[stage]
+                m = keycheck[stage]
+                print(f"  {'PASS' if p == t else 'FAIL'}  {stage:8s} "
+                      f"{p}/{t}  {what} keys classified as NIST does "
+                      f"(FIPS 203 \u00a7{sec})")
+                if m['accepted_invalid']:
+                    print(f"        accepted {m['accepted_invalid']} invalid key(s) "
+                          f"NIST rejects: this API does not perform the input")
+                    print(f"        check, so every caller must")
+                if m['rejected_valid']:
+                    print(f"        rejected {m['rejected_valid']} valid key(s)")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
         print(f"  This audits the vendor's OWN keygen/encaps/decaps against")
-        print(f"  NIST's published vectors. It is not a side-channel review.")
+        print(f"  NIST's published vectors, including the invalid keys it")
+        print(f"  must refuse. It is not a side-channel review.")
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
+            'keycheck': keycheck,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 

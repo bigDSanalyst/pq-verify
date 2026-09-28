@@ -22,10 +22,14 @@ commands given; nothing here is asserted from memory.
 | BoringSSL | ML-KEM-768 | vector cross-check | **25/25 byte-exact** |
 | BoringSSL | ML-KEM-1024 | vector cross-check | **25/25 byte-exact** |
 | *(negative control)* | ML-KEM & ML-DSA | symbol audit | **correctly FAILS** |
+| mlkem-native | ML-KEM-512/768/1024 | full scheme + invalid keys | **80/80 VERIFIED** |
+| PQClean `clean` | ML-KEM-512/768/1024 | full scheme + invalid keys | 70/80 — accepts all 10 invalid keys |
 
-No discrepancies were found in any implementation.
+No arithmetic discrepancies were found in any implementation. The one finding
+is behavioural: PQClean's ML-KEM API accepts keys NIST marks invalid (see
+[Full-scheme KEM audit](#full-scheme-kem-audit-including-invalid-keys)).
 
-That is the expected and desirable outcome. These are mature, widely reviewed
+The arithmetic result is the expected one. These are mature, widely reviewed
 implementations — `mlkem-native` and `mldsa-native` ship CBMC formal proofs.
 The result is not "pq-verify found problems in liboqs"; it is **an independent
 field-native check agrees with the formally-verified implementations,
@@ -176,6 +180,56 @@ reference reproduces both exactly.
 Incidentally, BoringSSL's own source comment corroborates the ML-KEM structure
 the audits assume: *"transform leaves off the last iteration of the usual FFT
 code, with the 128 relevant roots of unity being stored in kNTTRoots."*
+
+---
+
+## Full-scheme KEM audit, including invalid keys
+
+`--audit-kem` drives a library's own `keypair_derand` / `enc_derand` / `dec`
+with NIST's ACVP vectors (NIST ACVP-Server `15c0f3d`, `ad33b3d`). Besides the
+byte-exact stages it feeds NIST's **invalid** keys and checks the library
+refuses them (nonzero return) while accepting the valid ones:
+
+- `ekCheck`: 5 encapsulation keys with a coefficient ≥ q (FIPS 203 §7.2)
+- `dkCheck`: 5 decapsulation keys with a corrupted H(ek) (FIPS 203 §7.3)
+
+Produced on 2026-09-28 with gcc 13.3, `-O2`.
+
+| Library | Set | keyGen | encaps | decaps | ekCheck | dkCheck | Result |
+|---|---|---|---|---|---|---|---|
+| mlkem-native @ `fc269bc` | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | **80/80 VERIFIED** |
+| PQClean `clean` @ `0586a82` | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 70/80, findings |
+
+PQClean's outputs are byte-exact with NIST, but `crypto_kem_enc` and
+`crypto_kem_dec` return 0 for every one of NIST's invalid keys: the API has no
+rejection path. FIPS 203 lets the check run outside `Encaps`/`Decaps` (for
+example once, when a key is received), so this is not by itself a
+non-conformance. It does mean every caller of this API must perform the
+§7.2/§7.3 check itself; a caller that relies on the library does not get one.
+mlkem-native performs both checks inside `enc`/`dec` and rejects all ten.
+
+Before this audit could be run, two resolver faults had to be fixed: it could
+not find mlkem-native's `_dec`, and given that, it bound the internal
+`indcpa_keypair_derand` instead of `keypair_derand` and reported a false
+35/60 against a correct library. Symbols are now matched by exact suffix,
+internal K-PKE routines are excluded, and an ambiguous match is refused rather
+than guessed (`--kem-keypair` / `--kem-encaps` / `--kem-decaps` name them).
+
+Reproduce (ML-KEM-768; substitute 512 or 1024):
+
+```bash
+git clone https://github.com/pq-code-package/mlkem-native.git   # fc269bc
+printf '#include <stdint.h>\n#include <stddef.h>\nint randombytes(uint8_t*o,size_t n){for(size_t i=0;i<n;i++)o[i]=(uint8_t)i;return 0;}\n' > rb.c
+gcc -O2 -fPIC -shared -DMLK_CONFIG_PARAMETER_SET=768 -Imlkem-native/mlkem \
+    -o libmlkemnative768.so mlkem-native/mlkem/mlkem_native.c rb.c
+pq-verify --audit-kem ./libmlkemnative768.so ML-KEM-768
+
+git clone https://github.com/PQClean/PQClean.git                  # 0586a82
+cd PQClean/crypto_kem/ml-kem-768/clean
+gcc -O2 -fPIC -shared -I../../../common -o libpqclean768.so \
+    *.c ../../../common/fips202.c ../../../common/randombytes.c
+pq-verify --audit-kem ./libpqclean768.so ML-KEM-768
+```
 
 ---
 

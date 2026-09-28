@@ -2219,3 +2219,147 @@ def test_batch_keypair_api_separates_absent_from_broken(monkeypatch):
     failed = batch_verify_keypairs(2)
     assert not failed.get("unavailable")
     assert "simulated broken install" in failed["error"]
+
+
+# ----------------------------------------------------------------------
+# --audit-kem: symbol resolution and negative (invalid-key) testing
+# ----------------------------------------------------------------------
+
+_MLKEM_NATIVE_EXPORTS = [
+    "PQCP_MLKEM_NATIVE_MLKEM768_check_pk",
+    "PQCP_MLKEM_NATIVE_MLKEM768_dec",
+    "PQCP_MLKEM_NATIVE_MLKEM768_enc",
+    "PQCP_MLKEM_NATIVE_MLKEM768_enc_derand",
+    "PQCP_MLKEM_NATIVE_MLKEM768_indcpa_dec",
+    "PQCP_MLKEM_NATIVE_MLKEM768_indcpa_enc",
+    "PQCP_MLKEM_NATIVE_MLKEM768_indcpa_keypair_derand",
+    "PQCP_MLKEM_NATIVE_MLKEM768_keypair",
+    "PQCP_MLKEM_NATIVE_MLKEM768_keypair_derand",
+    "PQCP_MLKEM_NATIVE_MLKEM768_poly_decompress_d10",
+]
+
+
+def test_kem_symbols_resolve_across_naming_schemes():
+    """The old resolver took the first name containing 'keypair' and
+    'derand'. On mlkem-native that is indcpa_keypair_derand, the internal
+    K-PKE routine, and a correct library was reported as FINDINGS PRESENT
+    (35/60). It also could not find mlkem-native's decaps (named '_dec')."""
+    from pq_verify.core import _resolve_kem_symbols as res
+
+    found, amb = res(_MLKEM_NATIVE_EXPORTS, "ML-KEM-768")
+    assert not amb
+    assert found == {
+        "keypair": "PQCP_MLKEM_NATIVE_MLKEM768_keypair_derand",
+        "encaps": "PQCP_MLKEM_NATIVE_MLKEM768_enc_derand",
+        "decaps": "PQCP_MLKEM_NATIVE_MLKEM768_dec"}
+
+    pqclean = [f"PQCLEAN_MLKEM768_CLEAN_crypto_kem_{s}" for s in
+               ("keypair", "keypair_derand", "enc", "enc_derand", "dec")]
+    found, amb = res(pqclean, "ML-KEM-768")
+    assert not amb and found["decaps"].endswith("crypto_kem_dec")
+
+    # liboqs exports every parameter set from one library.
+    oqs = [f"OQS_KEM_ml_kem_{n}_{s}" for n in (512, 768, 1024)
+           for s in ("keypair", "keypair_derand", "encaps", "encaps_derand",
+                     "decaps")]
+    found, amb = res(oqs, "ML-KEM-1024")
+    assert not amb
+    assert found == {"keypair": "OQS_KEM_ml_kem_1024_keypair_derand",
+                     "encaps": "OQS_KEM_ml_kem_1024_encaps_derand",
+                     "decaps": "OQS_KEM_ml_kem_1024_decaps"}
+
+    # Two candidates for the same parameter set: refuse, do not guess.
+    two = pqclean + [s.replace("CLEAN", "AVX2") for s in pqclean]
+    found, amb = res(two, "ML-KEM-768")
+    assert set(amb) == {"keypair", "encaps", "decaps"}
+    assert found["keypair"] is None
+    found, amb = res(two, "ML-KEM-768",
+                     {"keypair": "a", "encaps": "b", "decaps": "c"})
+    assert not amb and found == {"keypair": "a", "encaps": "b", "decaps": "c"}
+
+
+_STUB_KEM = r"""
+#include <stdint.h>
+int stub_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *c)
+{ (void)pk; (void)sk; (void)c; return 0; }
+int stub_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek,
+                        const uint8_t *m) {
+    (void)ct; (void)ss; (void)m;
+#if defined(REJECT_ALL)
+    (void)ek; return -1;
+#elif defined(MODULUS_CHECK)
+    for (int i = 0; i < 384 * 3; i += 3) {       /* FIPS 203 7.2, k = 3 */
+        uint32_t w = ek[i] | ek[i+1] << 8 | (uint32_t)ek[i+2] << 16;
+        if ((w & 0xFFF) >= 3329 || (w >> 12) >= 3329) return -1;
+    }
+    return 0;
+#else
+    (void)ek; return 0;
+#endif
+}
+int stub_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *dk) {
+    (void)ss; (void)ct; (void)dk;
+#if defined(REJECT_ALL)
+    return -1;
+#else
+    return 0;
+#endif
+}
+"""
+
+
+def _stub_kem(tmp_path, variant):
+    import shutil, subprocess
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    src = tmp_path / "stub.c"
+    src.write_text(_STUB_KEM)
+    so = tmp_path / f"stub_{variant or 'accept'}.so"
+    flags = [f"-D{variant}"] if variant else []
+    subprocess.run([cc, "-shared", "-fPIC", "-O1", *flags, "-o", str(so),
+                    str(src)], check=True)
+    return str(so)
+
+
+@pytest.mark.parametrize("variant, ek, dk", [
+    (None,            (5, 5, 0), (5, 5, 0)),   # accepts everything
+    ("REJECT_ALL",    (5, 0, 5), (5, 0, 5)),   # refuses everything
+    ("MODULUS_CHECK", (10, 0, 0), (5, 5, 0)),  # FIPS 203 7.2 check only
+])
+def test_audit_kem_feeds_nist_invalid_keys(tmp_path, variant, ek, dk):
+    """Each key-check vector is a pass only if the library accepts exactly
+    the keys NIST marks valid. (passed, accepted_invalid, rejected_valid)."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+    for stage, want in (("ekCheck", ek), ("dkCheck", dk)):
+        m = r["keycheck"][stage]
+        got = (r["detail"][stage][0], m["accepted_invalid"], m["rejected_valid"])
+        assert got == want, (stage, got)
+        assert r["detail"][stage][1] == 10
+
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    text = " ".join(doc["findings"])
+    assert ("accepted 5 key(s) NIST marks invalid (FIPS 203 §7.3)"
+            in text) == (dk[1] == 5)
+    assert ("accepted 5 key(s) NIST marks invalid (FIPS 203 §7.2)"
+            in text) == (ek[1] == 5)
+    assert ("rejected 5 key(s) NIST marks valid" in text) == (variant == "REJECT_ALL")
+
+
+def test_accepting_invalid_keys_fails_the_gate(tmp_path):
+    so = _stub_kem(tmp_path, None)
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--fail-on-finding")
+    assert code == 1
+    assert "accepted 5 invalid key(s)" in out
+
+
+def test_kem_symbol_flags_override_detection(tmp_path):
+    so = _stub_kem(tmp_path, None)
+    code, out = _cli("--audit-kem", so, "ML-KEM-768",
+                     "--kem-decaps", "stub_kem_dec",
+                     "--kem-keypair", "stub_kem_keypair_derand",
+                     "--kem-encaps", "stub_kem_enc_derand")
+    assert "decaps  : stub_kem_dec" in out
