@@ -72,13 +72,32 @@ jobs:
             3. Re-verify **offline** (\`pqverify_acvp_all()\` with network blocked) and
                confirm the expected counts.
             4. Cut a new patch release with the updated pinned vectors + count.`;
-            await github.rest.issues.create({
+            // A stale bundle re-reports every week until it is re-pinned;
+            // keep that to one open issue with a comment per run.
+            const title = "NIST ACVP vectors changed upstream — review before re-pinning";
+            const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: "NIST ACVP vectors changed upstream — review before re-pinning",
-              body,
-              labels: ["upstream", "vectors"],
+              state: "open",
+              labels: "vectors",
             });
+            const existing = open.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["upstream", "vectors"],
+              });
+            }
 
       - name: Report clean
         if: steps.check.outputs.code == '0'

@@ -59,6 +59,7 @@ from .core import (
     _bundle_path,
     _load_vector_json,
     _pkg_dir,
+    _vector_revision,
 )
 
 PROMPT_SCHEMA = "pq-verify/acvp-prompt"
@@ -99,7 +100,9 @@ def _source_label(local):
     if not local:
         return "LIVE from NIST (may change between runs)"
     if os.path.abspath(local) == os.path.abspath(os.path.join(_pkg_dir(), "vectors")):
-        return "pinned bundle (shipped in this package)"
+        rev = _vector_revision(*(s[0] for s in _SUITES))
+        return ("pinned bundle (shipped in this package"
+                + (f"; {rev})" if rev else ")"))
     return "local: " + local
 
 

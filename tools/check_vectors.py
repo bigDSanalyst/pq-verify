@@ -71,6 +71,8 @@ TARGETS = {
 _HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(_HERE, "vector_state", "baseline.json")
 HISTORY = os.path.join(_HERE, "vector_state", "history.json")
+MANIFEST = os.path.join(_HERE, os.pardir, "pq_verify", "vectors",
+                        "MANIFEST.json")
 
 
 def _fetch(url, tries=4, delay=5.0):
@@ -162,6 +164,36 @@ def describe_change(name, old, new, hist):
     return lines
 
 
+def bundle_behind(current, history, manifest_path=MANIFEST):
+    """Compare upstream against what pq-verify actually SHIPS.
+
+    The baseline records what the watcher last saw upstream; it says nothing
+    about the bundle. If the baseline is advanced without the bundle being
+    re-cut, every later run compares upstream to baseline, finds them equal,
+    and reports "no change" while users run stale vectors. That happened with
+    NIST's ad33b3d fix to the ML-KEM encapsulationKeyCheck vectors: the
+    shipped "invalid" keys were over-length, so they were rejected on length
+    alone and the FIPS 203 §7.2 modulus check was never exercised.
+    """
+    manifest = (json.load(open(manifest_path))
+                if os.path.exists(manifest_path) else {})
+    lines = []
+    for name, fp in current.items():
+        pinned = manifest.get(name)
+        if pinned is None:
+            lines.append(f"  [{name}] shipped in the bundle but missing from "
+                         f"MANIFEST.json -- cannot be checked")
+            continue
+        if pinned["sha256"] == fp["sha256"]:
+            continue
+        since = history.get(name, {}).get(fp["sha256"], {}).get("first_seen")
+        lines.append(f"  [{name}] BUNDLE BEHIND UPSTREAM")
+        lines.append(f"      shipped  sha256 {pinned['sha256'][:12]}")
+        lines.append(f"      upstream sha256 {fp['sha256'][:12]}"
+                     + (f" (first seen {since})" if since else ""))
+    return lines
+
+
 def main():
     try:
         current = fetch_current()
@@ -191,12 +223,26 @@ def main():
     if changed:
         json.dump(current, open(STATE, "w"), indent=2, sort_keys=True)
 
-    if not changed:
-        print(f"No change. {len(current)} NIST vector files match baseline.")
+    behind = bundle_behind(current, history)
+
+    if not changed and not behind:
+        print(f"No change. {len(current)} NIST vector files match baseline "
+              f"and the shipped bundle.")
         for name, fp in current.items():
             print(f"  {name}: sha={fp['sha256'][:12]} "
                   f"tests={fp['total_tests']}")
         return 0
+
+    if not changed:
+        print("=" * 68)
+        print("  SHIPPED BUNDLE IS BEHIND NIST")
+        print("=" * 68)
+        print("\n".join(behind))
+        print("=" * 68)
+        print("ACTION: upstream has not moved since the last run, but the pinned")
+        print("snapshot in pq_verify/vectors was never re-cut to match it. Re-pin")
+        print("the files above, update MANIFEST.json, and re-verify offline.")
+        return 1
 
     print("=" * 68)
     print("  NIST ACVP VECTORS CHANGED UPSTREAM")
@@ -208,6 +254,10 @@ def main():
     print("a new pinned snapshot deliberately and re-verify offline first.")
     print("If any line above says REVERTED, upstream is still oscillating")
     print("and is not ready to pin.")
+    if behind:
+        print("=" * 68)
+        print("  SHIPPED BUNDLE vs NIST")
+        print("\n".join(behind))
     return 1
 
 
