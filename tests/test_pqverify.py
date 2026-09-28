@@ -246,6 +246,68 @@ def test_watcher_compares_upstream_to_the_shipped_bundle(tmp_path):
     assert w.bundle_behind(current, {}, str(manifest)) == []
 
 
+def _bundled_keycheck_tests():
+    import gzip, json, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with gzip.open(root / "pq_verify" / "vectors" / "acvp_vectors.json.gz",
+                   "rt") as fh:
+        ed = json.load(fh)["ML-KEM-encapDecap-FIPS203/internalProjection.json"]
+    for g in ed["testGroups"]:
+        if g["function"] in ("encapsulationKeyCheck", "decapsulationKeyCheck"):
+            for t in g["tests"]:
+                yield g["function"], g["parameterSet"], t
+
+
+def test_manifest_records_every_bundled_file_and_its_nist_commit():
+    """MANIFEST.json is what the watcher compares upstream against and what
+    reports cite as the vector revision, so it must cover the whole bundle."""
+    import gzip, json, pathlib, re
+    vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
+    with gzip.open(vec / "acvp_vectors.json.gz", "rt") as fh:
+        bundled = set(json.load(fh))
+    manifest = json.loads((vec / "MANIFEST.json").read_text())
+    assert set(manifest) == bundled
+    for name, entry in manifest.items():
+        assert re.fullmatch(r"[0-9a-f]{7,40}", entry.get("nist_commit", "")), name
+
+
+def test_invalid_key_vectors_exercise_more_than_length():
+    """Every bundled key-check vector must have the parameter set's exact key
+    length, so a checker that tests only length cannot pass them.
+
+    The previously pinned NIST revision (c924096) shipped every invalid
+    encapsulation key 416 bytes over length (NIST fixed it in ad33b3d). A
+    length-only checker scored 30/30 on it, and a fixed-size C API reading
+    only the first 1184 bytes saw a valid key. Against these vectors the same
+    checker scores 15/30.
+    """
+    from pq_verify.core import check_encapsulation_key, check_decapsulation_key
+    k = {"ML-KEM-512": 2, "ML-KEM-768": 3, "ML-KEM-1024": 4}
+    rejected_by_content = {"encapsulationKeyCheck": 0, "decapsulationKeyCheck": 0}
+    for fn, ps, t in _bundled_keycheck_tests():
+        ek, dk = bytes.fromhex(t["ek"]), bytes.fromhex(t["dk"])
+        assert len(ek) == 384 * k[ps] + 32, (ps, t["tcId"], len(ek))
+        assert len(dk) == 768 * k[ps] + 96, (ps, t["tcId"], len(dk))
+        check = (check_encapsulation_key(ek, ps)
+                 if fn == "encapsulationKeyCheck"
+                 else check_decapsulation_key(dk, ps))
+        assert check == t["testPassed"], (fn, ps, t["tcId"], t.get("reason"))
+        if not t["testPassed"]:
+            rejected_by_content[fn] += 1
+    # Each group must contain invalid keys, or the negative path is untested.
+    assert all(n > 0 for n in rejected_by_content.values()), rejected_by_content
+
+
+def test_reports_name_the_pinned_vector_revision():
+    from pq_verify.core import _vector_label, _pkg_dir
+    import os
+    pinned = os.path.join(_pkg_dir(), "vectors")
+    label = _vector_label(pinned, "ML-KEM-encapDecap-FIPS203")
+    assert label == "pinned (NIST ACVP-Server ad33b3d)"
+    assert _vector_label(None).startswith("LIVE")
+    assert _vector_label("/elsewhere") == "local: /elsewhere"
+
+
 def test_mldsa_freivalds_engine():
     """The 32-bit Freivalds engine must accept a correct ML-DSA NTT and reject
     a wrong one -- including a 7-layer (ML-KEM-shaped) transform.

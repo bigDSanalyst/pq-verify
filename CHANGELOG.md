@@ -3,6 +3,46 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pinned NIST vectors re-cut to NIST's corrected files.** The bundle shipped
+  two files from before NIST fixed them:
+
+  | Files | Was | Now | NIST's fix |
+  |---|---|---|---|
+  | `ML-KEM-encapDecap-FIPS203` (3) | `c924096` | `ad33b3d` | "corrects ML-KEM encapDecap tests that included `ek` that were longer than intended" |
+  | `ML-DSA-sigVer-FIPS204` (2) | `2972def` | `a7f283c` | "corrects ML-DSA sigVer FIPS204 sample json files for issue with ModifyZ disposition" |
+
+  In the old encapDecap file every invalid encapsulation key was 416 bytes
+  over length, so it was rejected on length alone and the FIPS 203 §7.2
+  modulus check never saw an invalid key. A checker with no modulus check
+  scored 30/30 on it; on the corrected vectors it scores 15/30. pq-verify's
+  own checks agree with all 60 key-check labels in the corrected file. Counts
+  are unchanged: ML-KEM 240/240, ML-DSA 615/615, SLH-DSA 120/120, offline.
+
+  **ML-KEM and ML-DSA prompt IDs change** (SLH-DSA's do not). A prompt from
+  `--emit-prompt` under 2.8.0 for those sets was generated from the old
+  questions. Re-issue it before verifying a response;
+  2.8.0 still reproduces the old results.
+
+- **The NIST watcher now checks the shipped bundle.** It compared upstream only
+  to its own baseline. The baseline was advanced to NIST's fixes but the bundle
+  was not, so every weekly run reported "no change". It now also compares
+  upstream to `MANIFEST.json` and reports files the bundle lags, and it adds to
+  one open issue instead of opening a new one each week.
+
+### Added
+
+- Reports name the vector revision, e.g. `vectors: pinned (NIST ACVP-Server
+  ad33b3d)`, and ACVP / `--audit-kem` results carry it as `vectors`.
+  `MANIFEST.json` records each file's NIST commit and now covers the two
+  SLH-DSA files it omitted.
+- Tests: every bundled key-check key has its parameter set's exact length
+  (fails on the old bundle), the manifest covers the whole bundle, and the
+  watcher flags a lagging bundle.
+
 ## [2.8.0] — 2026-09-20
 
 ### Added

@@ -5177,6 +5177,34 @@ def _load_bundle():
             _VECTOR_BUNDLE_CACHE = _j.load(fh)
     return _VECTOR_BUNDLE_CACHE
 
+
+def _vector_revision(*suites):
+    """The NIST ACVP-Server commit(s) the pinned vectors for `suites` came from,
+    e.g. 'NIST ACVP-Server ad33b3d', read from MANIFEST.json. A result is only
+    reproducible if it names the vector revision it was checked against: NIST
+    corrects these files (ad33b3d fixed over-length invalid ML-KEM keys), so
+    'pinned' alone does not say which answers were used. None if unrecorded."""
+    import os as _o, json as _j
+    try:
+        with open(_o.path.join(_pkg_dir(), "vectors", "MANIFEST.json")) as fh:
+            m = _j.load(fh)
+    except (OSError, ValueError):
+        return None
+    commits = sorted({v.get('nist_commit') for k, v in m.items()
+                      if k.split('/')[0] in suites} - {None})
+    return ("NIST ACVP-Server " + ", ".join(commits)) if commits else None
+
+
+def _vector_label(local, *suites):
+    """Human-readable vector source for report headers."""
+    import os as _o
+    if not local:
+        return "LIVE from NIST ACVP-Server (may change between runs)"
+    if _o.path.abspath(local) != _o.path.abspath(_o.path.join(_pkg_dir(), "vectors")):
+        return f"local: {local}"
+    rev = _vector_revision(*suites)
+    return f"pinned ({rev})" if rev else "pinned"
+
 def _load_vector_json(path, bundle_key=None):
     """Load an ACVP vector file. Precedence:
        1. the combined bundle (pinned, shipped in-package), by key
@@ -5234,8 +5262,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
     if not _local and not live:
         _local = _os.path.join(_pkg_dir(), "vectors")
     if verbose:
-        if _local:   print(f"  vectors: bundled/pinned ({_local})")
-        else:        print(f"  vectors: LIVE from NIST ACVP-Server (may change between runs)")
+        print(f"  vectors: {_vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203')}")
 
     def load(name):
         if _local:
@@ -5350,7 +5377,8 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
         print("=" * 64)
 
     return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
-            'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()}}
+            'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()},
+            'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203')}
 
 
 
@@ -5459,7 +5487,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
     if not _local and not live:
         _local = _os2.path.join(_pkg_dir(), "vectors")
     if verbose:
-        print(f"  vectors: {'bundled/pinned' if _local else 'LIVE from NIST (may change)'}")
+        print(f"  vectors: {_vector_label(_local, *_MLDSA_DIRS.values())}")
 
     def load(name):
         if _local:
@@ -5543,7 +5571,8 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
         print("  keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5")
         print("=" * 64)
     return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
-            'detail': {k: tuple(v) for k, v in detail.items()}}
+            'detail': {k: tuple(v) for k, v in detail.items()},
+            'vectors': _vector_label(_local, *_MLDSA_DIRS.values())}
 
 
 _SLHDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
@@ -5591,7 +5620,7 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
     if not _local and not live:
         _local = _os3.path.join(_pkg_dir(), "vectors")
     if verbose:
-        print(f"  vectors: {'bundled/pinned' if _local else 'LIVE from NIST (may change)'}")
+        print(f"  vectors: {_vector_label(_local, *_SLHDSA_DIRS.values())}")
 
     def load(name):
         d = _SLHDSA_DIRS[name]
@@ -5658,7 +5687,8 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         print("         and those vector sets total ~34 MB.")
         print("=" * 64)
     return {'verified': verified, 'passed': ok_all, 'total': tot_all,
-            'detail': detail}
+            'detail': detail,
+            'vectors': _vector_label(_local, *_SLHDSA_DIRS.values())}
 
 
 _KEM_SIZES = {  # (ek, dk, ct, ss) per FIPS 203
@@ -5763,7 +5793,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         print(f"  keygen  : {kp}")
         print(f"  encaps  : {en}")
         print(f"  decaps  : {de}")
-        print(f"  vectors : {'pinned' if _local else 'LIVE from NIST'}")
+        print(f"  vectors : {_vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203')}")
         print("=" * 68)
 
     tally = {}
@@ -5823,6 +5853,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
+            'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 
 
