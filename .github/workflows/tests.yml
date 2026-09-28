@@ -83,6 +83,95 @@ jobs:
           fi
           echo "cannot-verify correctly failed the gate"
 
+  # The matrix above installs every Python extra and never installs coq, so
+  # two paths never ran in CI: a missing optional dependency, and every
+  # optional dependency present. Both hid real bugs -- a missing coq, and later
+  # a missing kyber-py, each deleted checks or reported them as failures, and
+  # the documented total was wrong for anyone whose install differed from CI's.
+  #
+  # Each profile runs the full self-suite and asserts the same four things:
+  # the total is the documented 160; nothing failed; every skip names the
+  # dependency it needed; and the set of missing dependencies is EXACTLY the
+  # set this profile leaves out -- so a new check that silently vanishes, a
+  # new undeclared dependency, or an absence reported as a failure all fail
+  # the job the day they are introduced.
+  self-suite:
+    name: self-suite (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: base
+            extras: ""
+            apt: ""
+            missing: "coq,cryptominisat,dilithium-py,kyber-py,slh-dsa,sympy"
+          - profile: dev
+            extras: "[dev]"
+            apt: ""
+            missing: "coq,cryptominisat"
+          - profile: full
+            extras: "[dev]"
+            apt: "coq cryptominisat"
+            missing: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: System dependencies
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ${{ matrix.apt }}
+
+      - name: Install (${{ matrix.profile }})
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".${{ matrix.extras }}" pytest
+
+      - name: Test suite (not slow)
+        run: python -m pytest tests/ -q -m "not slow"
+
+      - name: Self-suite — 160 checks, 0 failed, only the expected deps missing
+        env:
+          PROFILE: ${{ matrix.profile }}
+          EXPECT_MISSING: ${{ matrix.missing }}
+        run: |
+          python - <<'PY'
+          import contextlib, io, os, sys
+          from pq_verify.core import main, DEGRADED
+          EXPECTED_TOTAL = 160
+          profile = os.environ["PROFILE"]
+          expected = set(filter(None, os.environ["EXPECT_MISSING"].split(",")))
+          with contextlib.redirect_stdout(io.StringIO()):
+              results = main()
+          rows = [t for r in results for t in r.tests]
+          skipped = [t for t in rows if t.get("skipped")]
+          failed = [t["name"] for t in rows
+                    if not t.get("skipped") and t["passed"] is not True]
+          unnamed = [t["name"] for t in skipped if not t.get("dep")]
+          missing = set(DEGRADED["deps"])
+          print(f"[{profile}] total={len(rows)} "
+                f"passed={len(rows) - len(failed) - len(skipped)} "
+                f"skipped={len(skipped)} failed={len(failed)} "
+                f"missing={sorted(missing)}")
+          problems = []
+          if len(rows) != EXPECTED_TOTAL:
+              problems.append(f"check count is {len(rows)}, documented {EXPECTED_TOTAL}")
+          if failed:
+              problems.append(f"failed checks: {failed}")
+          if unnamed:
+              problems.append(f"skips that name no dependency: {unnamed}")
+          if missing != expected:
+              problems.append(f"missing deps {sorted(missing)} != expected {sorted(expected)}")
+          for p in problems:
+              print(f"::error title=self-suite [{profile}]::{p}")
+          sys.exit(1 if problems else 0)
+          PY
+
   wheel:
     name: wheel installs and runs at the floor
     runs-on: ubuntu-latest
