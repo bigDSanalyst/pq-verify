@@ -96,11 +96,15 @@ def _source(prompt_dir=None, vector_dir=None, live=False):
     return local
 
 
-def _source_label(local):
+def _source_label(local, param_set=None):
     if not local:
         return "LIVE from NIST (may change between runs)"
     if os.path.abspath(local) == os.path.abspath(os.path.join(_pkg_dir(), "vectors")):
-        rev = _vector_revision(*(s[0] for s in _SUITES))
+        # Cite only the suites this parameter set is answered from; listing
+        # every pinned commit would name vectors the result never used.
+        suites = [s[0] for s in _SUITES
+                  if param_set is None or param_set.startswith(s[1] + "-")]
+        rev = _vector_revision(*suites)
         return ("pinned bundle (shipped in this package"
                 + (f"; {rev})" if rev else ")"))
     return "local: " + local
@@ -266,7 +270,7 @@ def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False):
         "parameterSet": param_set,
         "promptId": pid,
         "questionCount": _count(questions),
-        "vectorSource": _source_label(local),
+        "vectorSource": _source_label(local, param_set),
         "vectorBundleSha256": _bundle_sha256() if local else None,
         "scope": ("Answering these questions demonstrates that the responder "
                   "computes the standard correctly for these inputs. It does "
@@ -546,6 +550,7 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
                          f"({', '.join(guess)}); emit and answer one prompt "
                          "per parameter set")
     res["parameter_set"] = param_set
+    res["vector_source"] = _source_label(local, param_set)
 
     try:
         questions = _questions(param_set, local)
