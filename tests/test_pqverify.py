@@ -2363,3 +2363,76 @@ def test_kem_symbol_flags_override_detection(tmp_path):
                      "--kem-keypair", "stub_kem_keypair_derand",
                      "--kem-encaps", "stub_kem_enc_derand")
     assert "decaps  : stub_kem_dec" in out
+
+
+# ----------------------------------------------------------------------
+# CLI and report correctness: what an operator reads must be exactly right
+# ----------------------------------------------------------------------
+
+def test_audit_kem_unknown_parameter_set_is_an_input_error(tmp_path):
+    """A typo'd parameter set used to raise a traceback and exit 1, which a CI
+    gate reads as "this library has findings". It is an input error: exit 2,
+    and name the valid sets."""
+    so = tmp_path / "x.so"
+    so.write_bytes(b"\x7fELF")
+    code, out = _cli("--audit-kem", str(so), "ML-KEM-999")
+    assert code == 2
+    assert "unknown parameter set 'ML-KEM-999'" in out
+    assert "ML-KEM-768" in out
+
+
+def test_ntt_scan_does_not_claim_one_parameter_set():
+    """An NTT acts on one polynomial and is shared by every parameter set of
+    its scheme. The scan used to label every ML-KEM NTT "ML-KEM-1024" (and
+    every ML-DSA NTT "ML-DSA-87"), including a 768 library's."""
+    ntt = _ref_ntt_factory()
+    ntt.__name__ = "poly_ntt"
+    from pq_verify.core import pqverify_scan
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        results = pqverify_scan(ntt, ns={})
+    kat = results[0]["kat"]
+    assert kat["verified"] is True
+    assert kat["name"] == "ML-KEM-512/768/1024"
+    assert "ML-KEM-1024 NTT" not in out.getvalue()
+    # An explicit k still names that set, for callers who pass one.
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert pqverify_kat(ntt, k=3)["name"] == "ML-KEM-768"
+
+
+@pytest.mark.parametrize("param_set, cited, not_cited", [
+    ("ML-KEM-768", {"15c0f3d", "ad33b3d"}, {"2972def", "a7f283c", "112690e"}),
+    ("ML-DSA-65", {"2972def", "a7f283c"}, {"15c0f3d", "ad33b3d", "112690e"}),
+])
+def test_prompt_cites_only_its_own_vector_revisions(param_set, cited, not_cited):
+    from pq_verify.response import build_prompt
+    src = build_prompt(param_set)["vectorSource"]
+    assert all(c in src for c in cited), src
+    assert not any(c in src for c in not_cited), src
+
+
+def test_install_hints_do_not_recommend_breaking_system_packages():
+    """Enterprise users run this in managed environments; advising
+    --break-system-packages is advice to damage them. The extra exists."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for f in [*(root / "pq_verify").glob("*.py"), root / "README.md"]:
+        assert "--break-system-packages" not in f.read_text(), f.name
+
+
+def test_self_suite_prints_integrity_once(monkeypatch):
+    """The self-suite prints the integrity verdict in its summary; the CLI
+    must not print it a second time, but must still apply the gate."""
+    import pq_verify.cli as cli
+    import pq_verify.core as core
+
+    def fake_selftest(quick=False):
+        core.integrity_report()          # what the real summary does
+    monkeypatch.setattr(cli, "run_selftest", fake_selftest)
+    with _isolated_degraded():
+        code, out = _cli("--require-full-coverage")
+        assert out.count("INTEGRITY:") == 1
+        assert code == 0
+        core.DEGRADED["deps"].append("kyber-py")
+        code, out = _cli("--require-full-coverage")
+        assert code == 1
+        assert out.count("DEGRADED RUN") == 1

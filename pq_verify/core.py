@@ -4839,7 +4839,7 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
     completely different algorithm than the butterfly. Agreement = correctness
     against the standard, not against pq-verify's own butterfly reference.
 
-    k selects the security level:
+    k only labels the output (k=None: every parameter set of the scheme):
         Kyber:     k=2 -> Level 1, k=3 -> Level 3, k=4 -> Level 5
         Dilithium: k=4 -> Level 2, k=6 -> Level 3, k=8 -> Level 5
 
@@ -4857,12 +4857,23 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
         for _ in range(bits): rr = (rr << 1) | (x & 1); x >>= 1
         return rr
 
-    name, level = _NIST_LEVELS.get((family, k), (f"{family}-k{k}", "unknown level"))
+    if k is None:
+        # The NTT acts on one polynomial; n and q are shared by every parameter
+        # set of a scheme, so one result covers all of them. Naming a single
+        # set (the old default k=4 printed "ML-KEM-1024" for a 768 library)
+        # misstates what was checked.
+        name = {'kyber': 'ML-KEM-512/768/1024',
+                'dilithium': 'ML-DSA-44/65/87'}.get(family, family)
+        level = "every parameter set (the NTT does not depend on module rank k)"
+    else:
+        name, level = _NIST_LEVELS.get((family, k),
+                                       (f"{family}-k{k}", "unknown level"))
 
     print("=" * 64)
     print(f"  KNOWN ANSWER TEST (non-circular)")
     print(f"  Target: {name}  ->  {level}")
-    print(f"  q={q}, zeta={zeta}, n={n}, module rank k={k}")
+    print(f"  q={q}, zeta={zeta}, n={n}"
+          + (f", module rank k={k}" if k is not None else ""))
     print("=" * 64)
 
     # Independent reference: direct CRT/evaluation (FIPS 203/204 definition)
@@ -5253,7 +5264,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
         DEGRADED['deps'].append('kyber-py')
         DEGRADED['skipped_checks'].append('ML-KEM ACVP')
         print("  kyber-py required for functional vectors:")
-        print("    pip install kyber-py --break-system-packages")
+        print('    pip install "pq-verify[full]"')
         return None
     PS = {'ML-KEM-512':ML_KEM_512,'ML-KEM-768':ML_KEM_768,'ML-KEM-1024':ML_KEM_1024}
 
@@ -5392,7 +5403,7 @@ import hashlib as _hashlib
 # ----------------------------------------------------------------
 # Companion to pqverify_acvp (ML-KEM / FIPS 203).
 # Together: 240 (ML-KEM) + 615 (ML-DSA) = 855/855 NIST ACVP vectors.
-# Requires: pip install dilithium-py --break-system-packages
+# Requires: pip install "pq-verify[full]"  (dilithium-py)
 # ================================================================
 _MLDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
                     "master/gen-val/json-files/")
@@ -5470,7 +5481,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
       2. live=True                — fetch current vectors from NIST's GitHub
       3. default                  — the FROZEN vectors bundled in this package
 
-    Requires: pip install dilithium-py --break-system-packages
+    Requires: pip install "pq-verify[full]"  (dilithium-py)
     """
     import os as _os2
     try:
@@ -5478,7 +5489,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
     except ImportError:
         DEGRADED['deps'].append('dilithium-py')
         DEGRADED['skipped_checks'].append('ML-DSA ACVP')
-        print("  dilithium-py required:  pip install dilithium-py --break-system-packages")
+        print('  dilithium-py required:  pip install "pq-verify[full]"')
         return None
     PS = {'ML-DSA-44': ML_DSA_44, 'ML-DSA-65': ML_DSA_65, 'ML-DSA-87': ML_DSA_87}
     Z32 = bytes(32)
@@ -5955,7 +5966,7 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
     snapshot is stated in the release notes; pass live=True to verify against
     NIST's current upstream vectors instead (the ML-KEM count can differ when
     NIST changes the encapDecap keyFormat schema).
-    Requires: pip install kyber-py dilithium-py --break-system-packages
+    Requires: pip install "pq-verify[full]"  (kyber-py, dilithium-py)
     """
     if verbose:
         print("#" * 64)
@@ -6597,9 +6608,9 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
     # Non-circular KAT against independent CRT reference (first function only)
     if results:
         fam = 'dilithium' if q > 65535 else 'kyber'
-        kdef = 8 if fam == 'dilithium' else 4  # default to Level 5
         print("\n  Running Known Answer Test (independent reference)...")
-        kat = pqverify_kat(to_audit[0][1], q=q, zeta=zeta_root, n=n, k=kdef, family=fam)
+        kat = pqverify_kat(to_audit[0][1], q=q, zeta=zeta_root, n=n, k=None,
+                           family=fam)
         for r in results: r['kat'] = kat
 
     # Run leakage analysis if any NTT was audited

@@ -183,6 +183,13 @@ def main(argv=None):
     if getattr(args, "audit_kem", None):
         from .core import pqverify_audit_kem
         _p, _ps = args.audit_kem
+        from .core import _KEM_SIZES
+        if _ps not in _KEM_SIZES:
+            # A typo is an input error, not a finding: exit 2 like every other
+            # bad argument, never 1 (which CI reads as "the library is faulty").
+            print(f"  unknown parameter set {_ps!r} for --audit-kem — known: "
+                  f"{', '.join(sorted(_KEM_SIZES))}")
+            return 2
         kem_ran = _ps
         ran_task = True
         # Bind first: the hash is of the file we were pointed at, and it holds
@@ -334,7 +341,9 @@ def main(argv=None):
     # ---- integrity: did this run cover what the tool claims? -----------
     # Reported LAST, after every task, so it reflects the whole run.
     from .core import integrity_report
-    _full, _gaps = integrity_report()
+    # A self-suite-only run has already printed this inside its summary; the
+    # gate below still uses it, but printing it twice reads as two reports.
+    _full, _gaps = integrity_report(verbose=ran_task)
     if getattr(args, "require_full_coverage", False) and not _full:
         print("  FAILING: degraded run and --require-full-coverage was set")
         exit_code = 1

@@ -509,7 +509,7 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
 
 ```bash
 apt-get install -y coq gcc g++
-pip install kyber-py dilithium-py sympy --break-system-packages
+pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 ```
 
 **Optional (1 test each, everything works without them):**

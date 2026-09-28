@@ -7,6 +7,22 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--audit-kem` with an unknown parameter set exited 1.** A typo such as
+  `ML-KEM-999` raised a traceback and exited 1, which a CI gate reads as
+  "this library has findings". It now names the valid sets and exits 2, like
+  every other input error.
+- **`--audit-so` named the wrong parameter set.** An NTT is shared by every
+  parameter set of its scheme, but the scan labelled every ML-KEM NTT
+  "ML-KEM-1024" and every ML-DSA NTT "ML-DSA-87", including a 768 or 65
+  library's. It now reports `ML-KEM-512/768/1024` / `ML-DSA-44/65/87`.
+- **ACVP prompts cited every pinned NIST commit.** An ML-KEM prompt's
+  `vectorSource` listed the ML-DSA and SLH-DSA commits too; it now cites only
+  the suites it was built from.
+- **Install hints no longer advise `--break-system-packages`.** They point to
+  `pip install "pq-verify[full]"`.
+- The CLI printed the integrity verdict twice after a self-suite run; it now
+  prints once and still applies `--require-full-coverage`.
+
 - **`--audit-kem` bound the wrong function on mlkem-native.** Symbols were
   picked by substring, taking the first name containing `keypair` and
   `derand`. On mlkem-native that is the internal `indcpa_keypair_derand`, so
