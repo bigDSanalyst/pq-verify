@@ -2436,3 +2436,63 @@ def test_self_suite_prints_integrity_once(monkeypatch):
         code, out = _cli("--require-full-coverage")
         assert code == 1
         assert out.count("DEGRADED RUN") == 1
+
+
+# ----------------------------------------------------------------------
+# A caller-supplied vector directory must be what is actually checked
+# ----------------------------------------------------------------------
+
+def _loose_vectors(tmp_path, prefix, corrupt=None, drop=None):
+    """Write the bundled files for `prefix` as a loose directory, optionally
+    corrupting one expected answer or leaving one file out."""
+    import gzip, json, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with gzip.open(root / "pq_verify" / "vectors" / "acvp_vectors.json.gz",
+                   "rt") as fh:
+        bundle = json.load(fh)
+    for key, doc in bundle.items():
+        if not key.startswith(prefix) or key == drop:
+            continue
+        if key == corrupt:
+            doc = json.loads(json.dumps(doc))
+            t = doc["testGroups"][0]["tests"][0]
+            t["ek"] = ("00" if t["ek"][:2] != "00" else "11") + t["ek"][2:]
+        p = tmp_path / key
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc))
+    return str(tmp_path)
+
+
+def test_vector_dir_is_read_not_shadowed_by_the_bundle(tmp_path):
+    """--vector-dir used to be ignored for every file the bundle also carries:
+    the bundle was consulted first by key, so a directory with a corrupted
+    expected answer still reported 240/240 -- while labelling the run
+    "local: <that directory>". The directory must be what is checked."""
+    pytest.importorskip("kyber_py")
+    from pq_verify.core import pqverify_acvp
+    d = _loose_vectors(tmp_path, "ML-KEM",
+                       corrupt="ML-KEM-keyGen-FIPS203/expectedResults.json")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_acvp(vector_dir=d)
+    assert r["vectors"] == f"local: {d}"
+    assert (r["passed"], r["total"]) == (239, 240)
+    assert r["detail"]["keyGen/ML-KEM-512"] == [24, 25]
+
+
+def test_vector_dir_missing_a_file_is_an_error_not_a_bundle_fallback(tmp_path):
+    from pq_verify.core import _load_vector_json
+    d = _loose_vectors(tmp_path, "ML-KEM",
+                       drop="ML-KEM-keyGen-FIPS203/prompt.json")
+    import os
+    with pytest.raises(FileNotFoundError):
+        _load_vector_json(os.path.join(d, "ML-KEM-keyGen-FIPS203", "prompt.json"),
+                          "ML-KEM-keyGen-FIPS203/prompt.json")
+
+
+def test_pinned_directory_still_reads_the_bundle():
+    import os
+    from pq_verify.core import _load_vector_json, _pkg_dir
+    doc = _load_vector_json(
+        os.path.join(_pkg_dir(), "vectors", "ML-KEM-keyGen-FIPS203", "prompt.json"),
+        "ML-KEM-keyGen-FIPS203/prompt.json")
+    assert doc["algorithm"] == "ML-KEM"

@@ -5217,13 +5217,19 @@ def _vector_label(local, *suites):
     return f"pinned ({rev})" if rev else "pinned"
 
 def _load_vector_json(path, bundle_key=None):
-    """Load an ACVP vector file. Precedence:
-       1. the combined bundle (pinned, shipped in-package), by key
-       2. a plain .json on disk
-       3. a gzipped .json.gz on disk
-    so an explicit prompt_dir of loose files still works."""
+    """Load an ACVP vector file.
+
+    The pinned bundle answers only for paths inside pq-verify's own vectors
+    directory. A directory the caller supplied (--vector-dir, prompt_dir) is
+    always read from disk, and a file missing from it is an error, never a
+    silent fallback: the bundle used to be consulted first by key, so a user
+    directory was ignored for every bundled file while the report named the
+    user directory as the source.
+    """
     import json as _j, gzip as _gz, os as _os
-    if bundle_key:
+    pinned_dir = _os.path.abspath(_os.path.join(_pkg_dir(), "vectors"))
+    in_pinned = _os.path.abspath(path).startswith(pinned_dir + _os.sep)
+    if bundle_key and in_pinned:
         b = _load_bundle()
         if bundle_key in b:
             return b[bundle_key]
