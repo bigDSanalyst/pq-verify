@@ -1,0 +1,13 @@
+# Reference implementations pq-verify's suites are checked against in CI.
+#
+# The NIST vectors are pinned (pq_verify/vectors); these pin the software that
+# answers them, so a CI result changes only when pq-verify's code does. Moving
+# to a newer version is a deliberate change: bump it here in its own PR, and
+# `python3 tools/doctor.py` reports any environment that differs.
+#
+# Users are not held to these: pyproject.toml leaves the extras unpinned, and
+# every report names the version that actually ran ("reference: kyber-py 1.2.0").
+kyber-py==1.2.0
+dilithium-py==1.4.0
+slh-dsa==0.2.5
+sympy==1.14.0

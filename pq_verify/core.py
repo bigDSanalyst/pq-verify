@@ -5206,6 +5206,17 @@ def _vector_revision(*suites):
     return ("NIST ACVP-Server " + ", ".join(commits)) if commits else None
 
 
+def _reference(dist):
+    """'kyber-py 1.2.0': the reference implementation that computed a suite's
+    answers. The vectors are pinned; the software answering them is whatever
+    is installed, so a result names both or it is not reproducible."""
+    try:
+        from importlib import metadata as _md
+        return f"{dist} {_md.version(dist)}"
+    except Exception:
+        return f"{dist} (version unknown)"
+
+
 def _vector_label(local, *suites):
     """Human-readable vector source for report headers."""
     import os as _o
@@ -5280,6 +5291,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
         _local = _os.path.join(_pkg_dir(), "vectors")
     if verbose:
         print(f"  vectors: {_vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203')}")
+        print(f"  reference: {_reference('kyber-py')}")
 
     def load(name):
         if _local:
@@ -5395,7 +5407,8 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
 
     return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
             'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()},
-            'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203')}
+            'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
+            'reference': _reference('kyber-py')}
 
 
 
@@ -5505,6 +5518,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
         _local = _os2.path.join(_pkg_dir(), "vectors")
     if verbose:
         print(f"  vectors: {_vector_label(_local, *_MLDSA_DIRS.values())}")
+        print(f"  reference: {_reference('dilithium-py')}")
 
     def load(name):
         if _local:
@@ -5589,7 +5603,8 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
         print("=" * 64)
     return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
             'detail': {k: tuple(v) for k, v in detail.items()},
-            'vectors': _vector_label(_local, *_MLDSA_DIRS.values())}
+            'vectors': _vector_label(_local, *_MLDSA_DIRS.values()),
+            'reference': _reference('dilithium-py')}
 
 
 _SLHDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
@@ -5638,6 +5653,7 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         _local = _os3.path.join(_pkg_dir(), "vectors")
     if verbose:
         print(f"  vectors: {_vector_label(_local, *_SLHDSA_DIRS.values())}")
+        print(f"  reference: {_reference('slh-dsa')}")
 
     def load(name):
         d = _SLHDSA_DIRS[name]
@@ -5705,7 +5721,8 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         print("=" * 64)
     return {'verified': verified, 'passed': ok_all, 'total': tot_all,
             'detail': detail,
-            'vectors': _vector_label(_local, *_SLHDSA_DIRS.values())}
+            'vectors': _vector_label(_local, *_SLHDSA_DIRS.values()),
+            'reference': _reference('slh-dsa')}
 
 
 _KEM_SIZES = {  # (ek, dk, ct, ss) per FIPS 203

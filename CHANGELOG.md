@@ -16,6 +16,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
   symbol-resolution bug fails it on all three mlkem-native rows. Rows are
   only added, so the table records when a library's behaviour changes, and a
   test holds AUDITS.md equal to it.
+- **Results name the reference implementation that computed them.** Next to
+  the pinned vector revision, each ACVP run prints and records the version of
+  the library that answered it (`reference: kyber-py 1.2.0`), in the console
+  and in the JSON report's `suites`. The vectors were pinned; the software
+  answering them was whatever happened to be installed, and nothing said which.
+- **CI pins those versions** (`constraints-reference.txt`), so a CI result
+  changes only when pq-verify's code does. Bumping one is its own PR. Users are
+  not held to the pins, and `tools/doctor.py` warns when an environment differs
+  from them.
 
 - **`tools/doctor.py` — the checks a NIST re-pin must pass.** In the style
   of the syndicate-genesis and Dharmapala doctors: statuses ok / DECIDE /
