@@ -25,7 +25,7 @@ from pq_verify import (
 # ----------------------------------------------------------------------
 
 def test_version():
-    assert pq_verify.__version__ == "2.8.0"
+    assert pq_verify.__version__ == "2.8.1"
 
 
 def test_public_api_present():
