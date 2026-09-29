@@ -207,21 +207,24 @@ def check_references(repo=REPO):
     pins = reference_pins(repo)
     drift = [f"{k} {v} (CI pins {pins[k]})" for k, v in have.items()
              if k in pins and pins[k] != v]
-    if not missing and drift:
-        return Check("references", WARN,
-                     f"reference implementation(s) differ from CI: {', '.join(drift)}",
-                     "results here may differ from CI's, and a candidate shown to "
-                     "pass here is not shown to pass there",
-                     "pip install -c constraints-reference.txt "
-                     + " ".join(REFERENCES)), have
-    if not missing:
+    if not missing and not drift:
         return Check("references", OK, f"reference implementations: {vers}"
                      + (" (as CI pins)" if pins else "")), have
-    return Check("references", WARN,
-                 f"missing reference implementation(s): {', '.join(missing)}",
-                 "suites that need them cannot run, so a candidate cannot be "
-                 "shown to pass them" + (f"; present: {vers}" if vers else ""),
-                 'pip install "pq-verify[full]"'), have
+    # Report every problem at once: a missing library must not hide that the
+    # ones present differ from CI (it did, in the first version of this check).
+    heads, why = [], []
+    if drift:
+        heads.append(f"reference implementation(s) differ from CI: {', '.join(drift)}")
+        why.append("results here may differ from CI's, and a candidate shown to "
+                   "pass here is not shown to pass there")
+    if missing:
+        heads.append(f"missing reference implementation(s): {', '.join(missing)}")
+        why.append("suites that need them cannot run, so a candidate cannot be "
+                   "shown to pass them")
+    return Check("references", WARN, "; ".join(heads),
+                 "; ".join(why) + (f". Present: {vers}" if vers else ""),
+                 "pip install -c constraints-reference.txt "
+                 + " ".join(REFERENCES)), have
 
 
 def check_upstream_state(manifest, baseline, history):

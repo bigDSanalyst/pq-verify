@@ -2674,3 +2674,20 @@ def test_ci_pins_every_reference_the_doctor_checks():
     mod, root = _doctor()
     pins = mod.reference_pins(root)
     assert set(mod.REFERENCES) <= set(pins), pins
+
+
+def test_doctor_reports_drift_even_when_a_reference_is_missing(tmp_path, monkeypatch):
+    """A missing reference implementation used to return first and hide that
+    the ones present differ from CI's pins. CI caught it only because its test
+    jobs lack slh-dsa; this pins the case in every environment."""
+    mod, root = _doctor()
+    monkeypatch.setattr(mod, "REFERENCES", mod.REFERENCES + ("pqv-not-installed",))
+    (tmp_path / "constraints-reference.txt").write_text(
+        "kyber-py==0.0.1\ndilithium-py==0.0.1\nslh-dsa==0.0.1\n")
+    check, have = mod.check_references(tmp_path)
+    if not have:
+        pytest.skip("no reference implementation installed")
+    assert check.status == "WARN"
+    assert "(CI pins 0.0.1)" in check.headline
+    assert "missing reference implementation(s):" in check.headline
+    assert "pqv-not-installed" in check.headline
