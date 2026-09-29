@@ -335,7 +335,9 @@ def to_json_acvp(suites, artifact=None):
         doc["suites"][label] = {"ran": True,
                                 "checks_passed": r.get("passed", 0),
                                 "checks_total": r.get("total", 0),
-                                "verified": bool(r.get("verified"))}
+                                "verified": bool(r.get("verified")),
+                                "vectors": r.get("vectors"),
+                                "reference": r.get("reference")}
         for g, v in (r.get("detail") or {}).items():
             doc["groups"][f"{label}/{g}"] = {"passed": v[0], "total": v[1]}
     doc["summary"] = {"checks_passed": p, "checks_total": t,

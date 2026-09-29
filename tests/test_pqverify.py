@@ -2635,3 +2635,59 @@ def test_doctor_waits_then_pins_a_sound_change(tmp_path):
     assert entry["nist_commit"] == "abc1234"
     assert entry["sha256"] == hashlib.sha256(
         (cand / "ML-KEM-encapDecap-FIPS203/prompt.json").read_bytes()).hexdigest()
+
+
+# ----------------------------------------------------------------------
+# Results name the reference implementation that computed them
+# ----------------------------------------------------------------------
+
+def test_acvp_results_name_their_reference_implementation():
+    """The vectors are pinned; the software answering them is whatever is
+    installed. A result that omits the version is not reproducible."""
+    pytest.importorskip("kyber_py")
+    from importlib import metadata
+    from pq_verify.core import pqverify_acvp
+    from pq_verify.report import to_json_acvp
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_acvp()
+    want = f"kyber-py {metadata.version('kyber-py')}"
+    assert r["reference"] == want
+    assert f"reference: {want}" in out.getvalue()
+    suite = to_json_acvp({"ML-KEM (FIPS 203)": r})["suites"]["ML-KEM (FIPS 203)"]
+    assert suite["reference"] == want
+    assert suite["vectors"].startswith("pinned (NIST ACVP-Server ")
+
+
+def test_doctor_flags_references_that_differ_from_ci(tmp_path):
+    mod, root = _doctor()
+    (tmp_path / "constraints-reference.txt").write_text(
+        "# test\nkyber-py==0.0.1\ndilithium-py==0.0.1\nslh-dsa==0.0.1\n")
+    check, have = mod.check_references(tmp_path)
+    if not have:
+        pytest.skip("no reference implementation installed")
+    assert check.status == "WARN"
+    assert "(CI pins 0.0.1)" in check.headline
+    assert "constraints-reference.txt" in check.fix
+
+
+def test_ci_pins_every_reference_the_doctor_checks():
+    mod, root = _doctor()
+    pins = mod.reference_pins(root)
+    assert set(mod.REFERENCES) <= set(pins), pins
+
+
+def test_doctor_reports_drift_even_when_a_reference_is_missing(tmp_path, monkeypatch):
+    """A missing reference implementation used to return first and hide that
+    the ones present differ from CI's pins. CI caught it only because its test
+    jobs lack slh-dsa; this pins the case in every environment."""
+    mod, root = _doctor()
+    monkeypatch.setattr(mod, "REFERENCES", mod.REFERENCES + ("pqv-not-installed",))
+    (tmp_path / "constraints-reference.txt").write_text(
+        "kyber-py==0.0.1\ndilithium-py==0.0.1\nslh-dsa==0.0.1\n")
+    check, have = mod.check_references(tmp_path)
+    if not have:
+        pytest.skip("no reference implementation installed")
+    assert check.status == "WARN"
+    assert "(CI pins 0.0.1)" in check.headline
+    assert "missing reference implementation(s):" in check.headline
+    assert "pqv-not-installed" in check.headline
