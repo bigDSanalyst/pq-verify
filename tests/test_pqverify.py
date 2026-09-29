@@ -1374,7 +1374,7 @@ def _kem_vectors():
     for g in proj["testGroups"]:
         if g.get("function") == "encapsulation":
             t = g["tests"][0]
-            out[g["parameterSet"]] = (t["ek"], t["c"], t["k"])
+            out[g["parameterSet"]] = (t["ek"], t["c"], t["k"], t["dk"])
     return out
 
 
@@ -1407,7 +1407,7 @@ def _transcript(group, kem_vectors, swap_share=None, swap_secret=False,
     and exist only inside the test process.
     """
     g = GROUPS[group]
-    ek, ct, k = (bytes.fromhex(h) for h in kem_vectors[g["kem"]])
+    ek, ct, k, kem_dk = (bytes.fromhex(h) for h in kem_vectors[g["kem"]])
     ec = g["ecdh"]
     n = part_size(group, "ecdh_priv")
     cd, cp = _ecdh_keypair(ec, bytes(range(1, n + 1)))
@@ -1434,6 +1434,7 @@ def _transcript(group, kem_vectors, swap_share=None, swap_secret=False,
         "clientEcdhPrivate": cd.hex(),
         "serverEcdhPrivate": sd.hex(),
         "mlkemSharedSecret": k.hex(),
+        "clientMlkemDecapsulationKey": kem_dk.hex(),
     }
     for key in drop:
         doc.pop(key, None)
@@ -1590,13 +1591,34 @@ def test_ek_check_rejects_a_wrong_length():
 
 # ---- end to end -------------------------------------------------------
 
+def _kyber_available():
+    try:
+        import kyber_py.ml_kem  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _assert_only_mlkem_unchecked(res):
+    """Without kyber-py the ML-KEM half cannot be decapsulated: that one check
+    is NOT CHECKED, the result PARTIAL -- and nothing else may be missing."""
+    unchecked = [c for c in res["checks"] if c.get("kind") == "no_input"]
+    assert [c["name"] for c in unchecked] == [
+        c["name"] for c in res["checks"] if "decapsulates to" in c["name"]]
+    assert "kyber-py not installed" in unchecked[0]["detail"]
+    assert res["status"] == "PARTIAL" and res["verified"] is False
+
+
 @pytest.mark.parametrize("group", sorted(GROUPS))
 def test_a_conforming_transcript_verifies(group, kem_vectors, tmp_path):
     path = _write_transcript(tmp_path, "t.json", _transcript(group, kem_vectors))
     res = verify_hybrid(path, verbose=False)
+    assert res["passed"] == res["total"] > 0
+    if not _kyber_available():
+        _assert_only_mlkem_unchecked(res)
+        return
     assert res["status"] == "VERIFIED", res["findings"]
     assert res["verified"] is True
-    assert res["passed"] == res["total"] > 0
     assert res["skipped"] == 0
     assert not res["findings"]
 
@@ -1671,6 +1693,9 @@ def test_not_applicable_is_not_the_same_as_not_checked(kem_vectors, tmp_path):
         _write_transcript(tmp_path, "t.json", _transcript("X25519MLKEM768", kem_vectors)),
         verbose=False)
     assert res["not_applicable"] == 2
+    if not _kyber_available():
+        _assert_only_mlkem_unchecked(res)       # N/A still does not hold it back
+        return
     assert res["skipped"] == 0
     assert res["status"] == "VERIFIED"
 
@@ -1820,6 +1845,9 @@ def test_sarif_carries_the_side_channel_scope():
 # ---- CLI --------------------------------------------------------------
 
 def test_cli_verify_hybrid_gate(kem_vectors, tmp_path):
+    # A VERIFIED transcript needs the ML-KEM half recomputed, which needs
+    # kyber-py; without it the PARTIAL path is covered above.
+    pytest.importorskip("kyber_py")
     from pq_verify.cli import main as cli_main
     good = _write_transcript(tmp_path, "good.json",
                   _transcript("X25519MLKEM768", kem_vectors))
@@ -1863,15 +1891,23 @@ def test_cli_emit_hybrid_prompt_rejects_an_unknown_group(tmp_path):
         assert cli_main(["--emit-hybrid-prompt", "X25519Kyber768Draft00"]) == 2
 
 
-def test_the_prompt_never_asks_for_a_decapsulation_key():
-    """Asking for a private KEM key would be asking for the whole secret."""
+def test_the_decapsulation_key_is_optional_and_ephemeral_only():
+    """The ML-KEM decapsulation key lets the ML-KEM half be recomputed, like
+    the ECDHE private scalars. It is never required, and the prompt must say
+    to supply an ephemeral test key, never a production one: an ephemeral key
+    exposes only the one test handshake it belongs to. (Previously the key
+    was never read, and a corrupted ciphertext verified.)"""
     from pq_verify.hybrid import build_hybrid_prompt
     for group in GROUPS:
         doc = build_hybrid_prompt(group)
-        blob = _json.dumps(doc).lower()
-        assert "decapsulationkey" not in blob
-        assert '"dk"' not in blob
-        assert set(doc["response"]) >= {"group", "clientShare"}
+        field = doc["fields"]["clientMlkemDecapsulationKey"]
+        assert field["required"] is False
+        assert all(f["required"] is False for f in doc["fields"].values())
+        how = " ".join(doc["howToRespond"]).lower()
+        assert "ephemeral test key, never a production key" in how
+        assert '"dk"' not in _json.dumps(doc).lower()
+        assert set(doc["response"]) >= {"group", "clientShare",
+                                         "clientMlkemDecapsulationKey"}
 
 
 # ======================================================================
@@ -2730,3 +2766,173 @@ def test_doctor_reports_drift_even_when_a_reference_is_missing(tmp_path, monkeyp
     assert "(CI pins 0.0.1)" in check.headline
     assert "missing reference implementation(s):" in check.headline
     assert "pqv-not-installed" in check.headline
+
+
+# ----------------------------------------------------------------------
+# Untrusted input: responses and transcripts come from outside parties
+# ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("order", ["wrong-then-right", "right-then-wrong",
+                                   "identical-twice"])
+def test_a_question_answered_twice_never_verifies(tmp_path, response512, order):
+    """A second answer to the same tcId used to replace the first, so a
+    response carrying a wrong answer followed by the right one VERIFIED.
+    Found by tests/fuzz_readers.py."""
+    import copy
+    doc = copy.deepcopy(response512)
+    tests = doc["suites"][0]["testGroups"][0]["tests"]
+    right = copy.deepcopy(tests[0])
+    wrong = copy.deepcopy(right)
+    wrong["ek"] = ("00" if wrong["ek"][:2] != "00" else "11") + wrong["ek"][2:]
+    pair = {"wrong-then-right": [wrong, right], "right-then-wrong": [right, wrong],
+            "identical-twice": [right, copy.deepcopy(right)]}[order]
+    tests[0:1] = pair
+    r = _run(_write(tmp_path, doc))
+    assert r["verified"] is False
+    assert r["status"] == "FINDINGS PRESENT"
+    tc = right["tcId"]
+    assert r["duplicates"] == [f"{doc['suites'][0]['suite']} tcId {tc}"]
+    assert any("answered more than once" in f for f in r["findings"])
+
+
+def test_readers_survive_hostile_input():
+    """A seeded slice of tests/fuzz_readers.py: every mutated response and
+    transcript yields an honest result -- no exception, a known status, a
+    boolean verdict, prompt termination -- and the CLI exits 0/1/2. The full
+    run (thousands of cases) is `python3 tests/fuzz_readers.py`."""
+    pytest.importorskip("kyber_py")
+    import importlib.util, pathlib, random, tempfile
+    path = pathlib.Path(__file__).resolve().parent / "fuzz_readers.py"
+    spec = importlib.util.spec_from_file_location("pqv_fuzz", path)
+    F = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(F)
+    from pq_verify.response import verify_response
+    from pq_verify.hybrid import verify_hybrid
+    rng = random.Random(20260929)
+    work = tempfile.mkdtemp(prefix="pqv-fuzz-test-")
+    for name, fn, flag, seeds in (
+            ("response", verify_response, "--verify-response", [F.seed_response()]),
+            ("hybrid", verify_hybrid, "--verify-hybrid", F.seed_transcripts())):
+        violations, _ = F.fuzz(name, fn, flag, seeds, 60, rng, work, cli_every=10,
+                               gz=(name == "response"))
+        assert not violations, violations[:5]
+
+
+@pytest.mark.parametrize("case", ["truncated-gzip", "not-gzip", "gzip-bomb",
+                                  "oversized-plain"])
+def test_hostile_response_files_are_refused_cleanly(tmp_path, case):
+    """A truncated .json.gz raised EOFError out of the CLI; an oversized or
+    bomb-like file was read in full. Each is CANNOT VERIFY, exit 1/2, and
+    reads at most MAX_RESPONSE_BYTES + 1 bytes."""
+    import gzip
+    from pq_verify.response import MAX_RESPONSE_BYTES
+    body = b'{"suites": []}' * 1000
+    if case == "truncated-gzip":
+        p, raw = tmp_path / "r.json.gz", gzip.compress(body)[:40]
+    elif case == "not-gzip":
+        p, raw = tmp_path / "r.json.gz", b"not gzip at all"
+    elif case == "gzip-bomb":
+        # ~65 KB on disk, 65 MiB once decompressed: past the limit.
+        p, raw = tmp_path / "r.json.gz", gzip.compress(b" " * (MAX_RESPONSE_BYTES + 1024))
+    else:
+        p, raw = tmp_path / "r.json", b" " * (MAX_RESPONSE_BYTES + 1)
+    p.write_bytes(raw)
+    r = _run(str(p))
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+    if case in ("gzip-bomb", "oversized-plain"):
+        assert any("larger than" in f for f in r["findings"]), r["findings"]
+    code, out = _cli("--verify-response", str(p), "--fail-on-finding")
+    assert code in (1, 2)
+
+
+def test_oversized_transcript_is_refused_cleanly(tmp_path):
+    from pq_verify.hybrid import verify_hybrid, MAX_TRANSCRIPT_BYTES
+    p = tmp_path / "t.json"
+    p.write_bytes(b" " * (MAX_TRANSCRIPT_BYTES + 1))
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = verify_hybrid(str(p), verbose=False)
+    assert r["status"] == "CANNOT VERIFY"
+    assert any("larger than" in f for f in r["findings"]), r["findings"]
+
+
+# ----------------------------------------------------------------------
+# Hybrid: the ML-KEM half is recomputed, or the result is not VERIFIED
+# ----------------------------------------------------------------------
+
+def _hybrid(tmp_path, doc, name="t.json"):
+    from pq_verify.hybrid import verify_hybrid
+    p = _write_transcript(tmp_path, name, doc)
+    with contextlib.redirect_stdout(io.StringIO()):
+        return verify_hybrid(p, verbose=False)
+
+
+def _kem_check(r):
+    return next(c for c in r["checks"] if "decapsulates to" in c["name"])
+
+
+def _flip_kem_ct(group, doc):
+    from pq_verify.hybrid import layout
+    off = next(o for p, o, n in layout(group, "server_share") if p == "kem_ct")
+    b = bytearray(bytes.fromhex(doc["serverShare"]))
+    b[off + 10] ^= 1
+    doc["serverShare"] = b.hex()
+
+
+@pytest.mark.parametrize("group", ["X25519MLKEM768", "SecP256r1MLKEM768",
+                                   "SecP384r1MLKEM1024"])
+def test_hybrid_recomputes_the_mlkem_half(tmp_path, kem_vectors, group):
+    pytest.importorskip("kyber_py")
+    r = _hybrid(tmp_path, _transcript(group, kem_vectors))
+    assert r["status"] == "VERIFIED", r["findings"]
+    assert _kem_check(r)["passed"] is True
+
+
+@pytest.mark.parametrize("group", ["X25519MLKEM768", "SecP256r1MLKEM768",
+                                   "SecP384r1MLKEM1024"])
+def test_a_corrupted_mlkem_ciphertext_is_caught(tmp_path, kem_vectors, group):
+    """Found by tests/fuzz_readers.py: one flipped ciphertext byte was reported
+    VERIFIED, because nothing tied the ciphertext to the recorded secret."""
+    pytest.importorskip("kyber_py")
+    doc = _transcript(group, kem_vectors)
+    _flip_kem_ct(group, doc)
+    r = _hybrid(tmp_path, doc)
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _kem_check(r)["passed"] is False
+
+
+def test_without_the_mlkem_key_the_result_is_partial(tmp_path, kem_vectors):
+    """Without the decapsulation key the ciphertext cannot be checked, so a
+    corrupted one must not come back VERIFIED."""
+    for corrupt in (False, True):
+        doc = _transcript("X25519MLKEM768", kem_vectors,
+                          drop=("clientMlkemDecapsulationKey",))
+        if corrupt:
+            _flip_kem_ct("X25519MLKEM768", doc)
+        r = _hybrid(tmp_path, doc, f"t{corrupt}.json")
+        assert r["status"] == "PARTIAL" and r["verified"] is False
+        assert _kem_check(r).get("skipped") is True
+
+
+def test_a_decapsulation_key_from_another_exchange_is_refused(tmp_path, kem_vectors):
+    doc = _transcript("X25519MLKEM768", kem_vectors)
+    # ML-KEM-768's key from a different NIST test case: valid, but not this ek.
+    import gzip, json as _j
+    from pq_verify.core import _bundle_path
+    with gzip.open(_bundle_path(), "rt") as fh:
+        proj = _j.load(fh)["ML-KEM-encapDecap-FIPS203/internalProjection.json"]
+    g = next(g for g in proj["testGroups"] if g.get("function") == "encapsulation"
+             and g["parameterSet"] == "ML-KEM-768")
+    doc["clientMlkemDecapsulationKey"] = g["tests"][1]["dk"]
+    r = _hybrid(tmp_path, doc)
+    assert r["status"] == "FINDINGS PRESENT"
+    assert "does not belong" in _kem_check(r)["detail"]
+
+
+def test_without_kyber_the_mlkem_half_is_not_checked(tmp_path, kem_vectors, monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "kyber_py", None)
+    monkeypatch.setitem(sys.modules, "kyber_py.ml_kem", None)
+    with _isolated_degraded():
+        r = _hybrid(tmp_path, _transcript("X25519MLKEM768", kem_vectors))
+    assert r["status"] == "PARTIAL"
+    assert "kyber-py not installed" in _kem_check(r)["detail"]
