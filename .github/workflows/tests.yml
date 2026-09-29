@@ -43,7 +43,7 @@ jobs:
           # Not best-effort: a version where these cannot install is a version
           # where the documented `pq-verify[full]` install does not work, and
           # that is exactly what the floor is supposed to mean.
-          pip install kyber-py dilithium-py sympy
+          pip install -c constraints-reference.txt kyber-py dilithium-py sympy
 
       - name: Test suite
         run: python -m pytest tests/ -q
@@ -135,7 +135,7 @@ jobs:
       - name: Install (${{ matrix.profile }})
         run: |
           python -m pip install --upgrade pip
-          pip install ".${{ matrix.extras }}" pytest
+          pip install -c constraints-reference.txt ".${{ matrix.extras }}" pytest
 
       - name: Test suite (not slow)
         run: python -m pytest tests/ -q -m "not slow"

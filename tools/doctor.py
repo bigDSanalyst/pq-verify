@@ -178,9 +178,24 @@ def check_keycheck(files, label):
                  "do not pin this revision; report it to NIST (usnistgov/ACVP-Server)")
 
 
-def check_references():
+def reference_pins(repo):
+    """{dist: version} from constraints-reference.txt, the versions CI pins."""
+    pins = {}
+    try:
+        for line in (Path(repo) / "constraints-reference.txt").read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if "==" in line:
+                name, ver = line.split("==", 1)
+                pins[name.strip().lower()] = ver.strip()
+    except OSError:
+        pass
+    return pins
+
+
+def check_references(repo=REPO):
     """The suites are only as good as the reference implementations that
-    answer them. Name the versions, so a result says what produced it."""
+    answer them. Name the versions, so a result says what produced it, and
+    flag any that differ from the versions CI pins."""
     from importlib import metadata
     have, missing = {}, []
     for r in REFERENCES:
@@ -189,8 +204,19 @@ def check_references():
         except metadata.PackageNotFoundError:
             missing.append(r)
     vers = ", ".join(f"{k} {v}" for k, v in have.items())
+    pins = reference_pins(repo)
+    drift = [f"{k} {v} (CI pins {pins[k]})" for k, v in have.items()
+             if k in pins and pins[k] != v]
+    if not missing and drift:
+        return Check("references", WARN,
+                     f"reference implementation(s) differ from CI: {', '.join(drift)}",
+                     "results here may differ from CI's, and a candidate shown to "
+                     "pass here is not shown to pass there",
+                     "pip install -c constraints-reference.txt "
+                     + " ".join(REFERENCES)), have
     if not missing:
-        return Check("references", OK, f"reference implementations: {vers}"), have
+        return Check("references", OK, f"reference implementations: {vers}"
+                     + (" (as CI pins)" if pins else "")), have
     return Check("references", WARN,
                  f"missing reference implementation(s): {', '.join(missing)}",
                  "suites that need them cannot run, so a candidate cannot be "
@@ -474,7 +500,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
 
     checks = [check_manifest(bundle, manifest), check_watched(bundle),
               check_keycheck(bundle, "pinned")]
-    ref_check, refs = check_references()
+    ref_check, refs = check_references(repo)
     checks.append(ref_check)
     up, moved = check_upstream_state(manifest, baseline, history)
     checks.append(up)
