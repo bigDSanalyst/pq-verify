@@ -2635,3 +2635,45 @@ def test_doctor_waits_then_pins_a_sound_change(tmp_path):
     assert entry["nist_commit"] == "abc1234"
     assert entry["sha256"] == hashlib.sha256(
         (cand / "ML-KEM-encapDecap-FIPS203/prompt.json").read_bytes()).hexdigest()
+
+
+# ----------------------------------------------------------------------
+# AUDITS.md is the pinned vendor-audit table, not a separate claim
+# ----------------------------------------------------------------------
+
+def _vendor_audit():
+    import importlib.util, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    path = root / "tools" / "vendor_audit.py"
+    if not path.exists():
+        pytest.skip("vendor audit tool not present in this layout")
+    spec = importlib.util.spec_from_file_location("pqv_vendor_audit", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod, root
+
+
+def test_audits_md_matches_the_pinned_vendor_table():
+    """CI re-audits every row of tools/vendor_audits.json; AUDITS.md must
+    publish exactly those rows, so the document cannot claim a result CI
+    does not reproduce."""
+    mod, root = _vendor_audit()
+    text = (root / "AUDITS.md").read_text()
+    assert mod.BEGIN in text and mod.END in text
+    published = text.split(mod.BEGIN, 1)[1].split(mod.END, 1)[0].strip()
+    assert published == mod.markdown(mod.load_table()).strip(), (
+        "AUDITS.md is out of date: paste `python3 tools/vendor_audit.py "
+        "--markdown` between the vendor-audits markers")
+
+
+def test_vendor_rows_are_pinned_to_full_commits():
+    """A short hash or branch name would let the library move underneath the
+    recorded result."""
+    import re
+    mod, _ = _vendor_audit()
+    rows = mod.load_table()
+    assert rows
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert set(row["expected"]) == set(mod.STAGES), row["library"]
+        assert row["build"] in ("mlkem-native", "pqclean"), row["library"]

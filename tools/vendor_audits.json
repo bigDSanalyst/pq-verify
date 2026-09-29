@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Third-party ML-KEM implementations audited with --audit-kem, each pinned to",
+    "an exact commit, with the result pq-verify must reproduce. CI builds every",
+    "row and fails if pq-verify's result differs, so a failure means pq-verify",
+    "changed, never the library or the vectors (both are pinned).",
+    "Rows are only ever added. A newer library commit is a new row; the old row",
+    "stays, so the record shows when a library's behaviour changed.",
+    "AUDITS.md renders this table (python3 tools/vendor_audit.py --markdown) and",
+    "a test holds the two equal."
+  ],
+  "audits": [
+    {
+      "library": "mlkem-native",
+      "url": "https://github.com/pq-code-package/mlkem-native",
+      "commit": "fc269bc2d1068486625a3775310c2c1f28d74732",
+      "date": "2026-09-27",
+      "build": "mlkem-native",
+      "sets": ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"],
+      "expected": {
+        "keyGen": [25, 25], "encaps": [25, 25], "decaps": [10, 10],
+        "ekCheck": [10, 10], "dkCheck": [10, 10]
+      },
+      "note": "rejects all 10 invalid keys inside enc/dec"
+    },
+    {
+      "library": "PQClean clean",
+      "url": "https://github.com/PQClean/PQClean",
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "build": "pqclean",
+      "sets": ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"],
+      "expected": {
+        "keyGen": [25, 25], "encaps": [25, 25], "decaps": [10, 10],
+        "ekCheck": [5, 10], "dkCheck": [5, 10]
+      },
+      "note": "enc/dec return 0 for every invalid key: no rejection path"
+    }
+  ]
+}

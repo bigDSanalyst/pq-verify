@@ -193,12 +193,23 @@ refuses them (nonzero return) while accepting the valid ones:
 - `ekCheck`: 5 encapsulation keys with a coefficient ≥ q (FIPS 203 §7.2)
 - `dkCheck`: 5 decapsulation keys with a corrupted H(ek) (FIPS 203 §7.3)
 
-Produced on 2026-09-28 with gcc 13.3, `-O2`.
+This table is not a one-off snapshot. Each row pins a library to an exact
+commit (`tools/vendor_audits.json`), and CI rebuilds every row and re-runs the
+audit on every change to pq-verify and weekly
+(`.github/workflows/vendor-audits.yml`). The library, the vectors and the
+reference implementations are all pinned, so a row can only change if
+pq-verify does. Rows are only ever added: a newer library commit becomes a new
+row beside the old one, so the table records when a library's behaviour
+changed. A test holds this table equal to the pinned file.
 
-| Library | Set | keyGen | encaps | decaps | ekCheck | dkCheck | Result |
-|---|---|---|---|---|---|---|---|
-| mlkem-native @ `fc269bc` | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | **80/80 VERIFIED** |
-| PQClean `clean` @ `0586a82` | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 70/80, findings |
+<!-- vendor-audits:begin -->
+| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Result |
+|---|---|---|---|---|---|---|---|---|
+| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | **80/80 VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 70/80, findings |
+<!-- vendor-audits:end -->
+
+Reproduce every row: `python3 tools/vendor_audit.py`.
 
 PQClean's outputs are byte-exact with NIST, but `crypto_kem_enc` and
 `crypto_kem_dec` return 0 for every one of NIST's invalid keys: the API has no
