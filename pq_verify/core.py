@@ -232,20 +232,23 @@ if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_mfr(rhs[i],q);}
 clock_gettime(CLOCK_MONOTONIC,&t1);r->solve_time_us=(t1.tv_sec-t0.tv_sec)*1e6+(t1.tv_nsec-t0.tv_nsec)/1e3;}
 int zq_verify(const ZqSystem*s,const uint16_t*a){uint16_t q=s->q;for(int i=0;i<s->num_equations;i++){uint32_t sum=0;for(int j=0;j<s->num_variables;j++)sum+=(uint32_t)s->coefficients[i][j]*(uint32_t)a[j];if((uint16_t)(sum%q)!=s->rhs[i])return 0;}return 1;}
-/* ---- C batch butterfly: one crossing for N butterflies ---- */
+/* ---- C batch butterfly: one crossing for N butterflies ----
+   Computes each butterfly through the engine's Montgomery multiply -- the
+   arithmetic the solver uses -- and compares with outputs computed by the
+   caller in plain integer arithmetic. It used to compare (a+w*b)%q with
+   itself, a check that could not fail. Returns the number of mismatches. */
 int zq_batch_butterfly(const uint16_t*a_arr,const uint16_t*b_arr,
-const uint16_t*w_arr,uint8_t*pass_arr,int n,uint16_t q){
+const uint16_t*w_arr,const uint16_t*exp_e,const uint16_t*exp_o,
+uint8_t*pass_arr,int n,uint16_t q){
+_mont_init(q);
 int fails=0;
 for(int i=0;i<n;i++){
-uint32_t ai=a_arr[i],bi=b_arr[i],wi=w_arr[i];
-uint16_t exp_e=(uint16_t)((ai+wi*bi)%q);
-uint16_t exp_o=(uint16_t)((ai+(q-wi)*bi)%q);
-/* solve 2x2 inline: no system build, no RREF */
-/* eq1: out_e = a + w*b, eq2: out_o = a - w*b (= a + (q-w)*b mod q) */
-/* just check the arithmetic identity */
-pass_arr[i]=(exp_e==(uint16_t)((ai+(uint32_t)wi*bi)%q))&&
-            (exp_o==(uint16_t)((ai+(uint32_t)(q-wi)*bi)%q));
-}
+uint16_t a=a_arr[i]%q;
+uint16_t t=_mfr(_mmul(_mto(w_arr[i]%q,q),_mto(b_arr[i]%q,q),q),q);
+uint16_t oe=(uint16_t)(((uint32_t)a+t)%q);
+uint16_t oo=zq_sub(a,t,q);
+pass_arr[i]=(oe==exp_e[i])&&(oo==exp_o[i]);
+fails+=!pass_arr[i];}
 return fails;}
 /* ---- Precomputed Kyber NTT zetas (FIPS 203, bit-reversed) ---- */
 static uint16_t _kyber_zetas[128];
@@ -733,6 +736,7 @@ def bind_all(engines):
         z.zq_verify.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint16)]
         z.zq_verify.restype = ctypes.c_int
         z.zq_batch_butterfly.argtypes = [ctypes.POINTER(ctypes.c_uint16),
+            ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_uint16),
             ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_uint16),
             ctypes.POINTER(ctypes.c_uint8), ctypes.c_int, ctypes.c_uint16]
         z.zq_batch_butterfly.restype = ctypes.c_int
@@ -1289,14 +1293,19 @@ def audit_curve(engines, a, b, p):
         n_pts = _ec_count_bsgs(a % p, b % p, p)
     if n_pts is not None:
         trace = p + 1 - n_pts
-        hasse_bound = 2 * math.isqrt(p)
+        # floor(2*sqrt(p)) is isqrt(4p). The old 2*isqrt(p) rounds before
+        # doubling and is one short for p = 7, 13, ... -- it called
+        # y^2 = x^3 + 3 over F_7 (t = 5) a violation.
+        hasse_bound = math.isqrt(4 * p)
         hasse_ok = abs(trace) <= hasse_bound
+        # Hasse's theorem holds for every curve, so a violation is a defect in
+        # pq-verify's point count, never a property of the curve.
         r.add_test('Hasse bound |t| \u2264 2\u221ap', hasse_ok,
-                   f't={trace}, bound=\u00b1{hasse_bound}, #E={n_pts}')
+                   f't={trace}, bound=\u00b1{hasse_bound}, #E={n_pts}'
+                   + ('' if hasse_ok else ' \u2014 point count is wrong'))
         if not hasse_ok:
-            r.add_finding('CRITICAL', f'Hasse bound VIOLATED: |t|={abs(trace)} > 2\u221ap={hasse_bound}')
-        if abs(trace) > hasse_bound * 0.9:
-            r.add_finding('MEDIUM', f'Near-extreme trace: |t|/2\u221ap = {abs(trace)/hasse_bound:.3f}')
+            r.add_finding('CRITICAL', f'pq-verify point count is wrong: |t|={abs(trace)} '
+                          f'> 2\u221ap={hasse_bound} is impossible (Hasse 1933)')
 
     return r
 
@@ -1304,52 +1313,172 @@ def audit_curve(engines, a, b, p):
 # COQ CERTIFICATE GENERATOR
 # ================================================================
 
+def _coq_list(xs):
+    return "[" + "; ".join(str(int(v)) for v in xs) + "]"
+
+
+def _coq_ntt_prelude(q, root, bits, n_layers):
+    """Gallina definitions of the FIPS 203 / FIPS 204 forward NTT.
+
+    Everything a certificate states is recomputed by Coq from these
+    definitions: the zeta table is root^brv(i) mod q, built in Coq, never
+    copied from Python. A certificate therefore cannot pass because pq-verify
+    and its proof share a wrong constant -- the Python side only supplies the
+    input and the claimed output.
+
+    ML-KEM: q=3329, root=17, 7-bit reversal, 7 layers (len 128..2).
+    ML-DSA: q=8380417, root=1753, 8-bit reversal, 8 layers (len 128..1).
+    """
+    return f"""Require Import ZArith List.
+Import ListNotations.
+Open Scope Z_scope.
+
+Definition q : Z := {q}.
+Definition root : Z := {root}.
+Fixpoint brv (k : nat) (x acc : Z) : Z :=
+  match k with O => acc | S k' => brv k' (Z.shiftr x 1) (2 * acc + Z.land x 1) end.
+Definition zeta (i : Z) : Z := Z.modulo (root ^ brv {bits} i 0) q.
+Fixpoint set_nth (l : list Z) (n : nat) (v : Z) : list Z :=
+  match l, n with
+  | [], _ => []
+  | _ :: t, O => v :: t
+  | h :: t, S n' => h :: set_nth t n' v
+  end.
+Definition bf (f : list Z) (j len : nat) (z : Z) : list Z :=
+  let a := nth j f 0 in
+  let b := nth (j + len)%nat f 0 in
+  let t := Z.modulo (z * b) q in
+  set_nth (set_nth f (j + len)%nat (Z.modulo (a - t) q)) j (Z.modulo (a + t) q).
+Fixpoint inner (f : list Z) (j cnt len : nat) (z : Z) : list Z :=
+  match cnt with O => f | S c => inner (bf f j len z) (S j) c len z end.
+Fixpoint groups (f : list Z) (start ng len : nat) (k : Z) : list Z * Z :=
+  match ng with
+  | O => (f, k)
+  | S g => groups (inner f start len len (zeta k)) (start + 2 * len)%nat g len (k + 1)
+  end.
+Fixpoint layers (f : list Z) (len nl : nat) (k : Z) : list Z :=
+  match nl with
+  | O => f
+  | S l => let '(f', k') := groups f 0 (Nat.div 256 (2 * len)) len k in
+           layers f' (Nat.div len 2) l k'
+  end.
+Definition ntt (f : list Z) : list Z := layers f 128 {n_layers} 1.
+"""
+
+
+# Printed by `Print Assumptions` when a theorem rests on no axiom and no
+# Admitted proof. coqc exits 0 for an Admitted proof, so the exit code alone
+# does not show that a certificate proves anything; this line does.
+COQ_CLOSED = "Closed under the global context"
+
+
+def gen_coq_ntt_cert(scheme, f_in, f_out, filename):
+    """Coq certificate that the FIPS NTT of f_in is exactly f_out.
+
+    One theorem covers the whole transform: every butterfly of every layer,
+    all 256 output coefficients. Also proves the root has the order the
+    transform needs and that the zeta table is what the FIPS defines.
+    Returns (filename, theorem_names).
+    """
+    if scheme == 'ML-KEM':
+        q, root, bits, nl, order, pre = KYBER_Q, KYBER_ZETA, 7, 7, 256, 'mlkem'
+    else:
+        q, root, bits, nl, order, pre = DILI_Q, DILI_ZETA, 8, 8, 512, 'mldsa'
+    thms = [f'{pre}_root_order', f'{pre}_ntt_run']
+    lines = [
+        f"(* pq-verify v{VERSION}: {scheme} forward NTT certificate *)",
+        f"(* 256 coefficients, {nl} layers, {128 * nl} butterflies; the whole *)",
+        "(* transform is recomputed by Coq from the definitions below.      *)",
+        _coq_ntt_prelude(q, root, bits, nl),
+        f"(* root^{order // 2} = -1, so root has order exactly {order} *)",
+        f"Theorem {thms[0]} : Z.modulo (root ^ {order // 2}) q = q - 1.",
+        "Proof. vm_compute. reflexivity. Qed.",
+        f"Theorem {thms[1]} : ntt {_coq_list(f_in)} = {_coq_list(f_out)}.",
+        "Proof. vm_compute. reflexivity. Qed.",
+    ]
+    lines += [f"Print Assumptions {t}." for t in thms]
+    with open(filename, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    return filename, thms
+
+
 def gen_coq_cert(results, filename=None):
+    """Batch certificate: the constants every NTT check in this run relies on.
+
+    Proves, in Coq, that pq-verify's ML-KEM and ML-DSA zeta tables are the
+    ones FIPS 203 and FIPS 204 define, and that each root has the order its
+    transform needs. Earlier versions certified freshly drawn random numbers
+    that no check had used, so the certificate said nothing about the run.
+    """
     if filename is None:
         filename = os.path.join(_pqv_workdir(), 'pq_verify_cert.v')
+    engines = {r.engine for r in results}
     lines = [
         f"(* pq-verify v{VERSION} Coq certificate *)",
         f"(* Generated: {datetime.now(timezone.utc).isoformat()} *)",
-        "Require Import ZArith.",
+        "Require Import ZArith List.",
+        "Import ListNotations.",
         "Open Scope Z_scope.",
-        ""
+        "Fixpoint brv (k : nat) (x acc : Z) : Z :=",
+        "  match k with O => acc | S k' => brv k' (Z.shiftr x 1) (2 * acc + Z.land x 1) end.",
+        "",
     ]
-    for r in results:
-        if r.engine == 'Z_3329 (Kyber)':
-            random.seed(42)
-            Q = 3329
-            for j in range(8):
-                a = random.randint(0, Q-1)
-                b = random.randint(0, Q-1)
-                w = random.randint(1, Q-1)
-                ea = (a + w * b) % Q
-                eb = (a + (Q - w) * b) % Q
-                lines.append(f"Theorem kyber_bf_{j}_even: ({a} + {w} * {b}) mod {Q} = {ea}.")
-                lines.append("Proof. vm_compute. reflexivity. Qed.")
-                lines.append(f"Theorem kyber_bf_{j}_odd: ({a} + {Q-w} * {b}) mod {Q} = {eb}.")
-                lines.append("Proof. vm_compute. reflexivity. Qed.")
-        elif r.engine == 'Z_8380417 (Dilithium)':
-            random.seed(42)
-            Q = 8380417
-            for j in range(4):
-                a = random.randint(0, Q-1)
-                b = random.randint(0, Q-1)
-                w = random.randint(1, Q-1)
-                ea = (a + w * b) % Q
-                eb = (a + (Q - w) * b) % Q
-                lines.append(f"Theorem dili_bf_{j}_even: ({a} + {w} * {b}) mod {Q} = {ea}.")
-                lines.append("Proof. vm_compute. reflexivity. Qed.")
-                lines.append(f"Theorem dili_bf_{j}_odd: ({a} + {Q-w} * {b}) mod {Q} = {eb}.")
-                lines.append("Proof. vm_compute. reflexivity. Qed.")
-        elif r.engine == 'Cubic B(a,b) + ECC':
-            for p in [7, 13, 19, 37]:
-                if p % 3 == 1:
-                    lines.append(f"Theorem cubic_p{p}: {p} mod 3 = 1.")
-                    lines.append("Proof. vm_compute. reflexivity. Qed.")
-    cert = '\n'.join(lines)
+    thms = []
+    tables = []
+    if 'Z_3329 (Kyber)' in engines:
+        tables.append(('mlkem', KYBER_Q, KYBER_ZETA, 7, 128, 256, _kyber_zeta_table()))
+    if 'Z_8380417 (Dilithium)' in engines:
+        tables.append(('mldsa', DILI_Q, DILI_ZETA, 8, 256, 512, _dilithium_zeta_table()))
+    for pre, q, root, bits, size, order, table in tables:
+        lines.append(f"Theorem {pre}_root_order : Z.modulo ({root} ^ {order // 2}) {q} = {q} - 1.")
+        lines.append("Proof. vm_compute. reflexivity. Qed.")
+        lines.append(f"Theorem {pre}_zeta_table : map (fun i => Z.modulo ({root} ^ brv {bits} i 0) {q})"
+                     f" (map Z.of_nat (seq 0 {size})) = {_coq_list(table)}.")
+        lines.append("Proof. vm_compute. reflexivity. Qed.")
+        thms += [f'{pre}_root_order', f'{pre}_zeta_table']
+    if 'Cubic B(a,b) + ECC' in engines:
+        # The cubic engine's CM curves need p = 1 (mod 3).
+        for p in [7, 13, 19, 37]:
+            lines.append(f"Theorem cubic_p{p}: {p} mod 3 = 1.")
+            lines.append("Proof. vm_compute. reflexivity. Qed.")
+            thms.append(f'cubic_p{p}')
+    lines += [f"Print Assumptions {t}." for t in thms]
+    cert = '\n'.join(lines) + '\n'
     with open(filename, 'w') as f:
         f.write(cert)
     return filename
+
+
+def coq_check(path, theorems=None, timeout=120):
+    """Run coqc on a certificate. Returns (ok, detail).
+
+    ok requires coqc to exit 0 AND every theorem to print COQ_CLOSED, so an
+    Admitted proof or an added axiom fails the check.
+    Raises FileNotFoundError when coqc is not installed and
+    subprocess.TimeoutExpired on timeout; callers turn those into skips.
+    """
+    import subprocess, shutil
+    coqc = shutil.which('coqc')
+    if coqc is None:
+        raise FileNotFoundError('coqc not in PATH')
+    proc = subprocess.run([coqc, path], capture_output=True, text=True,
+                          timeout=timeout)
+    out = (proc.stdout or '') + (proc.stderr or '')
+    if proc.returncode != 0:
+        return False, out.strip()[-120:]
+    if theorems is None:
+        with open(path) as f:
+            theorems = [ln.split()[2].rstrip('.') for ln in f
+                        if ln.startswith('Print Assumptions ')]
+    closed = out.count(COQ_CLOSED)
+    if closed != len(theorems):
+        return False, (f'{len(theorems) - closed} of {len(theorems)} theorems rest '
+                       f'on an axiom or an Admitted proof')
+    ver = subprocess.run([coqc, '--version'], capture_output=True, text=True,
+                         timeout=30).stdout.split('version')[-1].split()[:1]
+    return True, (f'coqc {ver[0] if ver else "?"} accepted; {closed} theorems '
+                  f'closed (no axioms, no Admitted)')
+
 
 # ================================================================
 # REPORT
@@ -1424,20 +1553,27 @@ DILI_Q = 8380417
 DILI_ZETA = 1753
 
 def audit_kyber_scale(lib, n_bf=100000):
-    """100,000 NTT butterfly verifications — C batch entry point, one ctypes call."""
+    """100,000 NTT butterflies: the C engine's Montgomery arithmetic against
+    plain integer arithmetic, one ctypes call."""
     r = AuditResult('Kyber Scale (100K)')
     random.seed(42)
     Q = KYBER_Q
-    a_arr = (ctypes.c_uint16 * n_bf)(*[random.randint(0, Q-1) for _ in range(n_bf)])
-    b_arr = (ctypes.c_uint16 * n_bf)(*[random.randint(0, Q-1) for _ in range(n_bf)])
-    w_arr = (ctypes.c_uint16 * n_bf)(*[random.randint(1, Q-1) for _ in range(n_bf)])
+    a = [random.randint(0, Q-1) for _ in range(n_bf)]
+    b = [random.randint(0, Q-1) for _ in range(n_bf)]
+    w = [random.randint(1, Q-1) for _ in range(n_bf)]
+    a_arr = (ctypes.c_uint16 * n_bf)(*a)
+    b_arr = (ctypes.c_uint16 * n_bf)(*b)
+    w_arr = (ctypes.c_uint16 * n_bf)(*w)
+    e_arr = (ctypes.c_uint16 * n_bf)(*[(a[i] + w[i] * b[i]) % Q for i in range(n_bf)])
+    o_arr = (ctypes.c_uint16 * n_bf)(*[(a[i] - w[i] * b[i]) % Q for i in range(n_bf)])
     pass_arr = (ctypes.c_uint8 * n_bf)()
     t0 = time.perf_counter()
-    lib.zq_batch_butterfly(a_arr, b_arr, w_arr, pass_arr, n_bf, Q)
+    mismatches = lib.zq_batch_butterfly(a_arr, b_arr, w_arr, e_arr, o_arr,
+                                        pass_arr, n_bf, Q)
     elapsed = time.perf_counter() - t0
-    mismatches = sum(1 for i in range(n_bf) if pass_arr[i] == 0)
     r.add_test(f'{n_bf:,} NTT butterflies', mismatches == 0,
-               f'{mismatches} mismatches, {elapsed:.1f}s, {n_bf/elapsed:.0f}/sec', elapsed*1e6)
+               f'{mismatches} mismatches (Montgomery engine vs integer), '
+               f'{elapsed:.1f}s, {n_bf/elapsed:.0f}/sec', elapsed*1e6)
     return r
 
 
@@ -1998,53 +2134,58 @@ def audit_full_ntt(lib):
     r.add_test('NTT output matches FIPS 203 reference', ntt_match,
                f'256 coefficients, layer-by-layer == direct')
 
-    coq_lines = [
-        "(* pq-verify: Full Kyber-768 NTT Coq Certificate *)",
-        f"(* 256 coefficients, 7 layers, {total_bf} butterflies *)",
-        "Require Import ZArith.",
-        "Open Scope Z_scope.", ""
-    ]
-    z_idx = 1
-    for layer in range(7):
-        lengths = [128, 64, 32, 16, 8, 4, 2]
-        length = lengths[layer]
-        n_groups = 256 // (2 * length)
-        for g in range(min(n_groups, 2)):
-            z = zetas[z_idx + g]
-            j = g * 2 * length
-            a_val = f_input[j] if layer == 0 else 0
-            b_val = f_input[j + length] if layer == 0 else 0
-            if layer == 0:
-                ea = (a_val + z * b_val) % Q
-                eb = (a_val + (Q - z) * b_val) % Q
-                coq_lines.append(
-                    f"Theorem ntt_L{layer}_bf{g}: ({a_val} + {z} * {b_val}) mod {Q} = {ea}.")
-                coq_lines.append("Proof. vm_compute. reflexivity. Qed.")
-        z_idx += n_groups
-
+    # The certificate states the whole transform -- input to all 256 outputs --
+    # and Coq recomputes it from its own FIPS 203 definitions. Before 2.9.0 it
+    # held one layer-0 butterfly under a "Full NTT" header.
     ntt_cert_file = os.path.join(_pqv_workdir(), 'pq_ntt_cert.v')
-    with open(ntt_cert_file, 'w') as f:
-        f.write('\n'.join(coq_lines))
-    # Writing a file proves nothing. The real check is 'certificate verified'
-    # below, which runs coqc. This entry only records where the file went.
+    _, thms = gen_coq_ntt_cert('ML-KEM', f_input, f_ntt, ntt_cert_file)
     r.add_test('NTT Coq certificate emitted', os.path.exists(ntt_cert_file),
                ntt_cert_file)
 
-    import subprocess, shutil
-    coqc_path = shutil.which('coqc')
-    if coqc_path:
-        try:
-            proc = subprocess.run([coqc_path, ntt_cert_file],
-                                  capture_output=True, text=True, timeout=60)
-            r.add_test('NTT Coq certificate verified', proc.returncode == 0,
-                       'coqc accepted' if proc.returncode == 0 else
-                       (proc.stderr or '').strip()[-80:])
-        except subprocess.TimeoutExpired:
-            r.add_skip('NTT Coq certificate verified', 'coqc timed out', 'coq')
-    else:
+    import subprocess
+    try:
+        ok, detail = coq_check(ntt_cert_file, thms)
+        r.add_test('NTT Coq certificate verified', ok, detail)
+        if not ok:
+            r.add_finding('CRITICAL', f'NTT Coq certificate rejected: {detail}')
+    except FileNotFoundError:
         r.add_skip('NTT Coq certificate verified', 'coqc not in PATH', 'coq')
+    except subprocess.TimeoutExpired:
+        r.add_skip('NTT Coq certificate verified', 'coqc timed out', 'coq')
 
     return r
+
+
+_FREIVALDS_BASE = None
+
+
+def freivalds_seed(i=0):
+    """Seed for the i-th Freivalds call of this run.
+
+    Freivalds' bound -- a wrong y passes a round with probability <= 1/q --
+    holds only if y is fixed before the random vector r is known. Every seed
+    used to be a constant in this file (42, trial+1, ...), so anyone could
+    compute r and ship an output that is wrong in several coefficients yet
+    passes (tests/test_pqverify.py builds one). The base seed is now drawn
+    from the OS once per run and printed, so a run can still be replayed:
+    PQV_FREIVALDS_SEED=0x... reuses it.
+    """
+    global _FREIVALDS_BASE
+    if _FREIVALDS_BASE is None:
+        env = os.environ.get('PQV_FREIVALDS_SEED')
+        if env:
+            _FREIVALDS_BASE = int(env, 0) & 0xFFFFFFFF
+        else:
+            import secrets
+            _FREIVALDS_BASE = secrets.randbits(32)
+    # distinct per call, never 0 (the C engines treat 0 as "use 42")
+    return ((_FREIVALDS_BASE + 0x9E3779B9 * (i + 1)) & 0xFFFFFFFF) or 1
+
+
+def freivalds_seed_note():
+    freivalds_seed()
+    return (f'Freivalds seed 0x{_FREIVALDS_BASE:08x} '
+            f'(replay: PQV_FREIVALDS_SEED=0x{_FREIVALDS_BASE:08x})')
 
 
 def audit_freivalds_ntt(lib):
@@ -2056,26 +2197,31 @@ def audit_freivalds_ntt(lib):
     x = (ctypes.c_uint16 * N)(*[random.randint(0, Q - 1) for _ in range(N)])
     y = (ctypes.c_uint16 * N)(*x)  # copy
     lib.zq_ntt_forward(y, N, Q, Z)
-    ok = lib.zq_freivalds_ntt(x, y, N, Q, Z, 10, 42)
+    ok = lib.zq_freivalds_ntt(x, y, N, Q, Z, 10, freivalds_seed(0))
     r.add_test('Correct NTT passes (10 rounds)', ok == 1,
-               f'Freivalds returned {ok}')
+               f'Freivalds returned {ok}; {freivalds_seed_note()}')
     # Test 2: corrupted output should fail
     y_bad = (ctypes.c_uint16 * N)(*y)
     y_bad[0] = (y_bad[0] + 1) % Q
-    fail = lib.zq_freivalds_ntt(x, y_bad, N, Q, Z, 10, 42)
+    fail = lib.zq_freivalds_ntt(x, y_bad, N, Q, Z, 10, freivalds_seed(1))
     r.add_test('Corrupted NTT fails', fail == 0,
                f'Freivalds returned {fail} (expected 0)')
     # Test 3: throughput — 1000 NTT verifications via Freivalds
     t0 = time.perf_counter()
     n_checks = 1000
-    for _ in range(n_checks):
+    accepted = 0
+    for i in range(n_checks):
         xr = (ctypes.c_uint16 * N)(*[random.randint(0, Q - 1) for _ in range(N)])
         yr = (ctypes.c_uint16 * N)(*xr)
         lib.zq_ntt_forward(yr, N, Q, Z)
-        lib.zq_freivalds_ntt(xr, yr, N, Q, Z, 3, 0)
+        accepted += lib.zq_freivalds_ntt(xr, yr, N, Q, Z, 3, freivalds_seed(2 + i)) == 1
     elapsed = (time.perf_counter() - t0) * 1e6
+    # This used to pass unconditionally; it now requires every correct NTT
+    # to be accepted.
     r.add_test(f'Freivalds throughput ({n_checks} NTTs, 3 rounds each)',
-               True, f'{elapsed:.0f}\u03bcs total, {elapsed/n_checks:.1f}\u03bcs/verify')
+               accepted == n_checks,
+               f'{accepted}/{n_checks} accepted, {elapsed:.0f}\u03bcs total, '
+               f'{elapsed/n_checks:.1f}\u03bcs/verify')
     return r
 
 
@@ -3221,23 +3367,18 @@ def main(quick=False):
     coq_file = gen_coq_cert(results)
     cert_r = AuditResult('Coq Certificate')
     cert_r.add_test('Coq certificate generation', True, coq_file)
-    import subprocess, shutil
-    coqc_path = shutil.which('coqc')
-    if coqc_path is None:
+    import subprocess
+    try:
+        ok, detail = coq_check(coq_file)
+        cert_r.add_test('Coq batch verified by coqc', ok, detail)
+    except FileNotFoundError:
         cert_r.add_skip('Coq batch verified by coqc',
                         'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
-    else:
-        try:
-            proc = subprocess.run([coqc_path, coq_file],
-                                  capture_output=True, text=True, timeout=60)
-            cert_r.add_test('Coq batch verified by coqc', proc.returncode == 0,
-                            'coqc accepted' if proc.returncode == 0 else
-                            (proc.stderr or proc.stdout or '').strip()[-120:])
-        except subprocess.TimeoutExpired:
-            cert_r.add_skip('Coq batch verified by coqc', 'coqc timed out (60s)', 'coq')
-        except Exception as e:
-            cert_r.add_skip('Coq batch verified by coqc',
-                            f'coqc could not be run: {str(e)[:80]}', 'coq')
+    except subprocess.TimeoutExpired:
+        cert_r.add_skip('Coq batch verified by coqc', 'coqc timed out', 'coq')
+    except Exception as e:
+        cert_r.add_skip('Coq batch verified by coqc',
+                        f'coqc could not be run: {str(e)[:80]}', 'coq')
     results.append(cert_r)
 
     # ============================================================
@@ -4106,8 +4247,11 @@ def gen_engine6_coq_cert(filename=None):
         "Theorem genus2_residue_sum_zero :",
         "  (61495 # 15552) + (45 # 64) + (- (45 # 64)) + (- (61495 # 15552)) == 0.",
         "Proof. reflexivity. Qed.",
+        "Print Assumptions conj7_z0.",
+        "Print Assumptions conj7_conifold.",
+        "Print Assumptions genus2_residue_sum_zero.",
     ]
-    cert = '\n'.join(lines)
+    cert = '\n'.join(lines) + '\n'
     with open(filename, 'w') as f:
         f.write(cert)
     return filename, cert
@@ -4128,14 +4272,12 @@ def audit_engine6_coq():
         return r
     try:
         t0 = time.perf_counter()
-        proc = subprocess.run([coqc, cert_file], capture_output=True,
-                              text=True, timeout=120)
+        ok, detail = coq_check(cert_file)
         elapsed = (time.perf_counter() - t0) * 1000
-        ok = (proc.returncode == 0)
         r.add_test('Conjecture 7 + genus-2 residue theorem verified by coqc',
                    ok, ('coqc accepted 3 theorems (2 bignum identities + '
-                        f'1 rational), {elapsed:.0f}ms' if ok
-                        else (proc.stderr or proc.stdout or '').strip()[-160:]))
+                        f'1 rational), all closed, {elapsed:.0f}ms' if ok
+                        else detail))
         if not ok:
             r.add_finding('CRITICAL', 'Engine 6 Coq certificate rejected by coqc')
     except subprocess.TimeoutExpired:
@@ -4740,7 +4882,6 @@ def pqverify_kem(k=4, seed=2026, trials=20, verbose=True):
             acc = [0]*N
             for j in range(k): acc = padd(acc, basemul(A[i][j], s[j]))
             ti_lin = invntt(acc)
-            r = freivalds_ok([x for row in [acc] for x in row][:N], acc, tr*97+i+1)  # NTT-domain check
             t.append(padd(ti_lin, e[i]))
         t_hat = [ntt(ti) for ti in t]
         # encaps
@@ -4757,7 +4898,7 @@ def pqverify_kem(k=4, seed=2026, trials=20, verbose=True):
         v = padd(padd(invntt(vacc), e2), enc(m))
         # Freivalds on a representative NTT step (u[0] forward)
         if zq:
-            ok = freivalds_ok(u[0], ntt(u[0]), tr*131+1); frv_checks += 1; frv_fails += (ok is False)
+            ok = freivalds_ok(u[0], ntt(u[0]), freivalds_seed(tr*131+1)); frv_checks += 1; frv_fails += (ok is False)
         # decaps: w = v - s^T u
         u_hat = [ntt(ui) for ui in u]
         sacc = [0]*N
@@ -6564,7 +6705,7 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                     poly = [random.randint(0, q - 1) for _ in range(n)]
                     ntt_out = list(func(list(poly)))
                     x = (_ct * n)(*poly); y = (_ct * n)(*[v % q for v in ntt_out])
-                    if _f(x, y, n, q, zeta_root, 5, trial + 1) != 1: ff += 1
+                    if _f(x, y, n, q, zeta_root, 5, freivalds_seed(trial)) != 1: ff += 1
                 ok = ff == 0; t += 1; p += ok
                 _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
                 print(f"  {_OK if ok else _BAD} Freivalds ({_eng_lbl} engine): "

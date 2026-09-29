@@ -17,6 +17,25 @@ versioning](https://semver.org/spec/v2.0.0.html).
   after decompression, so a gzip bomb cannot expand in memory) or a hybrid
   transcript larger than 1 MiB is CANNOT VERIFY, and at most one byte past
   the limit is read. The largest genuine documents are about 3.3 MB and 8 KB.
+- **Freivalds used published seeds.** Every Freivalds check drew its random
+  vector from a constant in the source (42, `trial + 1`, ...), so anyone could
+  compute it and build an NTT output that is wrong in several coefficients
+  yet passes. The seed is now drawn from the OS once per run and printed;
+  `PQV_FREIVALDS_SEED=0x...` replays a run.
+- **The Hasse check rejected genuine curves.** It used `2*isqrt(p)`, which is
+  one short of ⌊2√p⌋ for p = 7, 13, ..., and reported y² = x³ + 3 over F₇
+  (t = −5) as CRITICAL. The bound is now `isqrt(4p)`. Since no curve can
+  exceed it, a violation is now reported as a defect in pq-verify's point
+  count, not the curve's, and the "near-extreme trace" MEDIUM finding, which
+  is not a known weakness, is gone.
+- **Two self-suite checks could not fail.** "100,000 NTT butterflies"
+  compared `(a + w*b) % q` with itself; it now runs every butterfly through
+  the engine's Montgomery multiply and compares with integer arithmetic.
+  "Freivalds throughput" passed unconditionally; it now requires every
+  correct NTT to be accepted. The self-suite is still 160 checks.
+- **The Coq certificates proved almost nothing about the run.** The "Full
+  Kyber-768 NTT" certificate contained one layer-0 butterfly, and the batch
+  certificate proved sums of random numbers drawn for the purpose. See Changed.
 
 ### Changed
 
@@ -29,6 +48,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
   §7.3, decapsulates the ciphertext and compares the result byte-for-byte.
   Without the key that check is NOT CHECKED and the result is **PARTIAL**, so
   transcripts that verified before without it now report PARTIAL.
+- **Coq certificates are real, and checked for axioms.** The NTT certificate
+  defines the FIPS 203 forward NTT and zeta table in Coq and proves
+  `ntt input = output` for all 256 coefficients (896 butterflies), plus
+  17¹²⁸ ≡ −1 (mod 3329). The batch certificate proves pq-verify's ML-KEM and
+  ML-DSA zeta tables are root^brv(i) mod q as FIPS 203/204 define them. A
+  certificate passes only if coqc accepts it **and** `Print Assumptions`
+  reports every theorem closed, so an `Admitted` proof (which coqc accepts)
+  or an added axiom fails. The "Coq-certified" tagline is replaced by what is
+  actually proved.
 
 ### Added
 

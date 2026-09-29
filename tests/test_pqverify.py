@@ -2936,3 +2936,203 @@ def test_without_kyber_the_mlkem_half_is_not_checked(tmp_path, kem_vectors, monk
         r = _hybrid(tmp_path, _transcript("X25519MLKEM768", kem_vectors))
     assert r["status"] == "PARTIAL"
     assert "kyber-py not installed" in _kem_check(r)["detail"]
+
+
+# ----------------------------------------------------------------------
+# Checks that could not fail, and bounds that were wrong
+# ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("a,b,p,t", [(0, 3, 7, 5), (0, 4, 13, 7)])
+def test_hasse_bound_accepts_the_most_extreme_legal_curves(a, b, p, t):
+    """|t| <= floor(2*sqrt(p)) = isqrt(4p). The old bound 2*isqrt(p) is one
+    short at p = 7 and 13, so these genuine curves were reported CRITICAL."""
+    import pq_verify.core as core
+    with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_curve({}, a, b, p)
+    hasse = next(x for x in r.tests if x["name"].startswith("Hasse bound"))
+    assert f"t={t}" in hasse["detail"] or f"t={-t}" in hasse["detail"]
+    assert hasse["passed"] is True, hasse
+    assert not [f for f in r.findings if "Hasse" in f["description"]
+                or "point count" in f["description"]]
+    assert not [f for f in r.findings if "Near-extreme" in f["description"]]
+
+
+def _engines():
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng = core.compile_all(); core.bind_all(eng)
+    if eng.get("zq") is None:
+        pytest.skip("zq engine unavailable (no C compiler)")
+    return core, eng["zq"]
+
+
+def _xorshift_rows(seed, rounds, n, q):
+    rng, rows = seed or 42, []
+    for _ in range(rounds):
+        row = []
+        for _ in range(n):
+            rng ^= (rng << 13) & 0xFFFFFFFF
+            rng ^= rng >> 17
+            rng ^= (rng << 5) & 0xFFFFFFFF
+            row.append(rng % q)
+        rows.append(row)
+    return rows
+
+
+def _orthogonal_error(rows, n, q):
+    """A nonzero e with row . e == 0 mod q for every row."""
+    m = [r[:] for r in rows]; piv = []; rk = 0
+    for c in range(n):
+        p = next((i for i in range(rk, len(m)) if m[i][c]), None)
+        if p is None:
+            continue
+        m[rk], m[p] = m[p], m[rk]
+        inv = pow(m[rk][c], q - 2, q)
+        m[rk] = [v * inv % q for v in m[rk]]
+        for i in range(len(m)):
+            if i != rk and m[i][c]:
+                f = m[i][c]
+                m[i] = [(u - f * v) % q for u, v in zip(m[i], m[rk])]
+        piv.append(c); rk += 1
+        if rk == len(m):
+            break
+    free = next(c for c in range(n) if c not in piv)
+    e = [0] * n; e[free] = 1
+    for i, c in enumerate(piv):
+        e[c] = (-m[i][free]) % q
+    return e
+
+
+def test_freivalds_cannot_be_forged_against_a_published_seed(monkeypatch):
+    """An output wrong in several coefficients, built so r.e = 0 for the r a
+    fixed seed produces, passes Freivalds with that seed. The vendor audit
+    used seed trial+1 for every run; the seed is now drawn per run."""
+    import ctypes, random
+    core, zq = _engines()
+    Q, N, Z, rounds = 3329, 256, 17, 5
+    random.seed(99)
+    x = [random.randrange(Q) for _ in range(N)]
+    y = (ctypes.c_uint16 * N)(*x); zq.zq_ntt_forward(y, N, Q, Z)
+    e = _orthogonal_error(_xorshift_rows(1, rounds, N, Q), N, Q)
+    forged = [(y[i] + e[i]) % Q for i in range(N)]
+    assert sum(1 for v in e if v) > 1
+    X, F = (ctypes.c_uint16 * N)(*x), (ctypes.c_uint16 * N)(*forged)
+    # the attack works against the constant main used ...
+    assert zq.zq_freivalds_ntt(X, F, N, Q, Z, rounds, 1) == 1
+    # ... and not against this run's seed
+    monkeypatch.setattr(core, "_FREIVALDS_BASE", None)
+    monkeypatch.delenv("PQV_FREIVALDS_SEED", raising=False)
+    assert core.freivalds_seed(0) != 1
+    assert zq.zq_freivalds_ntt(X, F, N, Q, Z, rounds, core.freivalds_seed(0)) == 0
+
+
+def test_freivalds_seed_is_fresh_per_run_and_replayable(monkeypatch):
+    import pq_verify.core as core
+    monkeypatch.delenv("PQV_FREIVALDS_SEED", raising=False)
+    seen = set()
+    for _ in range(4):
+        monkeypatch.setattr(core, "_FREIVALDS_BASE", None)
+        seen.add(core.freivalds_seed(0))
+    assert len(seen) > 1, "the seed did not change between runs"
+    monkeypatch.setattr(core, "_FREIVALDS_BASE", None)
+    monkeypatch.setenv("PQV_FREIVALDS_SEED", "0x1234abcd")
+    first = [core.freivalds_seed(i) for i in range(5)]
+    assert "0x1234abcd" in core.freivalds_seed_note()
+    monkeypatch.setattr(core, "_FREIVALDS_BASE", None)
+    assert [core.freivalds_seed(i) for i in range(5)] == first
+    assert 0 not in first and len(set(first)) == 5
+
+
+def test_batch_butterfly_check_can_fail():
+    """It compared (a+w*b)%q with itself and could not report a mismatch."""
+    import ctypes
+    core, zq = _engines()
+    Q, n = 3329, 4
+    a, b, w = [5, 3328, 0, 1000], [7, 3328, 1, 2000], [17, 3328, 3328, 1729]
+    e = [(a[i] + w[i] * b[i]) % Q for i in range(n)]
+    o = [(a[i] - w[i] * b[i]) % Q for i in range(n)]
+    U = lambda v: (ctypes.c_uint16 * n)(*v)
+    ok = (ctypes.c_uint8 * n)()
+    assert zq.zq_batch_butterfly(U(a), U(b), U(w), U(e), U(o), ok, n, Q) == 0
+    assert list(ok) == [1] * n
+    e[2] = (e[2] + 1) % Q
+    ok = (ctypes.c_uint8 * n)()
+    assert zq.zq_batch_butterfly(U(a), U(b), U(w), U(e), U(o), ok, n, Q) == 1
+    assert list(ok) == [1, 1, 0, 1]
+    r = core.audit_kyber_scale(zq, n_bf=2000)
+    assert r.tests[0]["passed"] is True, r.tests[0]
+
+
+def _need_coqc():
+    import shutil
+    if shutil.which("coqc") is None:
+        pytest.skip("coqc not installed")
+
+
+def test_ntt_coq_certificate_covers_the_whole_transform(tmp_path):
+    """The 'Full NTT' certificate held one layer-0 butterfly. It now states
+    NTT(input) = output for all 256 coefficients, recomputed by Coq, and any
+    single wrong coefficient is rejected."""
+    _need_coqc()
+    import random
+    import pq_verify.core as core
+    random.seed(7)
+    f = [random.randrange(3329) for _ in range(256)]
+    out = core._reference_ntt(f)
+    good, thms = core.gen_coq_ntt_cert("ML-KEM", f, out, str(tmp_path / "g.v"))
+    ok, detail = core.coq_check(good, thms)
+    assert ok, detail
+    for i in (0, 131, 255):
+        bad = list(out); bad[i] = (bad[i] + 1) % 3329
+        path, thms = core.gen_coq_ntt_cert("ML-KEM", f, bad, str(tmp_path / f"b{i}.v"))
+        assert core.coq_check(path, thms)[0] is False, f"coefficient {i}"
+
+
+def test_mldsa_ntt_coq_certificate(tmp_path):
+    _need_coqc()
+    import random
+    import pq_verify.core as core
+    random.seed(8)
+    f = [random.randrange(8380417) for _ in range(256)]
+    out = core._reference_ntt_dili(f)
+    path, thms = core.gen_coq_ntt_cert("ML-DSA", f, out, str(tmp_path / "d.v"))
+    ok, detail = core.coq_check(path, thms)
+    assert ok, detail
+
+
+def test_an_admitted_proof_is_not_a_certificate(tmp_path):
+    """coqc exits 0 on Admitted. The check must not."""
+    _need_coqc()
+    import random
+    import pq_verify.core as core
+    random.seed(9)
+    f = [random.randrange(3329) for _ in range(256)]
+    bad = list(core._reference_ntt(f)); bad[0] = (bad[0] + 1) % 3329
+    path, thms = core.gen_coq_ntt_cert("ML-KEM", f, bad, str(tmp_path / "a.v"))
+    src = open(path).read()
+    i = src.index(f"Theorem {thms[1]}")
+    j = src.index("Proof. vm_compute. reflexivity. Qed.", i)
+    src = src[:j] + "Admitted." + src[j + len("Proof. vm_compute. reflexivity. Qed."):]
+    open(path, "w").write(src)
+    ok, detail = core.coq_check(path, thms)
+    assert ok is False and "Admitted" in detail
+
+
+def test_batch_coq_certificate_proves_the_zeta_tables(tmp_path):
+    _need_coqc()
+    import pq_verify.core as core
+
+    class R:  # the only attribute gen_coq_cert reads
+        def __init__(self, engine): self.engine = engine
+    path = core.gen_coq_cert([R("Z_3329 (Kyber)"), R("Z_8380417 (Dilithium)")],
+                             str(tmp_path / "batch.v"))
+    src = open(path).read()
+    assert "mlkem_zeta_table" in src and "mldsa_zeta_table" in src
+    assert "random" not in src.lower()
+    ok, detail = core.coq_check(path)
+    assert ok, detail
+    # a wrong table entry is rejected
+    t = core._kyber_zeta_table()
+    wrong = src.replace(core._coq_list(t), core._coq_list([t[0] + 1] + t[1:]))
+    (tmp_path / "wrong.v").write_text(wrong)
+    assert core.coq_check(str(tmp_path / "wrong.v"))[0] is False
