@@ -1,0 +1,41 @@
+name: Vendor audits (pinned)
+
+# Rebuilds every third-party ML-KEM library in tools/vendor_audits.json at its
+# pinned commit and re-runs --audit-kem against the pinned NIST vectors. Every
+# input is pinned, so a failure means pq-verify's own behaviour changed.
+#
+# Runs on changes to the code that decides audit results, and weekly so a
+# toolchain or runner change that alters a result is noticed too.
+
+on:
+  pull_request:
+    paths:
+      - "pq_verify/**"
+      - "tools/vendor_audit.py"
+      - "tools/vendor_audits.json"
+      - "constraints-reference.txt"
+      - ".github/workflows/vendor-audits.yml"
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: vendor audits (pinned libraries)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints-reference.txt .
+      - name: Rebuild each pinned library and re-audit it
+        run: python tools/vendor_audit.py

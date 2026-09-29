@@ -7,6 +7,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Vendor audits run in CI, pinned.** `tools/vendor_audits.json` pins each
+  audited third-party ML-KEM library to an exact commit with the result
+  pq-verify must reproduce; `tools/vendor_audit.py` rebuilds every row and
+  re-runs `--audit-kem` on each change to pq-verify and weekly. With the
+  library, the vectors and the reference implementations all pinned, a
+  failure can only mean pq-verify changed. Reintroducing the 2.8.0
+  symbol-resolution bug fails it on all three mlkem-native rows. Rows are
+  only added, so the table records when a library's behaviour changes, and a
+  test holds AUDITS.md equal to it.
 - **Results name the reference implementation that computed them.** Next to
   the pinned vector revision, each ACVP run prints and records the version of
   the library that answered it (`reference: kyber-py 1.2.0`), in the console
