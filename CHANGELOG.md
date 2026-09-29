@@ -3,6 +3,19 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`--vector-dir` was ignored for every bundled file.** The loader consulted
+  the pinned bundle first by file name, so a caller-supplied vector directory
+  was never read for any file pq-verify also ships, while the report named that
+  directory as the source. A directory with a corrupted expected answer
+  reported 240/240; it now reports 239/240. The same loader serves
+  `prompt_dir` and the prompt/response path. The bundle now answers only for
+  pq-verify's own vectors directory, and a file missing from a supplied
+  directory is an error rather than a silent fallback to the bundle.
+
 ## [2.8.1] — 2026-09-28
 
 ### Fixed
