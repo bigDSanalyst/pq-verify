@@ -2496,3 +2496,142 @@ def test_pinned_directory_still_reads_the_bundle():
         os.path.join(_pkg_dir(), "vectors", "ML-KEM-keyGen-FIPS203", "prompt.json"),
         "ML-KEM-keyGen-FIPS203/prompt.json")
     assert doc["algorithm"] == "ML-KEM"
+
+
+# ----------------------------------------------------------------------
+# tools/doctor.py: the checks a NIST re-pin must pass
+# ----------------------------------------------------------------------
+
+def _doctor():
+    import importlib.util, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    path = root / "tools" / "doctor.py"
+    if not path.exists():
+        pytest.skip("doctor not present in this layout")
+    spec = importlib.util.spec_from_file_location("pqv_doctor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod, root
+
+
+def _doctor_repo(tmp_path, history=None):
+    """A throwaway repository: the real bundle, manifest and watcher state."""
+    import json, shutil
+    _, root = _doctor()
+    repo = tmp_path / "repo"
+    (repo / "pq_verify" / "vectors").mkdir(parents=True)
+    (repo / "tools" / "vector_state").mkdir(parents=True)
+    for f in ("acvp_vectors.json.gz", "MANIFEST.json"):
+        shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
+    shutil.copy(root / "tools" / "vector_state" / "baseline.json",
+                repo / "tools" / "vector_state" / "baseline.json")
+    (repo / "tools" / "vector_state" / "history.json").write_text(
+        json.dumps(history or {}))
+    return repo
+
+
+def _doctor_candidate(tmp_path, mutate):
+    """ML-KEM encapDecap as NIST might publish it, after `mutate(doc)`."""
+    import gzip, json
+    _, root = _doctor()
+    with gzip.open(root / "pq_verify" / "vectors" / "acvp_vectors.json.gz", "rt") as fh:
+        bundle = json.load(fh)
+    cand = tmp_path / "cand"
+    for f in ("prompt.json", "expectedResults.json", "internalProjection.json"):
+        name = f"ML-KEM-encapDecap-FIPS203/{f}"
+        doc = json.loads(json.dumps(bundle[name]))
+        mutate(doc)
+        p = cand / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(doc, indent=1))       # new bytes, same schema
+    return cand
+
+
+def _doctor_run(repo, *argv):
+    import json
+    mod, _ = _doctor()
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = mod.main(["--repo", str(repo), "--json", *argv])
+    doc = json.loads(out.getvalue())
+    return code, doc, {c["check"]: c["status"] for c in doc["checks"]}
+
+
+def test_doctor_passes_the_shipped_bundle(tmp_path):
+    code, doc, st = _doctor_run(_doctor_repo(tmp_path))
+    assert code == 0
+    assert st["manifest"] == st["watched"] == st["keycheck:pinned"] == "ok"
+    # Same inputs, same findings, same token.
+    assert _doctor_run(_doctor_repo(tmp_path / "again"))[1]["token"] == doc["token"]
+
+
+def test_doctor_blocks_over_length_invalid_keys(tmp_path):
+    """The defect of NIST c924096, which 2.8.0 shipped: invalid encapsulation
+    keys 416 bytes too long. The ACVP suite still scores 240/240 on them; the
+    doctor must refuse them, and --apply must leave the bundle untouched."""
+    def overlong(doc):
+        for g in doc["testGroups"]:
+            if g.get("function") == "encapsulationKeyCheck":
+                for t in g["tests"]:
+                    if "ek" in t and t.get("testPassed") is False:
+                        t["ek"] += "00" * 416
+    repo = _doctor_repo(tmp_path)
+    bundle = repo / "pq_verify" / "vectors" / "acvp_vectors.json.gz"
+    before = bundle.read_bytes()
+    code, doc, st = _doctor_run(repo, "--candidate-dir",
+                                str(_doctor_candidate(tmp_path, overlong)),
+                                "--apply", "--commit",
+                                "ML-KEM-encapDecap-FIPS203/prompt.json=c924096")
+    assert code == 1
+    assert st["keycheck:candidate"] == "BLOCK"
+    assert st["control"] == "BLOCK"
+    assert st["apply"] == "BLOCK"
+    assert bundle.read_bytes() == before
+
+
+def test_doctor_blocks_a_candidate_the_references_fail(tmp_path):
+    pytest.importorskip("kyber_py")
+    def wrong_answer(doc):
+        for g in doc["testGroups"]:
+            if g.get("function") == "encapsulation":
+                t = g["tests"][0]
+                if "k" in t:
+                    t["k"] = ("00" if t["k"][:2] != "00" else "11") + t["k"][2:]
+                    return
+    code, doc, st = _doctor_run(_doctor_repo(tmp_path), "--candidate-dir",
+                                str(_doctor_candidate(tmp_path, wrong_answer)))
+    assert code == 1
+    assert st["suite:ML-KEM"] == "BLOCK"
+    bad = next(c for c in doc["checks"] if c["check"] == "suite:ML-KEM")
+    assert "candidate 239/240 (pinned 240/240)" in bad["headline"]
+
+
+def test_doctor_waits_then_pins_a_sound_change(tmp_path):
+    """A sound change is still refused until it has held for STABLE_DAYS and
+    its NIST commit is known; then --apply re-pins and re-checks from disk."""
+    import hashlib, json
+    pytest.importorskip("kyber_py")
+    cand = _doctor_candidate(tmp_path, lambda doc: None)
+    code, doc, st = _doctor_run(_doctor_repo(tmp_path / "young"),
+                                "--candidate-dir", str(cand), "--apply")
+    assert st["stable"] == "DECIDE" and st["apply"] == "BLOCK"
+    assert st.get("control") == "ok" and st["keycheck:candidate"] == "ok"
+
+    history = {}
+    for f in ("prompt.json", "expectedResults.json", "internalProjection.json"):
+        name = f"ML-KEM-encapDecap-FIPS203/{f}"
+        sha = hashlib.sha256((cand / name).read_bytes()).hexdigest()
+        history[name] = {sha: {"first_seen": "2020-01-01", "count": 9}}
+    repo = _doctor_repo(tmp_path / "held", history)
+    code, doc, st = _doctor_run(repo, "--candidate-dir", str(cand), "--apply",
+                                *[a for f in ("prompt.json", "expectedResults.json",
+                                              "internalProjection.json")
+                                  for a in ("--commit",
+                                            f"ML-KEM-encapDecap-FIPS203/{f}=abc1234")])
+    assert code == 0, doc["next"]
+    assert st["apply"] == "ok"
+    assert st["after:manifest"] == st["after:keycheck:re-pinned"] == "ok"
+    manifest = json.loads((repo / "pq_verify" / "vectors" / "MANIFEST.json").read_text())
+    entry = manifest["ML-KEM-encapDecap-FIPS203/prompt.json"]
+    assert entry["nist_commit"] == "abc1234"
+    assert entry["sha256"] == hashlib.sha256(
+        (cand / "ML-KEM-encapDecap-FIPS203/prompt.json").read_bytes()).hexdigest()

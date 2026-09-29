@@ -54,6 +54,11 @@ jobs:
       - name: NIST ACVP — 855 pinned vectors, offline
         run: python -m pq_verify.cli --acvp-all --fail-on-finding
 
+      # The suite above scored 240/240 on the malformed vectors 2.8.0 shipped;
+      # only the doctor's structural checks catch that class of defect.
+      - name: Pinned vectors are sound (doctor, offline)
+        run: python tools/doctor.py
+
       - name: Hybrid (RFC 10024) — prompt emits and round-trips
         run: |
           python -m pq_verify.cli --emit-hybrid-prompt list
