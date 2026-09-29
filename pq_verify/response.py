@@ -52,6 +52,7 @@ import gzip
 import hashlib
 import json
 import os
+import zlib
 
 from .core import (
     DEGRADED,
@@ -138,13 +139,21 @@ def _file_sha256(path):
     return h.hexdigest()
 
 
+MAX_RESPONSE_BYTES = 64 << 20      # 64 MiB; the largest genuine response is ~3.3 MB
+
+
 def _read_json(path):
-    """Read a .json or .json.gz document."""
-    if path.endswith(".gz"):
-        with gzip.open(path, "rt") as fh:
-            return json.load(fh)
-    with open(path, "r") as fh:
-        return json.load(fh)
+    """Read a .json or .json.gz document, refusing anything larger than
+    MAX_RESPONSE_BYTES -- after decompression, so a small gzip bomb cannot
+    expand to gigabytes. At most one byte past the limit is ever read."""
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rb") as fh:
+        raw = fh.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"larger than {MAX_RESPONSE_BYTES} bytes"
+                         f"{' once decompressed' if path.endswith('.gz') else ''}; "
+                         f"the largest genuine response is about 3.3 MB")
+    return json.loads(raw.decode("utf-8"))
 
 
 # ----------------------------------------------------------------------
@@ -358,7 +367,7 @@ def _flatten_answers(doc):
     a list of raw ACVP response documents -- so a vendor whose harness already
     emits ACVP responses does not have to reshape anything.
     """
-    answers, meta = {}, {}
+    answers, meta, dups = {}, {}, []
     param_set = prompt_id = None
 
     def _take_raw(d):
@@ -386,7 +395,14 @@ def _flatten_answers(doc):
                     continue
                 tc = t.get("tcId")
                 if isinstance(tc, int) and not isinstance(tc, bool):
-                    bucket[tc] = t
+                    # A second answer to the same question used to replace the
+                    # first, so "wrong, then right" verified. Two answers make
+                    # the response ambiguous whatever they say: keep the first
+                    # and record the duplicate, which blocks VERIFIED.
+                    if tc in bucket:
+                        dups.append(f"{suite} tcId {tc}")
+                    else:
+                        bucket[tc] = t
 
     if isinstance(doc, list):
         for d in doc:
@@ -413,6 +429,7 @@ def _flatten_answers(doc):
             s = _take_raw(doc)
             if s:
                 _absorb(s, doc["testGroups"])
+    meta["duplicates"] = dups
     return param_set, prompt_id, answers, meta
 
 
@@ -499,7 +516,7 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         "prompt_binding": "absent",
         "vector_source": _source_label(local),
         "questions": 0, "answered": 0, "unanswered": 0,
-        "passed": 0, "total": 0, "malformed": 0,
+        "passed": 0, "total": 0, "malformed": 0, "duplicates": [],
         "unknown": [], "detail": {}, "findings": [],
         "implementation": None,
         "artifact": {"bound": False, "sha256": None,
@@ -525,12 +542,15 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         # not on 3.9. RecursionError is a RuntimeError, so it slipped past the
         # ValueError handler and tracebacked out of the CLI on the older one.
         return _stop("response file is nested too deeply to parse safely")
-    except (ValueError, OSError, gzip.BadGzipFile) as exc:
+    except (ValueError, OSError, EOFError, zlib.error) as exc:
+        # EOFError: a truncated .json.gz, which used to traceback out of the
+        # CLI. BadGzipFile is an OSError; UnicodeDecodeError a ValueError.
         return _stop(f"response file is not readable JSON ({exc})")
 
     ps, claimed_id, answers, meta = _flatten_answers(doc)
     res["response_prompt_id"] = claimed_id
     res["implementation"] = meta.get("implementation")
+    res["duplicates"] = meta.get("duplicates", [])
     res["artifact"] = _artifact_field(meta)
     if not answers:
         return _stop("no answers found — expected a 'suites' list, or an ACVP "
@@ -647,8 +667,16 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
             f"that are not in this prompt ({', '.join(shown)}"
             f"{', …' if len(res['unknown']) > len(shown) else ''})")
 
+    if res["duplicates"]:
+        shown = res["duplicates"][:_MAX_LISTED]
+        res["findings"].append(
+            f"response: {len(res['duplicates'])} question(s) answered more than "
+            f"once ({', '.join(shown)}"
+            f"{', …' if len(res['duplicates']) > len(shown) else ''}) — two "
+            f"answers to one question make the response ambiguous")
+
     failed = res["answered"] - res["passed"]
-    if failed:
+    if failed or res["duplicates"]:
         res["status"] = "FINDINGS PRESENT"
     elif res["unanswered"] or res["unknown"]:
         res["status"] = "INCOMPLETE"

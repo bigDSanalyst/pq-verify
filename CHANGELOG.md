@@ -3,6 +3,44 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A response answering one question twice could verify.** A second answer
+  to the same tcId replaced the first, so a response carrying a wrong answer
+  followed by the right one reported VERIFIED. Any question answered more
+  than once is now a finding, whatever the answers say.
+- **A truncated `.json.gz` response crashed the CLI** with `EOFError` instead
+  of reporting CANNOT VERIFY.
+- **Readers bound their input.** A response larger than 64 MiB (measured
+  after decompression, so a gzip bomb cannot expand in memory) or a hybrid
+  transcript larger than 1 MiB is CANNOT VERIFY, and at most one byte past
+  the limit is read. The largest genuine documents are about 3.3 MB and 8 KB.
+
+### Changed
+
+- **`--verify-hybrid` recomputes the ML-KEM half, or does not say VERIFIED.**
+  Nothing tied the ciphertext in the server share to the ML-KEM secret in the
+  combined secret, so a transcript with a corrupted ciphertext was reported
+  VERIFIED. A transcript may now carry the client's ephemeral ML-KEM
+  decapsulation key (`clientMlkemDecapsulationKey`, optional, like the ECDHE
+  private scalars): pq-verify checks it against the client share and FIPS 203
+  §7.3, decapsulates the ciphertext and compares the result byte-for-byte.
+  Without the key that check is NOT CHECKED and the result is **PARTIAL**, so
+  transcripts that verified before without it now report PARTIAL.
+
+### Added
+
+- **`tests/fuzz_readers.py`** — a structure-aware fuzzer for the readers that
+  take files from outside parties. It mutates genuine responses and
+  transcripts ~25 ways (type confusion, truncation, deep nesting, oversized
+  and gzipped input, flipped hex digits, duplicate entries) and requires, for
+  every case, no exception, an honest status, prompt termination, a CLI exit
+  of 0/1/2, and no VERIFIED for a document that differs from a genuine one.
+  It found all three bugs above and the hybrid gap. A seeded slice runs in
+  the test suite.
+
 ## [2.8.2] — 2026-09-29
 
 ### Fixed
