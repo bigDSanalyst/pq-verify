@@ -5,6 +5,25 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`tools/doctor.py` — the checks a NIST re-pin must pass.** In the style
+  of the syndicate-genesis and Dharmapala doctors: statuses ok / DECIDE /
+  WARN / BLOCK, each finding with a `next:` command, `--json` for agents, and
+  a token hashing what was examined and found. Offline it checks that the
+  pinned bundle is sound: manifest coverage, NIST commit per file, watcher
+  coverage, and FIPS 203 length of every key-check key. With `--candidate`
+  it fetches NIST's changed files and runs, side by side with the pinned
+  bundle: the same length checks, a negative control (a length-only checker
+  must be fooled by every invalid key), every ACVP suite, a 14-day stability
+  rule and provenance. `--apply` re-pins deterministically (byte-identical to
+  the 2.8.1 re-pin done by hand) and is refused while the candidate BLOCKs.
+  Replayed on history, it BLOCKs the vectors 2.8.0 shipped, which the ACVP
+  suite scored 240/240.
+- **`REPINNING.md`** — the procedure from watcher alert to release. The
+  watcher's issue now names the doctor commands, and CI runs the doctor
+  offline on every change.
+
 ### Fixed
 
 - **`--vector-dir` was ignored for every bundled file.** The loader consulted

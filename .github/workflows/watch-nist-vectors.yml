@@ -66,12 +66,12 @@ jobs:
             **This does not change the shipped frozen vectors.** pq-verify stays
             deterministic. Action for the maintainer:
 
-            1. Wait until the fingerprint is **stable across several weekly runs**
-               (NIST has edited these files repeatedly; do not pin a transient state).
-            2. When settled, re-capture the pinned snapshot into \`pq_verify/vectors\`.
-            3. Re-verify **offline** (\`pqverify_acvp_all()\` with network blocked) and
-               confirm the expected counts.
-            4. Cut a new patch release with the updated pinned vectors + count.`;
+            1. Run the doctor against NIST's current files. It writes nothing:
+               \`python3 tools/doctor.py --candidate\`
+            2. Read its verdict. Any BLOCK means do not pin; DECIDE on
+               \`stable\` means wait (NIST has reverted these files within a day).
+            3. When it is all ok: \`python3 tools/doctor.py --candidate --apply\`
+            4. Record the revisions and release, as in REPINNING.md.`;
             // A stale bundle re-reports every week until it is re-pinned;
             // keep that to one open issue with a comment per run.
             const title = "NIST ACVP vectors changed upstream — review before re-pinning";
