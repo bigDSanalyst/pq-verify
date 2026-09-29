@@ -402,8 +402,13 @@ What gets checked, from one handshake's wire bytes:
   `encapsulationKeyCheck` cases, so it agrees with NIST rather than with itself
 - the ECDHE share as an uncompressed point on the curve (RFC 9846 §4.3.8.2)
 - the X25519 all-zero shared-secret check, which the RFC also makes a MUST
-- and, when you supply an ephemeral private scalar, the ECDHE shared secret
+- when you supply an ephemeral private scalar, the ECDHE shared secret
   **recomputed** and compared byte-for-byte at the offset the group pins
+- and, when you supply the client's ephemeral ML-KEM decapsulation key, the
+  ciphertext in the server share **decapsulated** and the result compared
+  byte-for-byte with the ML-KEM half of the combined secret. Without the key,
+  nothing ties the ciphertext to the secret, so that check is `NOT CHECKED`
+  and the result is `PARTIAL`, never `VERIFIED`
 
 When a check fails, pq-verify tests the other order explicitly:
 
@@ -420,8 +425,8 @@ heuristic: random bytes pass the FIPS 203 §7.2 check with probability below
 2⁻¹⁴⁰, so "a valid encapsulation key is sitting at the other offset" is not a
 coincidence.
 
-No private KEM key is ever requested. A field you cannot supply is reported as
-`NOT CHECKED` and stays out of the ratio; a check that does not exist for a
+Private keys are optional and should be ephemeral test keys, never production
+ones. A field you cannot supply is reported as `NOT CHECKED` and stays out of the ratio; a check that does not exist for a
 group — X25519 has no structural share check, and inventing one would report a
 check that did not happen — is reported as `N/A` and does not hold the verdict
 at `PARTIAL`.

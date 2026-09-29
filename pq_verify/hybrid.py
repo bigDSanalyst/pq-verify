@@ -58,7 +58,8 @@ import hashlib
 import json
 import os
 
-from .core import DEGRADED, VERSION
+from .core import DEGRADED, VERSION, check_decapsulation_key
+from .core import _KEM_SIZES as _CORE_KEM_SIZES          # (ek, dk, ct, ss)
 
 PROMPT_SCHEMA = "pq-verify/hybrid-prompt"
 TRANSCRIPT_SCHEMA = "pq-verify/hybrid-transcript"
@@ -498,9 +499,14 @@ _HOW_TO_RESPOND = [
     "recompute the ECDHE shared secret and compare it byte-for-byte at the "
     "offset this group pins; without one, only structure and length are "
     "checked. Use ephemeral test keys, never production keys.",
-    "pq-verify does not need, and will not read, the ML-KEM decapsulation "
-    "key. Supply mlkemSharedSecret only if you want the ML-KEM half of the "
-    "combined secret checked for placement.",
+    "The client's ML-KEM decapsulation key is optional in the same way. "
+    "Supplying it lets pq-verify decapsulate the ciphertext in serverShare "
+    "and compare the result byte-for-byte with the ML-KEM half of "
+    "sharedSecret; without it that check is NOT CHECKED and the result is "
+    "PARTIAL, because nothing else ties the ciphertext to the secret. Use an "
+    "ephemeral test key, never a production key.",
+    "Supply mlkemSharedSecret if you want the ML-KEM half of the combined "
+    "secret checked for placement.",
     "Send the completed file back and run: pq-verify --verify-hybrid FILE",
 ]
 
@@ -540,6 +546,13 @@ def _field_docs(group):
             "bytes": part_size(group, "ecdh_priv"),
             "note": f"{ec} private scalar used for the server share (optional)",
         },
+        "clientMlkemDecapsulationKey": {
+            "required": False,
+            "bytes": _CORE_KEM_SIZES[kem][1],
+            "note": f"{kem} decapsulation key for the client share (optional, "
+                    f"a test key): lets the ciphertext be decapsulated and the "
+                    f"ML-KEM half recomputed; without it the result is PARTIAL",
+        },
         "mlkemSharedSecret": {
             "required": False,
             "bytes": part_size(group, "kem_ss"),
@@ -575,6 +588,7 @@ def build_hybrid_prompt(group):
             "sharedSecret": "",
             "clientEcdhPrivate": "",
             "serverEcdhPrivate": "",
+            "clientMlkemDecapsulationKey": "",
             "mlkemSharedSecret": "",
             "implementation": "",
         },
@@ -723,6 +737,9 @@ def _other_slice(group, field, blob, part):
     return None
 
 
+MAX_TRANSCRIPT_BYTES = 1 << 20      # 1 MiB; the largest genuine transcript is ~8 KB
+
+
 def verify_hybrid(transcript_path, verbose=True):
     """Check a hybrid transcript against RFC 10024's pinned composition."""
     res = {
@@ -744,9 +761,14 @@ def verify_hybrid(transcript_path, verbose=True):
     # ---- read ------------------------------------------------------------
     try:
         with open(transcript_path, "rb") as fh:
-            raw = fh.read()
+            # A genuine transcript is a few KB. Read at most one byte past the
+            # limit, so an oversized file costs neither time nor memory.
+            raw = fh.read(MAX_TRANSCRIPT_BYTES + 1)
     except OSError as exc:
         return _stop(f"transcript unreadable ({exc})")
+    if len(raw) > MAX_TRANSCRIPT_BYTES:
+        return _stop(f"transcript is larger than {MAX_TRANSCRIPT_BYTES} bytes; "
+                     f"a genuine one is a few KB")
     res["transcript_sha256"] = hashlib.sha256(raw).hexdigest()
     try:
         doc = json.loads(raw.decode("utf-8"))
@@ -973,6 +995,69 @@ def verify_hybrid(transcript_path, verbose=True):
                 r.fail(name, (
                     f"the supplied {kem_name} secret does not appear at the "
                     f"offset {RFC} pins"))
+
+    # ---- ML-KEM half recomputed (opt-in test decapsulation key) ----------
+    # Without the client's decapsulation key nothing ties the ciphertext in
+    # serverShare to the ML-KEM secret in sharedSecret: a corrupted ciphertext
+    # passed every check above and was reported VERIFIED (found by
+    # tests/fuzz_readers.py). With the key, the ML-KEM half is recomputed the
+    # way the ECDHE half is from its private scalars; without it, the check is
+    # NOT CHECKED and the result is PARTIAL, never VERIFIED.
+    name = f"{kem_name} ciphertext decapsulates to the recorded secret"
+    dk = _hex(doc.get("clientMlkemDecapsulationKey"))
+    k = {"ML-KEM-512": 2, "ML-KEM-768": 3, "ML-KEM-1024": 4}[kem_name]
+    dk_n = _CORE_KEM_SIZES[kem_name][1]
+    if dk is None:
+        r.skip(name, "clientMlkemDecapsulationKey not supplied — without it "
+                     "the ciphertext cannot be decapsulated, so the ML-KEM "
+                     "half is checked for structure and placement only")
+    elif len(dk) != dk_n:
+        r.fail(name, f"clientMlkemDecapsulationKey is {len(dk)} bytes, "
+                     f"{kem_name} uses {dk_n}")
+    elif not check_decapsulation_key(dk, kem_name):
+        r.fail(name, "clientMlkemDecapsulationKey fails the FIPS 203 §7.3 "
+                     "check (its embedded H(ek) or ek is inconsistent)")
+    elif "client_share" in blobs and dk[384 * k:768 * k + 32] != _slice(
+            group, "client_share", blobs["client_share"], "kem_ek"):
+        r.fail(name, "clientMlkemDecapsulationKey does not belong to the "
+                     "encapsulation key in clientShare")
+    elif "server_share" not in blobs:
+        r.skip(name, "serverShare not supplied, so there is no ciphertext")
+    else:
+        want = {}
+        if "shared_secret" in blobs:
+            want["sharedSecret"] = _slice(group, "shared_secret",
+                                          blobs["shared_secret"], "kem_ss")
+        kss_given = _hex(doc.get("mlkemSharedSecret"))
+        if kss_given is not None:
+            want["mlkemSharedSecret"] = kss_given
+        try:
+            import kyber_py.ml_kem as _mk
+            kem = {"ML-KEM-512": _mk.ML_KEM_512, "ML-KEM-768": _mk.ML_KEM_768,
+                   "ML-KEM-1024": _mk.ML_KEM_1024}[kem_name]
+        except ImportError:
+            kem = None
+        ct = _slice(group, "server_share", blobs["server_share"], "kem_ct")
+        if not want:
+            r.skip(name, "neither sharedSecret nor mlkemSharedSecret supplied, "
+                         "so there is nothing to compare the secret with")
+        elif kem is None:
+            DEGRADED["deps"].append("kyber-py")
+            r.skip(name, "kyber-py not installed — pip install "
+                         "\"pq-verify[full]\"")
+        else:
+            got = kem.decaps(dk, ct)
+            bad = [f for f, v in want.items() if v != got]
+            if not bad:
+                r.ok(name, "decapsulating serverShare's ciphertext with the "
+                           "supplied key gives exactly the recorded secret"
+                           + (" in " + " and ".join(want)))
+            else:
+                r.fail(name, (
+                    f"decapsulating serverShare's ciphertext gives a "
+                    f"different {kem_name} secret than {' and '.join(bad)} "
+                    f"records — the ciphertext, the key and the secret do not "
+                    f"belong to the same exchange"))
 
     # ---- verdict ---------------------------------------------------------
     p, t = r.tally()
