@@ -46,7 +46,10 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 - **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
 - **Non-circular KAT** 100/100 against the independent FIPS reference
 - Calibrated lattice estimator: reproduces lattice-estimator exactly (Kyber-512 β=406/118.6 bits)
-- **Coq certificates** verified by `coqc` with real exit codes
+- **Coq certificates**: Coq recomputes the full ML-KEM forward NTT (896
+  butterflies, all 256 outputs) from its own FIPS 203 definitions and proves
+  both FIPS zeta tables; each theorem must print `Closed under the global
+  context` (no axioms, no `Admitted`), not just exit 0
 
 ---
 

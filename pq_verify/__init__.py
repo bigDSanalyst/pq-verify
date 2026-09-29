@@ -6,7 +6,8 @@ FIPS 203/204 standard correctly: native field-native NTT verification,
 non-circular Known Answer Tests, NIST ACVP end-to-end (855/855), a
 Bai-Galbraith lattice parameter-security estimator, RFC 10024 hybrid
 key-agreement composition, and per-layer algebraic protection allocation.
-Coq-certified, reproducible.
+The full ML-KEM NTT and both FIPS zeta tables are re-derived and checked in
+Coq, axiom-free. Reproducible.
 
 Author: Nicholas Maino (iamweare) — Melbourne AU
 License: MIT
