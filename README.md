@@ -1,4 +1,4 @@
-# pq-verify v2.8.1 — PQC Implementation Verification
+# pq-verify v2.8.2 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -306,7 +306,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.8.1-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.8.2-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
@@ -477,8 +477,8 @@ pq_verify/
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 pyproject.toml             Build config + console-script entry point
 dist/
-  pq_verify-2.8.1-py3-none-any.whl    Installable wheel
-  pq_verify-2.8.1.tar.gz              Source distribution
+  pq_verify-2.8.2-py3-none-any.whl    Installable wheel
+  pq_verify-2.8.2.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 855/855
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
