@@ -1591,13 +1591,34 @@ def test_ek_check_rejects_a_wrong_length():
 
 # ---- end to end -------------------------------------------------------
 
+def _kyber_available():
+    try:
+        import kyber_py.ml_kem  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _assert_only_mlkem_unchecked(res):
+    """Without kyber-py the ML-KEM half cannot be decapsulated: that one check
+    is NOT CHECKED, the result PARTIAL -- and nothing else may be missing."""
+    unchecked = [c for c in res["checks"] if c.get("kind") == "no_input"]
+    assert [c["name"] for c in unchecked] == [
+        c["name"] for c in res["checks"] if "decapsulates to" in c["name"]]
+    assert "kyber-py not installed" in unchecked[0]["detail"]
+    assert res["status"] == "PARTIAL" and res["verified"] is False
+
+
 @pytest.mark.parametrize("group", sorted(GROUPS))
 def test_a_conforming_transcript_verifies(group, kem_vectors, tmp_path):
     path = _write_transcript(tmp_path, "t.json", _transcript(group, kem_vectors))
     res = verify_hybrid(path, verbose=False)
+    assert res["passed"] == res["total"] > 0
+    if not _kyber_available():
+        _assert_only_mlkem_unchecked(res)
+        return
     assert res["status"] == "VERIFIED", res["findings"]
     assert res["verified"] is True
-    assert res["passed"] == res["total"] > 0
     assert res["skipped"] == 0
     assert not res["findings"]
 
@@ -1672,6 +1693,9 @@ def test_not_applicable_is_not_the_same_as_not_checked(kem_vectors, tmp_path):
         _write_transcript(tmp_path, "t.json", _transcript("X25519MLKEM768", kem_vectors)),
         verbose=False)
     assert res["not_applicable"] == 2
+    if not _kyber_available():
+        _assert_only_mlkem_unchecked(res)       # N/A still does not hold it back
+        return
     assert res["skipped"] == 0
     assert res["status"] == "VERIFIED"
 
@@ -1821,6 +1845,9 @@ def test_sarif_carries_the_side_channel_scope():
 # ---- CLI --------------------------------------------------------------
 
 def test_cli_verify_hybrid_gate(kem_vectors, tmp_path):
+    # A VERIFIED transcript needs the ML-KEM half recomputed, which needs
+    # kyber-py; without it the PARTIAL path is covered above.
+    pytest.importorskip("kyber_py")
     from pq_verify.cli import main as cli_main
     good = _write_transcript(tmp_path, "good.json",
                   _transcript("X25519MLKEM768", kem_vectors))
