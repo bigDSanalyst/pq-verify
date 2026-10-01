@@ -60,6 +60,30 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **General proofs, `pq-verify --proofs`.** `pq_verify/coq/` now holds
+  theorems that quantify over every input, checked by coqc with every theorem
+  required to be closed (no axioms, no `Admitted`):
+  - `NTT.v`: the FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) forward NTT equal
+    the Chinese-remainder map they are defined to compute, for every
+    256-coefficient input. The transform is written once, generic over its
+    arithmetic; a map that preserves the arithmetic commutes with it, so
+    running it once on symbolic linear forms gives its matrix, which Coq
+    checks entry by entry against the CRT matrix.
+  - `Reduce.v`: `montgomery_reduce` (ML-KEM, ML-DSA), `barrett_reduce`
+    (ML-KEM, all 65,536 int16 inputs) and `reduce32` (ML-DSA) are congruent
+    to their input and within bound for every input in range, with no
+    intermediate overflow.
+  - Per-run NTT certificates now emit `NTT.v`'s transform verbatim, so they
+    are about the proved definition.
+- **Finding: two documented bounds in pq-crystals/dilithium `ref/reduce.c`
+  are off by one.** `montgomery_reduce` documents `-Q < r < Q` for
+  `-2^31 Q <= a <= Q 2^31`, but `a = Q 2^31` returns `Q`; `reduce32`
+  documents `r >= -6283008`, but `a = -255·2^23 - 2^22` returns `-6283009`.
+  The code is right and no ML-DSA input comes near either point; the comments
+  overstate it. The proofs state the true bounds, and both witnesses are
+  checked theorems. (ML-KEM's comment excludes its corresponding point and is
+  exact.)
+
 - **Wycheproof and CCTV edge-case vectors, pinned.** 24 files from C2SP
   Wycheproof (`3fa63dd`) and CCTV (`50a8ecf`) ship in
   `pq_verify/vectors/edge_vectors.json.gz`, each with its upstream sha256 in

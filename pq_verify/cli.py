@@ -51,6 +51,9 @@ def build_parser():
                    help="pinned Wycheproof/CCTV edge-case vectors against pq-verify's "
                         "own references (kyber-py, dilithium-py); SET limits it to "
                         "one parameter set, e.g. ML-DSA-65")
+    p.add_argument("--proofs", action="store_true",
+                   help="check the shipped Coq proofs (pq_verify/coq): reductions "
+                        "and the NTT, proved for every input; needs coqc, ~2 min")
     p.add_argument("--live", action="store_true",
                    help="fetch NIST's CURRENT vectors instead of the pinned "
                         "bundle (needs network; results may change between runs)")
@@ -131,6 +134,13 @@ def main(argv=None):
         acvp_results["ML-DSA (FIPS 204)"] = _all.get("ml_dsa")
         if _all.get("slh_dsa"):
             acvp_results["SLH-DSA (FIPS 205)"] = _all["slh_dsa"]
+        ran_task = True
+    proofs_result = None
+    if getattr(args, "proofs", False):
+        from .proofs import pqverify_proofs
+        print("\n  PROOFS (pq_verify/coq): every theorem must be closed -- no axioms, "
+              "no Admitted")
+        proofs_result = pqverify_proofs()
         ran_task = True
     edge_result = None
     if getattr(args, "edge_cases", None):
@@ -327,6 +337,19 @@ def main(argv=None):
         # PARTIAL and CANNOT VERIFY are both "did not verify".
         if args.fail_on_finding and not hybrid_result["verified"]:
             print(f"  FAILING: hybrid {hybrid_result['status']}")
+            exit_code = 1
+
+    if proofs_result is not None:
+        doc = {"schema": "pq-verify/proofs-report", "tool_version": VERSION,
+               "status": proofs_result["status"], "verified": proofs_result["verified"],
+               "summary": {"checks_passed": proofs_result["passed"],
+                           "checks_total": proofs_result["total"]},
+               "files": proofs_result["files"],
+               "artifact": {"summary": "pq-verify's shipped Coq proofs"}}
+        if json_doc is None:
+            json_doc, reported = doc, "--proofs"
+        if args.fail_on_finding and not proofs_result["verified"]:
+            print(f"  FAILING: proofs {proofs_result['status']}")
             exit_code = 1
 
     if edge_result is not None:

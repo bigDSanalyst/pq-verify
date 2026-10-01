@@ -20,3 +20,5 @@ dist/
 .coverage.*
 htmlcov/
 .pytest_cache/
+.lia.cache
+!pq_verify/coq/*.v
