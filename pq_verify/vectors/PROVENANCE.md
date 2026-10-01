@@ -35,3 +35,22 @@ Superseded pins (pq-verify ≤ 2.8.0):
   fixed this in `ad33b3d`.
 - ML-DSA-sigVer-FIPS204 `2972def`: NIST corrected the ModifyZ disposition in
   `a7f283c`.
+
+
+## Edge-case vectors (Wycheproof, CCTV)
+
+`edge_vectors.json.gz` holds C2SP edge-case vectors verbatim, one entry per
+upstream file, and `EDGE_MANIFEST.json` records for each the source
+repository, the pinned commit and the sha256 of the upstream text.
+`tools/pin_edge_vectors.py` re-fetches them from those commits and writes the
+bundle deterministically; `--check` (and `tools/doctor.py`) re-verify every
+digest offline.
+
+| Source | Commit | Files |
+|---|---|---|
+| [C2SP/wycheproof](https://github.com/C2SP/wycheproof) | `3fa63dd` (2026-09-02) | `mlkem_{512,768,1024}_{test,encaps_test,semi_expanded_decaps_test}.json`, `mldsa_{44,65,87}_{verify,sign_seed}_test.json` |
+| [C2SP/CCTV](https://github.com/C2SP/CCTV) | `50a8ecf` (2026-09-25) | `ML-KEM/{strcmp,unluckysample,modulus}/ML-KEM-{512,768,1024}` |
+
+CCTV's `unluckysample` keys were derived with FIPS 203 ipd's `G(d)` rather
+than the final `G(d || k)`, so pq-verify checks those vectors' Encaps and
+Decaps but not their KeyGen output.

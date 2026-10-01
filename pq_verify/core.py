@@ -5918,7 +5918,7 @@ def _resolve_kem_symbols(exported, param_set, explicit=None):
 
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
                        decaps=None, prompt_dir=None, vector_dir=None, live=False,
-                       verbose=True):
+                       verbose=True, edge=True):
     """Audit a THIRD-PARTY ML-KEM implementation end to end against NIST's vectors.
 
     This is the scheme-level counterpart to pqverify_scan (which audits the NTT
@@ -5936,6 +5936,13 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         ekCheck: NIST's invalid ek (coefficient >= q) must be refused and
                  its valid ek accepted, by encaps (FIPS 203 §7.2)
         dkCheck: the same for decaps and a corrupted H(ek) (FIPS 203 §7.3)
+    and, unless edge=False, the pinned Wycheproof/CCTV edge cases
+    (pq_verify/edge.py):
+        edgeValid: strcmp, unlucky-sampling, malleated-ciphertext and other
+                   valid vectors must match byte-for-byte
+        edgeEk   : every coefficient value q..4095 at every position of an
+                   ek (CCTV modulus) must be refused
+        edgeDk   : a dk with a corrupted H(ek) or embedded ek must be refused
     Refusal means a nonzero return, the PQClean / mlkem-native / liboqs
     convention.
 
@@ -6085,6 +6092,15 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 elif not accepted and t['testPassed']:
                     m['rejected_valid'] += 1
 
+    edge_res = None
+    if edge:
+        from .edge import VendorKEM, run_kem, sources as _edge_sources
+        edge_res = run_kem(VendorKEM(f_kp, f_en, f_de, (ek_n, dk_n, ct_n),
+                                     name=_o.path.basename(so_path)), param_set)
+        edge_res['vectors'] = _edge_sources()
+        for stage, (p, t) in edge_res['stages'].items():
+            tally[stage] = (p, t)
+
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     if verbose:
@@ -6107,6 +6123,22 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                     print(f"        check, so every caller must")
                 if m['rejected_valid']:
                     print(f"        rejected {m['rejected_valid']} valid key(s)")
+        if edge_res is not None:
+            what = {'edgeValid': 'edge-case vectors reproduced byte-for-byte',
+                    'edgeEk': 'invalid encapsulation keys refused (every q..4095, every position)',
+                    'edgeDk': 'invalid decapsulation keys refused'}
+            print(f"  edge cases: {edge_res['vectors']}")
+            for stage in ('edgeValid', 'edgeEk', 'edgeDk'):
+                if stage in edge_res['stages']:
+                    p, t = edge_res['stages'][stage]
+                    print(f"  {'PASS' if p == t else 'FAIL'}  {stage:9s} {p}/{t}  {what[stage]}")
+            for f in edge_res['failures'][:3]:
+                print(f"        \u2717 {f['case']} {f['flags']}: {f['detail']}")
+            if len(edge_res['failures']) > 3:
+                print(f"        ... and more; see the JSON report")
+            if edge_res['not_applicable']:
+                print(f"        {edge_res['not_applicable']} wrong-length vectors not applicable: "
+                      f"a C entry point takes fixed-size buffers")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
@@ -6116,7 +6148,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
-            'keycheck': keycheck,
+            'keycheck': keycheck, 'edge': edge_res,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 

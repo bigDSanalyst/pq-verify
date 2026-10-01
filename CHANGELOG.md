@@ -60,6 +60,33 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Wycheproof and CCTV edge-case vectors, pinned.** 24 files from C2SP
+  Wycheproof (`3fa63dd`) and CCTV (`50a8ecf`) ship in
+  `pq_verify/vectors/edge_vectors.json.gz`, each with its upstream sha256 in
+  `EDGE_MANIFEST.json`; `tools/pin_edge_vectors.py` re-pins them
+  deterministically. They cover what NIST's ACVP vectors mostly do not:
+  `strcmp`-trap ciphertexts, unlucky XOF sampling, every coefficient value
+  q…4095 at every position of an encapsulation key, corrupted decapsulation
+  keys, malleated ciphertexts, and ML-DSA hint, norm-bound and context edges.
+  - `--audit-kem` runs them against the vendor library as three new stages,
+    `edgeValid`, `edgeEk`, `edgeDk` (`edge=False` to skip). The pinned vendor
+    table records them: mlkem-native 4,320/4,320; PQClean accepts all 2,931
+    invalid encapsulation keys and all 6 invalid decapsulation keys while
+    every valid output is byte-exact.
+  - `pq-verify --edge-cases [SET]` runs them against pq-verify's own
+    references (kyber-py, dilithium-py), with `--json` and `--fail-on-finding`.
+  - The doctor checks the bundle's digests offline and runs the vectors
+    against the installed references (`--fast` skips that run): a failure not
+    in `KNOWN_REFERENCE_DEFECTS` BLOCKs.
+- **Finding: dilithium-py 1.4.0 accepts a repeated hint index.** FIPS 204
+  Algorithm 21 (HintBitUnpack) requires strictly increasing indices;
+  dilithium-py compares with `<` instead of `<=`, so Wycheproof's "repeated
+  hint" signature verifies for ML-DSA-44/65/87. It is fixed upstream
+  (GiacomoPope/dilithium-py `bd9b552`) but in no release. pq-verify grades
+  third-party signatures against NIST's expected results, not dilithium-py's
+  verdict, so no third-party result changes; `--edge-cases` reports the
+  reference as FINDINGS PRESENT until a fixed release can be pinned.
+
 - **`tests/fuzz_readers.py`** — a structure-aware fuzzer for the readers that
   take files from outside parties. It mutates genuine responses and
   transcripts ~25 ways (type confusion, truncation, deep nesting, oversized

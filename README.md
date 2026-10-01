@@ -64,6 +64,14 @@ That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
 and nothing else. No notebook, no network, no service. The NIST vectors ship
 inside the package, so air-gapped environments work out of the box.
 
+Edge cases, offline: C2SP's [Wycheproof](https://github.com/C2SP/wycheproof)
+and [CCTV](https://github.com/C2SP/CCTV) vectors (`strcmp` traps, unlucky
+sampling, every out-of-range ek coefficient, malformed ML-DSA hints) are pinned
+to exact commits and run by `--audit-kem` against a vendor library, and by
+`pq-verify --edge-cases` against pq-verify's own references. The latter
+currently reports one finding, a known defect in the pinned dilithium-py
+1.4.0 (a repeated hint index is accepted; fixed upstream, not yet released).
+
 To audit a compiled library:
 
 ```bash
@@ -191,8 +199,8 @@ per-check output are in [AUDITS.md](AUDITS.md).
 |---|---|---|
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
-| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys | 80/80 each |
-| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys | 60/60 byte-exact; accepts all 10 invalid keys → 70/80 |
+| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 80/80 each; edge cases 4,320/4,320 |
+| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 10 NIST and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 

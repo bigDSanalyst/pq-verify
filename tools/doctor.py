@@ -54,7 +54,8 @@ sys.path.insert(0, str(REPO / "tools"))
 import check_vectors as W                                     # noqa: E402
 
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
-PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream")
+PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
+               "edge:manifest", "references:edge")
 STABLE_DAYS = 14          # NIST has reverted files within a day; wait this long
 REFERENCES = ("kyber-py", "dilithium-py", "slh-dsa")
 SUITES = {                # the runner for each vector directory prefix
@@ -225,6 +226,72 @@ def check_references(repo=REPO):
                  "; ".join(why) + (f". Present: {vers}" if vers else ""),
                  "pip install -c constraints-reference.txt "
                  + " ".join(REFERENCES)), have
+
+
+def check_edge_manifest(repo=REPO):
+    """The Wycheproof/CCTV bundle matches EDGE_MANIFEST.json, offline."""
+    import pin_edge_vectors as E
+    v = Path(repo) / "pq_verify" / "vectors"
+    bundle, manifest = v / "edge_vectors.json.gz", v / "EDGE_MANIFEST.json"
+    if not bundle.exists() or not manifest.exists():
+        return Check("edge:manifest", BLOCK, "the edge-case bundle or its manifest is missing",
+                     fix="python3 tools/pin_edge_vectors.py")
+    problems = E.verify(bundle, manifest)
+    if problems:
+        return Check("edge:manifest", BLOCK,
+                     f"{len(problems)} edge-case file(s) do not match EDGE_MANIFEST.json",
+                     "\n".join(problems[:10]), "python3 tools/pin_edge_vectors.py")
+    m = json.loads(manifest.read_text())
+    src = ", ".join(f"{k} {s['commit'][:7]}" for k, s in sorted(m["sources"].items()))
+    return Check("edge:manifest", OK, f"edge-case vectors: {len(m['files'])} files match "
+                 f"EDGE_MANIFEST.json ({src})")
+
+
+def check_reference_edges():
+    """Run the edge-case vectors against the installed references and hold
+    the result to KNOWN_REFERENCE_DEFECTS: a new disagreement BLOCKs, a known
+    one WARNs until a release fixes it, a fixed one asks to be removed."""
+    from pq_verify import edge as EG
+    r = EG.reference_run()
+    if r is None:
+        return Check("references:edge", WARN, "edge-case vectors not run: no reference "
+                     "implementation installed", fix='pip install "pq-verify[full]"')
+    unknown, known = [], {}
+    for ps, res in r["sets"].items():
+        for f in res["failures"]:
+            if f.get("known_defect"):
+                known.setdefault(res["reference"], []).append(f"{ps} {f['case']}")
+            else:
+                unknown.append(f"{ps} [{res['reference']}] {f['stage']}: {f['case']} "
+                               f"{f['flags']} -- {f['detail']}")
+    stale = [f"{n} {v}" for (n, v) in EG.KNOWN_REFERENCE_DEFECTS
+             if EG._reference_version(n) == v and n not in known
+             and any(res["reference"] == n for res in r["sets"].values())]
+    if unknown:
+        return Check("references:edge", BLOCK,
+                     f"a reference disagrees with Wycheproof/CCTV on {len(unknown)} "
+                     f"case(s) not in KNOWN_REFERENCE_DEFECTS",
+                     "\n".join(unknown[:10]),
+                     "pq-verify --edge-cases; if the vector is right the reference is "
+                     "wrong: record it in pq_verify/edge.py KNOWN_REFERENCE_DEFECTS "
+                     "with the upstream fix")
+    if stale:
+        return Check("references:edge", WARN,
+                     f"known defect no longer reproduces: {', '.join(stale)}",
+                     fix="remove the entry from pq_verify/edge.py KNOWN_REFERENCE_DEFECTS")
+    if known:
+        lines = []
+        for name, cases in known.items():
+            d = EG.KNOWN_REFERENCE_DEFECTS[(name, EG._reference_version(name))]
+            lines.append(f"{name} {EG._reference_version(name)}: {d['summary']} "
+                         f"({len(cases)} vector(s)); {d['upstream']}")
+        return Check("references:edge", WARN,
+                     f"edge cases {r['passed']}/{r['total']}: only known reference "
+                     f"defects fail", "\n".join(lines),
+                     "when a release contains the upstream fix, bump "
+                     "constraints-reference.txt and drop the KNOWN_REFERENCE_DEFECTS entry")
+    return Check("references:edge", OK, f"edge cases {r['passed']}/{r['total']} against "
+                 f"the installed references ({r['vectors']})")
 
 
 def check_upstream_state(manifest, baseline, history):
@@ -494,7 +561,8 @@ def token(manifest, changed, checks):
     return h.hexdigest()[:16]
 
 
-def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides=None):
+def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides=None,
+        skip_edge=False):
     P = paths(repo)
     bundle = load_bundle(P["bundle"])
     manifest = load_json(P["manifest"], {})
@@ -505,6 +573,9 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
               check_keycheck(bundle, "pinned")]
     ref_check, refs = check_references(repo)
     checks.append(ref_check)
+    checks.append(check_edge_manifest(repo))
+    if not skip_edge:
+        checks.append(check_reference_edges())
     up, moved = check_upstream_state(manifest, baseline, history)
     checks.append(up)
     changed, commits = {}, None
@@ -608,13 +679,16 @@ def main(argv=None):
                          "unknown" % STABLE_DAYS)
     ap.add_argument("--commit", action="append", default=[], metavar="FILE=SHA",
                     help="NIST commit for a changed file, when the API is unreachable")
+    ap.add_argument("--fast", action="store_true",
+                    help="skip running the edge-case vectors against the references "
+                         "(about 45 s); the edge bundle's digests are still checked")
     ap.add_argument("--json", action="store_true",
                     help="machine-readable; what an agent should read")
     a = ap.parse_args(argv)
     overrides = dict(x.split("=", 1) for x in a.commit)
     try:
         checks, changed, tok = run(a.repo, a.candidate, a.candidate_dir, a.apply,
-                                   overrides)
+                                   overrides, skip_edge=a.fast)
     except Exception as e:
         print(f"doctor could not run: {type(e).__name__}: {e}", file=sys.stderr)
         return 2

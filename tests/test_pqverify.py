@@ -2557,7 +2557,8 @@ def _doctor_repo(tmp_path, history=None):
     repo = tmp_path / "repo"
     (repo / "pq_verify" / "vectors").mkdir(parents=True)
     (repo / "tools" / "vector_state").mkdir(parents=True)
-    for f in ("acvp_vectors.json.gz", "MANIFEST.json"):
+    for f in ("acvp_vectors.json.gz", "MANIFEST.json",
+              "edge_vectors.json.gz", "EDGE_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
                 repo / "tools" / "vector_state" / "baseline.json")
@@ -2713,6 +2714,9 @@ def test_vendor_rows_are_pinned_to_full_commits():
         assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
         assert set(row["expected"]) == set(mod.STAGES), row["library"]
         assert row["build"] in ("mlkem-native", "pqclean"), row["library"]
+        assert set(row["edge"]) == set(row["sets"]), row["library"]
+        for ps in row["sets"]:
+            assert set(row["edge"][ps]) == set(mod.EDGE_STAGES), (row["library"], ps)
 # Results name the reference implementation that computed them
 # ----------------------------------------------------------------------
 
@@ -3136,3 +3140,203 @@ def test_batch_coq_certificate_proves_the_zeta_tables(tmp_path):
     wrong = src.replace(core._coq_list(t), core._coq_list([t[0] + 1] + t[1:]))
     (tmp_path / "wrong.v").write_text(wrong)
     assert core.coq_check(str(tmp_path / "wrong.v"))[0] is False
+
+
+# ----------------------------------------------------------------------
+# Wycheproof / CCTV edge-case vectors
+# ----------------------------------------------------------------------
+
+def _pin_tool():
+    import importlib.util, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    path = root / "tools" / "pin_edge_vectors.py"
+    if not path.exists():
+        pytest.skip("pin tool not present in this layout")
+    spec = importlib.util.spec_from_file_location("pqv_pin_edge", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_edge_bundle_matches_its_manifest():
+    """Every stored file hashes to the digest of the file at the pinned
+    Wycheproof/CCTV commit."""
+    import json
+    mod = _pin_tool()
+    assert mod.verify() == []
+    m = json.loads(mod.MANIFEST.read_text())
+    for src in ("wycheproof", "cctv"):
+        assert len(m["sources"][src]["commit"]) == 40
+    assert len(m["files"]) == 24
+
+
+def test_edge_bundle_tampering_is_detected(tmp_path):
+    import gzip, json, shutil
+    mod = _pin_tool()
+    with gzip.open(mod.BUNDLE, "rt") as fh:
+        b = json.load(fh)
+    key = "cctv/ML-KEM/strcmp/ML-KEM-768.txt"
+    b[key] = b[key].replace("K = ", "K = 0", 1)
+    bad = tmp_path / "edge.json.gz"
+    with gzip.open(bad, "wt") as fh:
+        json.dump(b, fh)
+    problems = mod.verify(bad, mod.MANIFEST)
+    assert problems == [f"{key}: content does not match its pinned sha256"]
+
+
+@pytest.mark.parametrize("ps, ek, valid", [
+    ("ML-KEM-512", 883, 459), ("ML-KEM-768", 892, 461), ("ML-KEM-1024", 1156, 463)])
+def test_edge_case_inventory(ps, ek, valid):
+    """The counts the vendor table records. CCTV's modulus file alone tests
+    every value q..4095 at every coefficient position."""
+    import collections
+    from pq_verify.edge import kem_cases
+    c = collections.Counter(case[0] for case in kem_cases(ps))
+    assert c["edgeEk"] == ek and c["edgeValid"] == valid and c["edgeDk"] == 2
+    # CCTV's unlucky keys were derived with FIPS 203 ipd's G(d): never
+    # checked as KeyGen output
+    assert not [x for x in kem_cases(ps) if "unlucky" in x[1] and x[3] == "keygen"]
+    # Wycheproof's unflagged "Public key not reduced" cases are modulus cases
+    assert not [x for x in kem_cases(ps)
+                if x[0] == "edgeLength" and len(x[4][0]) == {"ML-KEM-512": 800,
+                    "ML-KEM-768": 1184, "ML-KEM-1024": 1568}[ps] and x[3] == "encaps"]
+
+
+class _LenientKEM:
+    """kyber-py with the FIPS 203 input checks stripped: what a library that
+    skips §7.2/§7.3 looks like. The edge stages must see it."""
+    fixed_buffers = False
+    name = "lenient"
+
+    def __init__(self, ps):
+        from pq_verify.edge import ReferenceKEM
+        self.r = ReferenceKEM(ps)
+        self.k = self.r.k
+
+    def keygen(self, d, z):
+        return self.r.keygen(d, z)
+
+    def keygen_seed(self, seed):
+        return self.r.keygen_seed(seed)
+
+    def encaps(self, ek, m):
+        # reduce every coefficient mod q instead of refusing (no §7.2)
+        n = 384 * self.k.k
+        coeffs = bytearray(ek)
+        for i in range(0, n, 3):
+            w = coeffs[i] | coeffs[i + 1] << 8 | coeffs[i + 2] << 16
+            a, b = (w & 0xFFF) % 3329, (w >> 12) % 3329
+            w = a | b << 12
+            coeffs[i:i + 3] = bytes((w & 0xFF, w >> 8 & 0xFF, w >> 16))
+        return self.r.encaps(bytes(coeffs), m)
+
+    def decaps(self, dk, c):
+        k = self.k.k
+        # recompute H(ek) instead of checking it (no §7.3)
+        ek = dk[384 * k:768 * k + 32]
+        dk = dk[:768 * k + 32] + self.k._H(ek) + dk[768 * k + 64:]
+        return self.r.decaps(dk, c)
+
+
+def test_edge_stages_catch_a_library_without_input_checks():
+    pytest.importorskip("kyber_py")
+    from pq_verify.edge import run_kem
+    r = run_kem(_LenientKEM("ML-KEM-768"), "ML-KEM-768")
+    assert r["stages"]["edgeEk"][0] == 0 and r["stages"]["edgeEk"][1] == 892
+    assert r["stages"]["edgeDk"] == [0, 2]
+    assert r["stages"]["edgeValid"] == [461, 461]
+
+
+def test_reference_kyber_passes_every_edge_case():
+    pytest.importorskip("kyber_py")
+    from pq_verify.edge import reference_run
+    r = reference_run()
+    for ps in ("ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"):
+        assert r["sets"][ps]["failures"] == [], ps
+        assert all(p == t for p, t in r["sets"][ps]["stages"].values()), ps
+
+
+def test_dilithium_hint_defect_is_reported_not_hidden():
+    """dilithium-py 1.4.0 accepts a repeated hint index (FIPS 204 Alg. 21
+    requires strictly increasing). The run must say FINDINGS PRESENT and name
+    the known defect; nothing else may fail."""
+    pytest.importorskip("dilithium_py")
+    from importlib import metadata
+    from pq_verify.edge import reference_run
+    r = reference_run()
+    fails = [(ps, f) for ps in ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")
+             for f in r["sets"][ps]["failures"]]
+    if metadata.version("dilithium-py") != "1.4.0":
+        pytest.skip("the known defect is pinned to dilithium-py 1.4.0")
+    assert r["status"] == "FINDINGS PRESENT"
+    assert len(fails) == 3
+    for ps, f in fails:
+        assert f["stage"] == "sigVerify" and "InvalidHintsEncoding" in f["flags"]
+        assert "HintBitUnpack" in f["known_defect"]
+
+
+def test_edge_cases_cli_gates_and_rejects_bad_sets():
+    code, out = _cli("--edge-cases", "ML-KEM-9")
+    assert code == 2 and "unknown parameter set" in out
+    pytest.importorskip("dilithium_py")
+    from importlib import metadata
+    if metadata.version("dilithium-py") != "1.4.0":
+        pytest.skip("depends on the pinned dilithium-py defect")
+    code, out = _cli("--edge-cases", "ML-DSA-44", "--fail-on-finding")
+    assert code == 1
+    assert "known dilithium-py 1.4.0 defect" in out
+
+
+@pytest.mark.parametrize("variant, ek_ok", [(None, 0), ("MODULUS_CHECK", 892)])
+def test_audit_kem_runs_the_edge_cases(tmp_path, variant, ek_ok):
+    """A library that never refuses an ek fails every CCTV modulus vector; one
+    that performs the §7.2 check refuses all 892 -- and the report says so in
+    Wycheproof/CCTV terms, not NIST's."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+    assert r["detail"]["edgeEk"] == (ek_ok, 892)
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    text = " ".join(doc["findings"])
+    assert ("accepted 892 of 892 invalid encapsulation keys" in text) == (ek_ok == 0)
+    assert "edgeEk" not in text or "NIST" not in text.split("edgeEk")[1].split("stage")[0]
+    assert doc["edge"]["vectors"].startswith("Wycheproof ")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", edge=False)
+    assert "edgeEk" not in r["detail"]
+
+
+def test_doctor_blocks_on_a_tampered_edge_bundle(tmp_path):
+    import gzip, json
+    mod, _ = _doctor()
+    repo = _doctor_repo(tmp_path)
+    p = repo / "pq_verify" / "vectors" / "edge_vectors.json.gz"
+    with gzip.open(p, "rt") as fh:
+        b = json.load(fh)
+    b.pop(next(iter(b)))
+    with gzip.open(p, "wt") as fh:
+        json.dump(b, fh)
+    c = mod.check_edge_manifest(repo)
+    assert c.status == "BLOCK" and "EDGE_MANIFEST" in c.headline
+
+
+def test_doctor_separates_known_and_new_reference_defects(monkeypatch):
+    pytest.importorskip("dilithium_py")
+    from importlib import metadata
+    if metadata.version("dilithium-py") != "1.4.0":
+        pytest.skip("depends on the pinned dilithium-py defect")
+    from pq_verify import edge as EG
+    mod, _ = _doctor()
+    c = mod.check_reference_edges()
+    assert c.status == "WARN" and "only known reference defects" in c.headline
+    assert "bd9b552" in c.detail
+    # the same failures, no longer recorded as known: BLOCK
+    monkeypatch.setattr(EG, "KNOWN_REFERENCE_DEFECTS", {})
+    run = EG.reference_run()
+    stripped = {**run, "sets": {ps: {**r, "failures": [
+        {k: v for k, v in f.items() if k != "known_defect"} for f in r["failures"]]}
+        for ps, r in run["sets"].items()}}
+    monkeypatch.setattr(EG, "reference_run", lambda: stripped)
+    c = mod.check_reference_edges()
+    assert c.status == "BLOCK" and "not in KNOWN_REFERENCE_DEFECTS" in c.headline
