@@ -235,7 +235,7 @@ runs:
       # Only when a library was audited: the ACVP path produces no SARIF
       # (it verifies pq-verify's own reference chain, not third-party code).
       if: always() && inputs.library != '' && hashFiles(inputs.sarif-file) != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ inputs.sarif-file }}
       continue-on-error: true
