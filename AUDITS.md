@@ -193,6 +193,21 @@ refuses them (nonzero return) while accepting the valid ones:
 - `ekCheck`: 5 encapsulation keys with a coefficient ≥ q (FIPS 203 §7.2)
 - `dkCheck`: 5 decapsulation keys with a corrupted H(ek) (FIPS 203 §7.3)
 
+It then runs the pinned C2SP edge-case vectors (Wycheproof `3fa63dd`, CCTV
+`50a8ecf`; `pq_verify/vectors/EDGE_MANIFEST.json`), per parameter set:
+
+- `edgeValid`: `strcmp`-trap ciphertexts, unlucky-sampling seeds, malleated
+  ciphertexts that must take implicit rejection, and Wycheproof's other valid
+  vectors, byte-exact
+- `edgeEk`: every coefficient value q…4095 at every position of an
+  encapsulation key (CCTV `modulus`) plus Wycheproof's unreduced keys, all
+  of which must be refused
+- `edgeDk`: decapsulation keys with a corrupted H(ek) or embedded ek
+
+Wrong-length inputs are not applicable to a C entry point, which takes
+fixed-size buffers; they are run against the Python references instead
+(`pq-verify --edge-cases`).
+
 This table is not a one-off snapshot. Each row pins a library to an exact
 commit (`tools/vendor_audits.json`), and CI rebuilds every row and re-runs the
 audit on every change to pq-verify and weekly
@@ -203,10 +218,10 @@ row beside the old one, so the table records when a library's behaviour
 changed. A test holds this table equal to the pinned file.
 
 <!-- vendor-audits:begin -->
-| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Result |
-|---|---|---|---|---|---|---|---|---|
-| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | **80/80 VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 70/80, findings |
+| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 80/80 + 4,320/4,320 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 70/80 + 1,383/4,320 findings |
 <!-- vendor-audits:end -->
 
 Reproduce every row: `python3 tools/vendor_audit.py`.
@@ -218,6 +233,9 @@ example once, when a key is received), so this is not by itself a
 non-conformance. It does mean every caller of this API must perform the
 §7.2/§7.3 check itself; a caller that relies on the library does not get one.
 mlkem-native performs both checks inside `enc`/`dec` and rejects all ten.
+The edge cases confirm it at scale: PQClean accepts all 2,931 invalid
+encapsulation keys and all 6 invalid decapsulation keys, while every one of
+its outputs on valid input is byte-exact; mlkem-native refuses every one.
 
 Before this audit could be run, two resolver faults had to be fixed: it could
 not find mlkem-native's `_dec`, and given that, it bound the internal

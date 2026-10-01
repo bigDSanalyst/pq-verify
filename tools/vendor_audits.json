@@ -7,7 +7,9 @@
     "Rows are only ever added. A newer library commit is a new row; the old row",
     "stays, so the record shows when a library's behaviour changed.",
     "AUDITS.md renders this table (python3 tools/vendor_audit.py --markdown) and",
-    "a test holds the two equal."
+    "a test holds the two equal.",
+    "\"edge\" is per parameter set: the Wycheproof/CCTV edge-case stages of",
+    "pq_verify/edge.py (valid vectors, invalid eks, invalid dks)."
   ],
   "audits": [
     {
@@ -16,12 +18,78 @@
       "commit": "fc269bc2d1068486625a3775310c2c1f28d74732",
       "date": "2026-09-27",
       "build": "mlkem-native",
-      "sets": ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"],
+      "sets": [
+        "ML-KEM-512",
+        "ML-KEM-768",
+        "ML-KEM-1024"
+      ],
       "expected": {
-        "keyGen": [25, 25], "encaps": [25, 25], "decaps": [10, 10],
-        "ekCheck": [10, 10], "dkCheck": [10, 10]
+        "keyGen": [
+          25,
+          25
+        ],
+        "encaps": [
+          25,
+          25
+        ],
+        "decaps": [
+          10,
+          10
+        ],
+        "ekCheck": [
+          10,
+          10
+        ],
+        "dkCheck": [
+          10,
+          10
+        ]
       },
-      "note": "rejects all 10 invalid keys inside enc/dec"
+      "note": "rejects all 10 invalid keys inside enc/dec",
+      "edge": {
+        "ML-KEM-512": {
+          "edgeValid": [
+            459,
+            459
+          ],
+          "edgeEk": [
+            883,
+            883
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-768": {
+          "edgeValid": [
+            461,
+            461
+          ],
+          "edgeEk": [
+            892,
+            892
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-1024": {
+          "edgeValid": [
+            463,
+            463
+          ],
+          "edgeEk": [
+            1156,
+            1156
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        }
+      }
     },
     {
       "library": "PQClean clean",
@@ -29,12 +97,78 @@
       "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
       "date": "2026-08-04",
       "build": "pqclean",
-      "sets": ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"],
+      "sets": [
+        "ML-KEM-512",
+        "ML-KEM-768",
+        "ML-KEM-1024"
+      ],
       "expected": {
-        "keyGen": [25, 25], "encaps": [25, 25], "decaps": [10, 10],
-        "ekCheck": [5, 10], "dkCheck": [5, 10]
+        "keyGen": [
+          25,
+          25
+        ],
+        "encaps": [
+          25,
+          25
+        ],
+        "decaps": [
+          10,
+          10
+        ],
+        "ekCheck": [
+          5,
+          10
+        ],
+        "dkCheck": [
+          5,
+          10
+        ]
       },
-      "note": "enc/dec return 0 for every invalid key: no rejection path"
+      "note": "enc/dec return 0 for every invalid key: no rejection path (all 2,931 CCTV/Wycheproof invalid eks and 6 invalid dks accepted)",
+      "edge": {
+        "ML-KEM-512": {
+          "edgeValid": [
+            459,
+            459
+          ],
+          "edgeEk": [
+            0,
+            883
+          ],
+          "edgeDk": [
+            0,
+            2
+          ]
+        },
+        "ML-KEM-768": {
+          "edgeValid": [
+            461,
+            461
+          ],
+          "edgeEk": [
+            0,
+            892
+          ],
+          "edgeDk": [
+            0,
+            2
+          ]
+        },
+        "ML-KEM-1024": {
+          "edgeValid": [
+            463,
+            463
+          ],
+          "edgeEk": [
+            0,
+            1156
+          ],
+          "edgeDk": [
+            0,
+            2
+          ]
+        }
+      }
     }
   ]
 }

@@ -292,8 +292,24 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
     keycheck = result.get("keycheck") or {}
     doc["keycheck"] = keycheck
     findings = []
+    edge = result.get("edge") or {}
+    if edge:
+        doc["edge"] = {"vectors": edge.get("vectors"),
+                       "not_applicable": edge.get("not_applicable", 0),
+                       "failures": edge.get("failures", [])}
+    _edge_msg = {
+        "edgeValid": lambda p, t: (f"stage edgeValid: {p}/{t} Wycheproof/CCTV edge-case "
+                                   f"vectors reproduced byte-for-byte"),
+        "edgeEk": lambda p, t: (f"stage edgeEk: accepted {t - p} of {t} invalid "
+                                f"encapsulation keys (Wycheproof/CCTV, FIPS 203 §7.2)"),
+        "edgeDk": lambda p, t: (f"stage edgeDk: accepted {t - p} of {t} invalid "
+                                f"decapsulation keys (Wycheproof, FIPS 203 §7.3)"),
+    }
     for k, v in (result.get("detail") or {}).items():
         if v[0] == v[1]:
+            continue
+        if k in _edge_msg:
+            findings.append(_edge_msg[k](v[0], v[1]))
             continue
         m = keycheck.get(k)
         if m is None:

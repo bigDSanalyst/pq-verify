@@ -206,6 +206,14 @@ jobs:
           assert "pinned" in d["vectorSource"], d["vectorSource"]
           print("vectors present:", d["questionCount"], "questions from", d["vectorSource"])
           PY
+      - name: The wheel must carry the pinned edge-case vectors
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          from pq_verify.edge import kem_cases, dsa_cases, sources
+          n = len(kem_cases("ML-KEM-768")) + len(dsa_cases("ML-DSA-65"))
+          assert n > 1500, n
+          print("edge vectors present:", n, "cases from", sources())
+          PY
       - name: The wheel must carry the hybrid module
         run: |
           /tmp/fresh/bin/pq-verify --emit-hybrid-prompt list | tee /tmp/groups.txt

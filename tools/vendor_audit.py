@@ -31,6 +31,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TABLE = REPO / "tools" / "vendor_audits.json"
 STAGES = ("keyGen", "encaps", "decaps", "ekCheck", "dkCheck")
+# Wycheproof/CCTV edge cases (pq_verify/edge.py). Their counts differ per
+# parameter set, so each row records them per set under "edge".
+EDGE_STAGES = ("edgeValid", "edgeEk", "edgeDk")
 BEGIN, END = "<!-- vendor-audits:begin -->", "<!-- vendor-audits:end -->"
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
@@ -106,8 +109,9 @@ def check_all(rows, workdir):
         except Exception as e:
             print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: fetch failed: {e}")
             return 2
-        want = {k: list(v) for k, v in row["expected"].items()}
         for ps in row["sets"]:
+            want = {k: list(v) for k, v in row["expected"].items()}
+            want.update({k: list(v) for k, v in row["edge"][ps].items()})
             label = f"{row['library']} @ {row['commit'][:7]} {ps}"
             try:
                 so = build(row["build"], src, ps, workdir)
@@ -124,7 +128,7 @@ def check_all(rows, workdir):
             if got is None:
                 print("         pq-verify could not audit it (entry points not resolved)")
                 continue
-            for s in STAGES:
+            for s in STAGES + EDGE_STAGES:
                 if got.get(s) != want.get(s):
                     print(f"         {s:8s} recorded {want.get(s)}  now {got.get(s)}")
     if failures:
@@ -138,19 +142,27 @@ def check_all(rows, workdir):
 
 # ─────────────────────────────── table ───────────────────────────────
 
+def edge_total(row):
+    return tuple(sum(row["edge"][ps][s][i] for ps in row["sets"] for s in EDGE_STAGES)
+                 for i in (0, 1))
+
+
 def markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck "
-             "| dkCheck | Result |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| dkCheck | Edge cases | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         e = row["expected"]
         p, t = total(e)
-        verdict = f"**{p}/{t} VERIFIED**" if p == t else f"{p}/{t}, findings"
+        ep, et = edge_total(row)
+        ok = p == t and ep == et
+        verdict = "**VERIFIED**" if ok else "findings"
         sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
         cells = [f"{e[s][0]}/{e[s][1]}" for s in STAGES]
         lines.append(f"| {row['library']} | [`{row['commit'][:7]}`]"
                      f"({row['url']}/commit/{row['commit']}) ({row['date']}) "
-                     f"| {sets} | " + " | ".join(cells) + f" | {verdict} |")
+                     f"| {sets} | " + " | ".join(cells) +
+                     f" | {ep:,}/{et:,} | {p}/{t} + {ep:,}/{et:,} {verdict} |")
     return "\n".join(lines)
 
 

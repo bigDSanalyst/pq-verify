@@ -47,6 +47,10 @@ def build_parser():
                    help="full NIST ACVP end-to-end ML-DSA (FIPS 204, 615 vectors)")
     p.add_argument("--acvp-all", action="store_true",
                    help="both ACVP suites: ML-KEM + ML-DSA (855 pinned vectors)")
+    p.add_argument("--edge-cases", nargs="?", const="all", metavar="SET",
+                   help="pinned Wycheproof/CCTV edge-case vectors against pq-verify's "
+                        "own references (kyber-py, dilithium-py); SET limits it to "
+                        "one parameter set, e.g. ML-DSA-65")
     p.add_argument("--live", action="store_true",
                    help="fetch NIST's CURRENT vectors instead of the pinned "
                         "bundle (needs network; results may change between runs)")
@@ -127,6 +131,19 @@ def main(argv=None):
         acvp_results["ML-DSA (FIPS 204)"] = _all.get("ml_dsa")
         if _all.get("slh_dsa"):
             acvp_results["SLH-DSA (FIPS 205)"] = _all["slh_dsa"]
+        ran_task = True
+    edge_result = None
+    if getattr(args, "edge_cases", None):
+        from .edge import pqverify_edge, KEM_SETS, DSA_SETS
+        _sets = None if args.edge_cases == "all" else [args.edge_cases]
+        if _sets and _sets[0] not in KEM_SETS + DSA_SETS:
+            print(f"  unknown parameter set {_sets[0]!r}; choose from "
+                  f"{', '.join(KEM_SETS + DSA_SETS)}")
+            return 2
+        edge_result = pqverify_edge(_sets)
+        if edge_result is None:
+            edge_result = {"status": "CANNOT VERIFY", "verified": False,
+                           "passed": 0, "total": 0, "sets": {}}
         ran_task = True
     if args.params:
         pqverify_params(args.params); ran_task = True
@@ -310,6 +327,21 @@ def main(argv=None):
         # PARTIAL and CANNOT VERIFY are both "did not verify".
         if args.fail_on_finding and not hybrid_result["verified"]:
             print(f"  FAILING: hybrid {hybrid_result['status']}")
+            exit_code = 1
+
+    if edge_result is not None:
+        doc = {"schema": "pq-verify/edge-report", "tool_version": VERSION,
+               "status": edge_result["status"], "verified": edge_result["verified"],
+               "vectors": edge_result.get("vectors"),
+               "summary": {"checks_passed": edge_result["passed"],
+                           "checks_total": edge_result["total"]},
+               "sets": edge_result["sets"],
+               "artifact": {"summary": "pq-verify's reference implementations"}}
+        if json_doc is None:
+            json_doc, reported = doc, "--edge-cases"
+        if args.fail_on_finding and not edge_result["verified"]:
+            print(f"  FAILING: edge cases {edge_result['status']} "
+                  f"({edge_result['passed']}/{edge_result['total']})")
             exit_code = 1
 
     if acvp_results:
