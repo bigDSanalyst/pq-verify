@@ -3340,3 +3340,104 @@ def test_doctor_separates_known_and_new_reference_defects(monkeypatch):
     monkeypatch.setattr(EG, "reference_run", lambda: stripped)
     c = mod.check_reference_edges()
     assert c.status == "BLOCK" and "not in KNOWN_REFERENCE_DEFECTS" in c.headline
+
+
+# ----------------------------------------------------------------------
+# General proofs (pq_verify/coq): every input, not tested instances
+# ----------------------------------------------------------------------
+
+def _proof_copy(tmp_path, name, old, new):
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "coq"
+    text = (src / name).read_text()
+    assert old in text, old
+    (tmp_path / name).write_text(text.replace(old, new, 1))
+    return str(tmp_path)
+
+
+def test_shipped_proofs_are_closed():
+    """Every theorem in pq_verify/coq is accepted by coqc AND closed: no
+    axiom, no Admitted. Covers Montgomery/Barrett/reduce32 for all inputs
+    in range and the NTT = CRT map for all 256-coefficient inputs."""
+    _need_coqc()
+    from pq_verify.proofs import pqverify_proofs
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_proofs()
+    assert r["verified"], r
+    names = r["files"]["NTT.v"]["theorems"] + r["files"]["Reduce.v"]["theorems"]
+    for t in ("mlkem_ntt_correct", "mldsa_ntt_correct", "mlkem_montgomery_reduce",
+              "mldsa_montgomery_reduce", "mlkem_barrett_reduce", "mldsa_reduce32"):
+        assert t in names
+
+
+def test_a_wrong_ntt_spec_is_rejected(tmp_path):
+    """Negative control: use zeta^(2*BitRev7(i)) instead of the FIPS 203
+    exponent 2*BitRev7(i)+1 in the CRT spec. The proof must fail."""
+    _need_coqc()
+    from pq_verify.proofs import pqverify_proofs
+    d = _proof_copy(tmp_path, "NTT.v",
+                    "(17 ^ (2 * brv 7 (Z.of_nat i) 0 + 1))",
+                    "(17 ^ (2 * brv 7 (Z.of_nat i) 0))")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_proofs(files=("NTT.v",), coq_dir=d)
+    assert r["status"] == "FINDINGS PRESENT"
+
+
+def test_the_inclusive_montgomery_range_is_false(tmp_path):
+    """ML-KEM's montgomery_reduce returns q itself at a = q*2^15, which is
+    why ref/reduce.c stops its range at q*2^15 - 1. Widening the theorem to
+    include that point must make it unprovable."""
+    _need_coqc()
+    from pq_verify.proofs import pqverify_proofs
+    d = _proof_copy(tmp_path, "Reduce.v",
+                    "- (KQ * 2^15) <= a <= KQ * 2^15 - 1 ->",
+                    "- (KQ * 2^15) <= a <= KQ * 2^15 ->")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_proofs(files=("Reduce.v",), coq_dir=d)
+    assert r["status"] == "FINDINGS PRESENT"
+
+
+def test_an_admitted_general_proof_is_refused(tmp_path):
+    _need_coqc()
+    from pq_verify.proofs import pqverify_proofs
+    d = _proof_copy(tmp_path, "Reduce.v",
+                    "Theorem mldsa_qinv : (DQ * DQINV) mod 2^32 = 1.\nProof. vm_compute. reflexivity. Qed.",
+                    "Theorem mldsa_qinv : (DQ * DQINV) mod 2^32 = 1.\nAdmitted.")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_proofs(files=("Reduce.v",), coq_dir=d)
+    assert r["status"] == "FINDINGS PRESENT"
+    assert "Admitted" in r["files"]["Reduce.v"]["detail"]
+
+
+def test_reduction_edge_witnesses_match_c_semantics():
+    """The two off-by-one points the proofs found in ref/reduce.c's
+    documented contracts, recomputed with C integer semantics."""
+    def trunc(x, bits):
+        x &= (1 << bits) - 1
+        return x - (1 << bits) if x >> (bits - 1) else x
+    Q = 8380417
+    mont32 = lambda a: (a - trunc(a * 58728449, 32) * Q) >> 32
+    reduce32 = lambda a: a - ((a + (1 << 22)) >> 23) * Q
+    assert mont32(Q * 2**31) == Q                       # documented: -Q < r < Q
+    assert reduce32(-255 * 2**23 - 2**22) == -6283009   # documented: r >= -6283008
+    mont16 = lambda a: (a - trunc(a * -3327, 16) * 3329) >> 16
+    assert mont16(3329 * 2**15) == 3329                 # outside ML-KEM's stated range
+
+
+def test_no_proof_tool_is_cannot_verify(monkeypatch):
+    import shutil
+    from pq_verify import proofs
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = proofs.pqverify_proofs()
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+
+
+def test_per_run_certificates_use_the_proved_transform():
+    """The per-run NTT certificate must define the transform with NTT.v's
+    shared block, verbatim, so it is about the proved definition."""
+    import pathlib
+    from pq_verify.core import _coq_ntt_prelude
+    src = (pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "coq" / "NTT.v").read_text()
+    shared = src[src.index("(* BEGIN SHARED"):src.index("(* END SHARED *)")]
+    assert shared in _coq_ntt_prelude(3329, 17, 7, 7)
