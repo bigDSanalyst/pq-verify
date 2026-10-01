@@ -46,10 +46,13 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 - **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
 - **Non-circular KAT** 100/100 against the independent FIPS reference
 - Calibrated lattice estimator: reproduces lattice-estimator exactly (Kyber-512 β=406/118.6 bits)
-- **Coq certificates**: Coq recomputes the full ML-KEM forward NTT (896
-  butterflies, all 256 outputs) from its own FIPS 203 definitions and proves
-  both FIPS zeta tables; each theorem must print `Closed under the global
-  context` (no axioms, no `Admitted`), not just exit 0
+- **Proofs for every input** (`pq-verify --proofs`, Coq): the FIPS 203 and
+  FIPS 204 forward NTT equal the CRT map they are defined to compute, for
+  every 256-coefficient input; `montgomery_reduce`, `barrett_reduce` and
+  `reduce32` are congruent and within bound for every input in range. Each
+  theorem must print `Closed under the global context` (no axioms, no
+  `Admitted`), not just exit 0. Per-run certificates use the same, proved,
+  NTT definition
 
 ---
 

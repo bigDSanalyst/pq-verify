@@ -1317,6 +1317,18 @@ def _coq_list(xs):
     return "[" + "; ".join(str(int(v)) for v in xs) + "]"
 
 
+def _coq_shared_ntt():
+    """The generic transform from pq_verify/coq/NTT.v, verbatim (between its
+    BEGIN SHARED / END SHARED markers). NTT.v proves this transform equals
+    the FIPS 203 / FIPS 204 CRT map for every input; emitting the same text
+    here means a per-run certificate is about that very definition."""
+    with open(os.path.join(_pkg_dir(), 'coq', 'NTT.v')) as f:
+        src = f.read()
+    start = src.index('(* BEGIN SHARED')
+    end = src.index('(* END SHARED *)') + len('(* END SHARED *)')
+    return src[start:end]
+
+
 def _coq_ntt_prelude(q, root, bits, n_layers):
     """Gallina definitions of the FIPS 203 / FIPS 204 forward NTT.
 
@@ -1324,7 +1336,8 @@ def _coq_ntt_prelude(q, root, bits, n_layers):
     definitions: the zeta table is root^brv(i) mod q, built in Coq, never
     copied from Python. A certificate therefore cannot pass because pq-verify
     and its proof share a wrong constant -- the Python side only supplies the
-    input and the claimed output.
+    input and the claimed output. The transform itself is NTT.v's, which is
+    proved correct for all inputs there.
 
     ML-KEM: q=3329, root=17, 7-bit reversal, 7 layers (len 128..2).
     ML-DSA: q=8380417, root=1753, 8-bit reversal, 8 layers (len 128..1).
@@ -1333,36 +1346,12 @@ def _coq_ntt_prelude(q, root, bits, n_layers):
 Import ListNotations.
 Open Scope Z_scope.
 
+{_coq_shared_ntt()}
+
 Definition q : Z := {q}.
 Definition root : Z := {root}.
-Fixpoint brv (k : nat) (x acc : Z) : Z :=
-  match k with O => acc | S k' => brv k' (Z.shiftr x 1) (2 * acc + Z.land x 1) end.
 Definition zeta (i : Z) : Z := Z.modulo (root ^ brv {bits} i 0) q.
-Fixpoint set_nth (l : list Z) (n : nat) (v : Z) : list Z :=
-  match l, n with
-  | [], _ => []
-  | _ :: t, O => v :: t
-  | h :: t, S n' => h :: set_nth t n' v
-  end.
-Definition bf (f : list Z) (j len : nat) (z : Z) : list Z :=
-  let a := nth j f 0 in
-  let b := nth (j + len)%nat f 0 in
-  let t := Z.modulo (z * b) q in
-  set_nth (set_nth f (j + len)%nat (Z.modulo (a - t) q)) j (Z.modulo (a + t) q).
-Fixpoint inner (f : list Z) (j cnt len : nat) (z : Z) : list Z :=
-  match cnt with O => f | S c => inner (bf f j len z) (S j) c len z end.
-Fixpoint groups (f : list Z) (start ng len : nat) (k : Z) : list Z * Z :=
-  match ng with
-  | O => (f, k)
-  | S g => groups (inner f start len len (zeta k)) (start + 2 * len)%nat g len (k + 1)
-  end.
-Fixpoint layers (f : list Z) (len nl : nat) (k : Z) : list Z :=
-  match nl with
-  | O => f
-  | S l => let '(f', k') := groups f 0 (Nat.div 256 (2 * len)) len k in
-           layers f' (Nat.div len 2) l k'
-  end.
-Definition ntt (f : list Z) : list Z := layers f 128 {n_layers} 1.
+Definition fips_ntt (f : list Z) : list Z := ntt (ops_mod q) zeta {n_layers} f.
 """
 
 
@@ -1393,7 +1382,7 @@ def gen_coq_ntt_cert(scheme, f_in, f_out, filename):
         f"(* root^{order // 2} = -1, so root has order exactly {order} *)",
         f"Theorem {thms[0]} : Z.modulo (root ^ {order // 2}) q = q - 1.",
         "Proof. vm_compute. reflexivity. Qed.",
-        f"Theorem {thms[1]} : ntt {_coq_list(f_in)} = {_coq_list(f_out)}.",
+        f"Theorem {thms[1]} : fips_ntt {_coq_list(f_in)} = {_coq_list(f_out)}.",
         "Proof. vm_compute. reflexivity. Qed.",
     ]
     lines += [f"Print Assumptions {t}." for t in thms]
