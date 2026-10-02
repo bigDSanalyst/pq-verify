@@ -143,8 +143,11 @@ jobs:
           output-file: pq-verify-${{ inputs.version }}.spdx.json
           upload-artifact: false
 
+      # actions/attest-sbom is deprecated; its v4 is a wrapper that calls
+      # actions/attest with these same two inputs, so this is the same
+      # attestation without the wrapper or its deprecation warning.
       - name: Attest the SBOM
-        uses: actions/attest-sbom@v4
+        uses: actions/attest@v4
         with:
           subject-path: "dist/*.whl"
           sbom-path: pq-verify-${{ inputs.version }}.spdx.json
