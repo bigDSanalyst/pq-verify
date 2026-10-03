@@ -56,7 +56,8 @@ BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
 # If the bundle carries a file the watcher does not track, upstream can move
 # underneath the frozen copy without anyone being told -- which is precisely
 # the failure this tool exists to prevent.
-#   pq_verify/vectors/acvp_vectors.json.gz  <-- keep this list in sync with it
+#   pq_verify/vectors/acvp_vectors.json.gz and slhdsa_sig_vectors.json.gz
+#   <-- keep this list in sync with them
 TARGETS = {
     "ML-KEM-encapDecap-FIPS203": ["prompt.json", "expectedResults.json",
                                   "internalProjection.json"],
@@ -66,6 +67,9 @@ TARGETS = {
     "ML-DSA-keyGen-FIPS204":     ["prompt.json", "expectedResults.json"],
     "ML-DSA-sigVer-FIPS204":     ["prompt.json", "expectedResults.json"],
     "SLH-DSA-keyGen-FIPS205":    ["prompt.json", "expectedResults.json"],
+    # Pinned in pq_verify/vectors/slhdsa_sig_vectors.json.gz, verbatim.
+    "SLH-DSA-sigGen-FIPS205":    ["prompt.json", "expectedResults.json"],
+    "SLH-DSA-sigVer-FIPS205":    ["prompt.json", "expectedResults.json"],
 }
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -102,13 +106,20 @@ def fingerprint(raw):
     struct = []
     for g in j.get("testGroups", []):
         t0 = g["tests"][0] if g.get("tests") else {}
-        struct.append({
+        entry = {
             "function":  g.get("function"),
             "keyFormat": g.get("keyFormat"),
             "paramSet":  g.get("parameterSet"),
             "n":         len(g.get("tests", [])),
             "fields":    sorted(t0.keys()),
-        })
+        }
+        # Signature suites have several groups per parameter set, told apart
+        # only by interface; without it a change report merges them.
+        variant = [str(g[k]) for k in ("signatureInterface", "preHash",
+                                       "deterministic") if k in g]
+        if variant:
+            entry["variant"] = "/".join(variant)
+        struct.append(entry)
     fp["total_tests"] = sum(len(g.get("tests", []))
                             for g in j.get("testGroups", []))
     fp["structure"] = struct
@@ -148,7 +159,7 @@ def describe_change(name, old, new, hist):
     lines.append(f"      tests  {old['total_tests']} -> {new['total_tests']}")
 
     def key(s):
-        return (s["function"], s["keyFormat"], s["paramSet"])
+        return (s["function"], s["keyFormat"], s["paramSet"], s.get("variant"))
     o = {key(s): s for s in old.get("structure", [])}
     n = {key(s): s for s in new.get("structure", [])}
     for k in sorted(set(o) | set(n), key=lambda x: tuple(str(v) for v in x)):

@@ -59,6 +59,13 @@ bundle and `MANIFEST.json` (with each file's `nist_commit`) deterministically â€
 the same inputs always produce byte-identical files â€” and then re-checks what
 it wrote, from disk.
 
+The vectors live in two archives. `acvp_vectors.json.gz` holds every suite's
+files as parsed JSON; `slhdsa_sig_vectors.json.gz` holds the SLH-DSA sigGen and
+sigVer files as NIST's text verbatim, so the doctor checks each against its
+`MANIFEST.json` sha256 offline. `--apply` rewrites only the archive that holds a
+changed file. A changed SLH-DSA sigGen file is re-checked by signing all 624
+vectors, which takes about half an hour.
+
 **5. Record and release.**
 
 - Add the revisions to the table in `pq_verify/vectors/PROVENANCE.md`, and the

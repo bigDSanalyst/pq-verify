@@ -43,7 +43,7 @@ jobs:
           # Not best-effort: a version where these cannot install is a version
           # where the documented `pq-verify[full]` install does not work, and
           # that is exactly what the floor is supposed to mean.
-          pip install -c constraints-reference.txt kyber-py dilithium-py sympy
+          pip install -c constraints-reference.txt kyber-py dilithium-py sympy slh-dsa
 
       - name: Test suite
         run: python -m pytest tests/ -q
@@ -51,8 +51,12 @@ jobs:
       - name: Self-suite (smoke — must not crash)
         run: python -m pq_verify.cli --quick
 
-      - name: NIST ACVP — 855 pinned vectors, offline
-        run: python -m pq_verify.cli --acvp-all --fail-on-finding
+      - name: NIST ACVP — 1479 pinned vectors, offline
+        run: |
+          python -m pq_verify.cli --acvp-all --fail-on-finding --json /tmp/acvp.json
+          # --fail-on-finding passes a suite that could not run (its gate is
+          # --require-full-coverage, which also wants coq); all three must have.
+          python -c "import json; d = json.load(open('/tmp/acvp.json')); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 3, s; print(d['summary'])"
 
       # The suite above scored 240/240 on the malformed vectors 2.8.0 shipped;
       # only the doctor's structural checks catch that class of defect.
@@ -213,6 +217,22 @@ jobs:
           n = len(kem_cases("ML-KEM-768")) + len(dsa_cases("ML-DSA-65"))
           assert n > 1500, n
           print("edge vectors present:", n, "cases from", sources())
+          PY
+      - name: The wheel must carry the SLH-DSA signature vectors
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          import os
+          from pq_verify.core import _load_vector_json, _pkg_dir, _vector_revision
+          n = 0
+          for mode, want in (("sigVer", 504), ("sigGen", 624)):
+              d = f"SLH-DSA-{mode}-FIPS205"
+              p = _load_vector_json(os.path.join(_pkg_dir(), "vectors", d, "prompt.json"),
+                                    f"{d}/prompt.json")
+              got = sum(len(g["tests"]) for g in p["testGroups"])
+              assert got == want, (mode, got)
+              n += got
+          print("SLH-DSA signature vectors present:", n, "from",
+                _vector_revision("SLH-DSA-sigVer-FIPS205"))
           PY
       - name: The wheel must carry the hybrid module
         run: |

@@ -285,7 +285,8 @@ definitions. They do not:
 
 - verify constant-time behaviour or side-channel resistance
 - verify the full KEM/signature scheme end-to-end (that is what the ACVP
-  suites do: 855/855, or 975/975 including FIPS 205 key generation)
+  suites do: 1479/1479 with FIPS 205 keyGen and sigVer, 2103/2103 with
+  SLH-DSA sigGen)
 - constitute a security review of the surrounding implementation
 
 A passing NTT audit says the transform is arithmetically correct. It does not

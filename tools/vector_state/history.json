@@ -96,5 +96,33 @@
       "first_seen": "2026-08-07",
       "last_seen": "2026-08-07"
     }
+  },
+  "SLH-DSA-sigGen-FIPS205/expectedResults.json": {
+    "71e8e0f7e4b0cfd1747314299204d9d4d50968d200a4ae873921eaa7aabeaad1": {
+      "count": 1,
+      "first_seen": "2026-10-03",
+      "last_seen": "2026-10-03"
+    }
+  },
+  "SLH-DSA-sigGen-FIPS205/prompt.json": {
+    "afa673eacdf0aec53512a159159b7632684adfcd0d88f8640a7f6f5796aacdc8": {
+      "count": 1,
+      "first_seen": "2026-10-03",
+      "last_seen": "2026-10-03"
+    }
+  },
+  "SLH-DSA-sigVer-FIPS205/expectedResults.json": {
+    "259f5e2a0665de0adc0fefa45b5db3a2a6ed13c3c44d14bdaf64a80aee12c687": {
+      "count": 1,
+      "first_seen": "2026-10-03",
+      "last_seen": "2026-10-03"
+    }
+  },
+  "SLH-DSA-sigVer-FIPS205/prompt.json": {
+    "4e7beb1233e47baa0acdd36417c66c45811aa40a4e32ffdb1a35d93b13b289fb": {
+      "count": 1,
+      "first_seen": "2026-10-03",
+      "last_seen": "2026-10-03"
+    }
   }
 }

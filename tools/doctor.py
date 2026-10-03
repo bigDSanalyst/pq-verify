@@ -52,6 +52,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tools"))
 import check_vectors as W                                     # noqa: E402
+from pq_verify.core import _VECTOR_BUNDLES, _bundle_name      # noqa: E402
 
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
 PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
@@ -63,6 +64,7 @@ SUITES = {                # the runner for each vector directory prefix
     "ML-DSA": "pqverify_mldsa_acvp",
     "SLH-DSA": "pqverify_slhdsa_acvp",
 }
+SUITE_SIGGEN = {"SLH-DSA": "SLH-DSA-sigGen-"}   # opt-in groups a re-pin must run
 
 
 class Check:
@@ -83,6 +85,7 @@ def paths(repo):
     v = Path(repo) / "pq_verify" / "vectors"
     t = Path(repo) / "tools" / "vector_state"
     return {"bundle": v / "acvp_vectors.json.gz", "manifest": v / "MANIFEST.json",
+            "bundles": {name: v / name for name in _VECTOR_BUNDLES},
             "baseline": t / "baseline.json", "history": t / "history.json"}
 
 
@@ -95,8 +98,36 @@ def load_json(p, default=None):
 
 
 def load_bundle(p):
+    """One archive, or every archive when given paths()["bundles"], merged:
+    {"DIR/file.json": parsed JSON, or NIST's text verbatim}. A missing
+    archive contributes nothing, so check_manifest names what it lacked."""
+    if isinstance(p, dict):
+        out = {}
+        for q in p.values():
+            if Path(q).exists():
+                out.update(load_bundle(q))
+        return out
     with gzip.open(p, "rt") as fh:
         return json.load(fh)
+
+
+def raw_of(entry):
+    """The bytes a bundle entry stands for: verbatim entries are NIST's file
+    text; parsed ones are re-serialised (their sha256 is not NIST's)."""
+    return entry.encode() if isinstance(entry, str) else json.dumps(entry).encode()
+
+
+def doc_of(entry):
+    return json.loads(entry) if isinstance(entry, str) else entry
+
+
+def write_bundle(path, entries, verbatim):
+    """Deterministic: the same entries give byte-identical archives."""
+    with open(path, "wb") as fh:
+        with gzip.GzipFile(filename=Path(path).name[:-3], mode="wb", fileobj=fh,
+                           mtime=0, compresslevel=9) as g:
+            g.write(json.dumps(entries, separators=(",", ":"),
+                               sort_keys=verbatim).encode())
 
 
 def tracked():
@@ -111,10 +142,17 @@ def check_manifest(bundle, manifest):
     missing = sorted(set(bundle) - set(manifest))
     extra = sorted(set(manifest) - set(bundle))
     nocommit = sorted(k for k, v in manifest.items() if not v.get("nist_commit"))
-    if not (missing or extra or nocommit):
+    # Verbatim entries are NIST's bytes, so their digest is checkable offline.
+    altered = sorted(k for k, v in bundle.items() if isinstance(v, str) and k in manifest
+                     and (hashlib.sha256(v.encode()).hexdigest() != manifest[k]["sha256"]
+                          or len(v.encode()) != manifest[k]["bytes"]))
+    if not (missing or extra or nocommit or altered):
+        verbatim = sum(isinstance(v, str) for v in bundle.values())
         return Check("manifest", OK,
                      f"MANIFEST.json covers all {len(bundle)} bundled files, "
-                     f"each with its NIST commit")
+                     f"each with its NIST commit"
+                     + (f"; {verbatim} verbatim file(s) match their sha256"
+                        if verbatim else ""))
     parts = []
     if missing:
         parts.append(f"bundled but not in the manifest: {', '.join(missing)}")
@@ -122,6 +160,8 @@ def check_manifest(bundle, manifest):
         parts.append(f"in the manifest but not bundled: {', '.join(extra)}")
     if nocommit:
         parts.append(f"no nist_commit recorded: {', '.join(nocommit)}")
+    if altered:
+        parts.append(f"content differs from its pinned sha256: {', '.join(altered)}")
     return Check("manifest", BLOCK, "MANIFEST.json does not describe the bundle",
                  "; ".join(parts) + ". Reports cite the manifest as the vector "
                  "revision, so they would name vectors that were not used.",
@@ -342,7 +382,7 @@ def nist_commit(name):
         return None
 
 
-def run_suites(vector_dir, prefixes):
+def run_suites(vector_dir, prefixes, opts=None):
     """{prefix: (passed, total, {group: (p, t)})} for each suite, or an error
     string. Output is swallowed; the doctor reports, the suites do not."""
     from pq_verify import core
@@ -351,7 +391,7 @@ def run_suites(vector_dir, prefixes):
         fn = getattr(core, SUITES[pre])
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                r = fn(vector_dir=str(vector_dir))
+                r = fn(vector_dir=str(vector_dir), **(opts or {}).get(pre, {}))
         except Exception as e:                       # a malformed file, typically
             out[pre] = f"{type(e).__name__}: {e}"
             continue
@@ -405,7 +445,7 @@ def review_candidate(bundle, manifest, history, cand_dir, have_refs):
     # Structure: what changed, per file.
     lines = []
     for name, raw in changed.items():
-        old = W.fingerprint(json.dumps(bundle[name]).encode())
+        old = W.fingerprint(raw_of(bundle[name]))
         new = W.fingerprint(raw)
         old["sha256"] = manifest[name]["sha256"]
         lines += W.describe_change(name, old, new, {})
@@ -423,7 +463,7 @@ def review_candidate(bundle, manifest, history, cand_dir, have_refs):
         for name, doc in bundle.items():
             q = pinned_tree / name
             q.parent.mkdir(parents=True, exist_ok=True)
-            q.write_text(json.dumps(doc))
+            q.write_bytes(raw_of(doc))
             p = work / name
             p.parent.mkdir(parents=True, exist_ok=True)
             if name in changed:
@@ -436,8 +476,8 @@ def review_candidate(bundle, manifest, history, cand_dir, have_refs):
                                         "do not pin; NIST may be mid-publish"))
                     return checks, changed, None
             else:
-                p.write_text(json.dumps(doc))
-                cand_files[name] = doc
+                p.write_bytes(raw_of(doc))
+                cand_files[name] = doc_of(doc)
 
         checks.append(check_keycheck(cand_files, "candidate"))
 
@@ -457,8 +497,12 @@ def review_candidate(bundle, manifest, history, cand_dir, have_refs):
 
         # Side by side: the pinned bundle and the candidate, same suites.
         prefixes = sorted({p for p in SUITES for n in changed if n.startswith(p + "-")})
-        pinned = run_suites(pinned_tree, prefixes)
-        cand = run_suites(work, prefixes)
+        # A changed sigGen file is checked by signing it: ~30 min, but a re-pin
+        # of answers nobody recomputed is what this review exists to stop.
+        opts = {p: {"siggen": True} for p in SUITE_SIGGEN
+                if any(n.startswith(SUITE_SIGGEN[p]) for n in changed)}
+        pinned = run_suites(pinned_tree, prefixes, opts)
+        cand = run_suites(work, prefixes, opts)
         for pre in prefixes:
             a, b = pinned.get(pre), cand.get(pre)
             key = f"suite:{pre}"
@@ -529,18 +573,22 @@ def review_candidate(bundle, manifest, history, cand_dir, have_refs):
 # ─────────────────────────────── apply ───────────────────────────────
 
 def apply_candidate(repo, bundle, manifest, changed, commits):
-    """Re-cut the bundle and manifest. Deterministic: the same inputs produce
-    byte-identical files, so the diff a reviewer sees is only the change."""
+    """Re-cut the archives and manifest. Deterministic: the same inputs produce
+    byte-identical files, so the diff a reviewer sees is only the change.
+    Only the archives holding a changed file are rewritten; the SLH-DSA
+    signature archive keeps NIST's text verbatim, the main one parsed JSON."""
     P = paths(repo)
+    touched = set()
     for name, raw in changed.items():
-        bundle[name] = json.loads(raw)
+        verbatim = isinstance(bundle.get(name), str) or bool(_VECTOR_BUNDLES[_bundle_name(name)])
+        bundle[name] = raw.decode() if verbatim else json.loads(raw)
         manifest[name] = {"bytes": len(raw),
                           "sha256": hashlib.sha256(raw).hexdigest(),
                           "nist_commit": commits[name]["sha"]}
-    with open(P["bundle"], "wb") as fh:
-        with gzip.GzipFile(filename="acvp_vectors.json", mode="wb", fileobj=fh,
-                           mtime=0, compresslevel=9) as g:
-            g.write(json.dumps(bundle, separators=(",", ":")).encode())
+        touched.add(_bundle_name(name))
+    for arc in sorted(touched):
+        entries = {k: v for k, v in bundle.items() if _bundle_name(k) == arc}
+        write_bundle(P["bundles"][arc], entries, verbatim=bool(_VECTOR_BUNDLES[arc]))
     with open(P["manifest"], "w") as fh:
         json.dump(dict(sorted(manifest.items())), fh, indent=2)
         fh.write("\n")
@@ -564,7 +612,7 @@ def token(manifest, changed, checks):
 def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides=None,
         skip_edge=False):
     P = paths(repo)
-    bundle = load_bundle(P["bundle"])
+    bundle = load_bundle(P["bundles"])
     manifest = load_json(P["manifest"], {})
     baseline = load_json(P["baseline"], {})
     history = load_json(P["history"], {})
@@ -629,7 +677,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
                 "", "add the revisions to pq_verify/vectors/PROVENANCE.md and an "
                     "entry to CHANGELOG.md, run pytest, then open a PR"))
             # Re-check what was written, from disk, not from memory.
-            nb, nm = load_bundle(P["bundle"]), load_json(P["manifest"], {})
+            nb, nm = load_bundle(P["bundles"]), load_json(P["manifest"], {})
             for c in (check_manifest(nb, nm), check_keycheck(nb, "re-pinned")):
                 c.key = "after:" + c.key
                 checks.append(c)

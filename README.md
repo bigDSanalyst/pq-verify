@@ -6,11 +6,12 @@
 ![self-suite](https://img.shields.io/badge/self--suite-160%20checks-brightgreen)
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
+![ACVP-SLH](https://img.shields.io/badge/SLH--DSA%20ACVP-1248%2F1248-brightgreen)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23092768.svg)](https://doi.org/10.5281/zenodo.23092768)
 
-**Independent verification for ML-KEM (Kyber) and ML-DSA (Dilithium) implementations.**
+**Independent verification for ML-KEM (Kyber), ML-DSA (Dilithium) and SLH-DSA (SPHINCS+) implementations.**
 
-You deploy post-quantum cryptography. pq-verify checks that an implementation computes the FIPS 203/204 standard correctly — the transform verified in the native finite field, the full ML-KEM scheme byte-exact against NIST's own test vectors, with machine-checkable certificates for the algebraic identities. Plus FIPS 205 SLH-DSA parameter validation across all 12 parameter sets.
+You deploy post-quantum cryptography. pq-verify checks that an implementation computes the FIPS 203/204 standard correctly — the transform verified in the native finite field, the full ML-KEM scheme byte-exact against NIST's own test vectors, with machine-checkable certificates for the algebraic identities. Plus FIPS 205 SLH-DSA against every NIST ACVP vector: key generation, signature verification and byte-exact signature generation across all 12 parameter sets.
 
 It does not compute PQC. It verifies the implementations that do: liboqs, BoringSSL, OpenSSL+OQS, HSM firmware, or your own code.
 
@@ -23,7 +24,7 @@ A three-layer audit of any ML-KEM/ML-DSA implementation:
 | Layer | Question answered | How |
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
-| **Compliance** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 = 855/855 ACVP vectors (pinned) |
+| **Compliance** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 = 1479/1479 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
 | **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
 
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
@@ -43,6 +44,11 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
   dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
   what it needed. It is never counted as a pass, and never as a failure either
 - **240/240** NIST ACVP ML-KEM vectors — keyGen + encaps + decaps byte-exact, KeyCheck bool-exact
+- **1248/1248** NIST ACVP SLH-DSA vectors, all 12 parameter sets — keyGen 120 byte-exact,
+  sigVer 504 verdict-exact (valid, modified message / R / FORS / hypertree, one byte
+  short or long), sigGen 624 byte-exact, deterministic and with NIST's randomness;
+  internal, pure and pre-hash interfaces over twelve hash functions. sigGen takes
+  about 30 min, so it is `--slhdsa-siggen` and a weekly CI job
 - **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
 - **Non-circular KAT** 100/100 against the independent FIPS reference
 - Calibrated lattice estimator: reproduces lattice-estimator exactly (Kyber-512 β=406/118.6 bits)
@@ -60,7 +66,8 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ```bash
 pip install "pq-verify[full]"
-pq-verify --acvp-all            # 855/855, offline, no configuration
+pq-verify --acvp-all            # 1479/1479, offline, no configuration, ~1 min
+pq-verify --slhdsa-siggen      # + SLH-DSA sigGen, 624 signatures, ~30 min
 ```
 
 That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
@@ -270,8 +277,8 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 | `main()` | 160-check self-suite |
 | `pqverify_acvp()` | Full NIST ACVP end-to-end ML-KEM (240/240, all groups) |
 | `pqverify_mldsa_acvp()` | Full NIST ACVP end-to-end ML-DSA (615/615, FIPS 204) |
-| `pqverify_slhdsa_acvp()` | NIST ACVP SLH-DSA keyGen (120/120, FIPS 205, all 12 parameter sets) |
-| `pqverify_acvp_all()` | ML-KEM + ML-DSA (855/855) offline; `slhdsa=True` adds FIPS 205 → 975/975 |
+| `pqverify_slhdsa_acvp()` | NIST ACVP SLH-DSA (FIPS 205, all 12 parameter sets): keyGen 120 + sigVer 504; `siggen=True` adds 624 byte-exact signatures |
+| `pqverify_acvp_all()` | ML-KEM + ML-DSA + SLH-DSA keyGen/sigVer (1479/1479) offline; `slhdsa_siggen=True` adds sigGen → 2103/2103; `slhdsa=False` → 855/855 |
 | `pqverify_params(set)` | Parameter security: primal-uSVP + sparse hybrid |
 | `pqverify_kem(k=4)` | Native algebraic full-KEM verification |
 | `pqverify_kat(ntt, k=4)` | Non-circular KAT vs FIPS definition |
@@ -290,7 +297,9 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 ## Deterministic by default
 
 pq-verify ships with a **frozen, versioned snapshot of NIST's ACVP vectors** bundled
-inside the package (gzipped, ~7 MB). By default it verifies against those — so:
+inside the package (gzipped: ~8 MB, plus a ~39 MB archive of SLH-DSA signature
+vectors that is opened only when an SLH-DSA suite runs). By default it verifies
+against those — so:
 
 - **the same input gives the same result, every run, forever**
 - **it works with no network** — air-gapped, offline, no GitHub reachability needed
@@ -302,7 +311,7 @@ than once. A tool that fetches live gives different answers on different days. T
 does not.
 
 ```python
-pqverify_acvp_all()              # pinned bundle, offline, deterministic  → 855/855
+pqverify_acvp_all()              # pinned bundle, offline, deterministic  → 1479/1479
 pqverify_acvp_all(live=True)     # opt in: fetch NIST's current vectors instead
 pqverify_acvp_all(vector_dir=d)  # or point at your own local vector set
 ```
@@ -314,7 +323,7 @@ something, so re-pinning is a deliberate, reviewed act rather than a live depend
 ## Verifying a release
 
 Releases are built by `.github/workflows/release.yml` on GitHub's runners, from
-a reviewed commit, after the full suite and all 855 NIST ACVP vectors pass on
+a reviewed commit, after the full suite and all 1479 NIST ACVP vectors pass on
 Python 3.9 through 3.13. Each artifact carries **SLSA build provenance** and an
 attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
@@ -498,7 +507,7 @@ pyproject.toml             Build config + console-script entry point
 dist/
   pq_verify-2.9.0-py3-none-any.whl    Installable wheel
   pq_verify-2.9.0.tar.gz              Source distribution
-DEMO.ipynb                 One-click Colab demo → 855/855
+DEMO.ipynb                 One-click Colab demo → 1479/1479
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
 README.md / QUICKSTART.md / LICENSE / CITATION.cff
@@ -513,14 +522,14 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
 
 **Minimum (core engines + ~149 self-tests):**
 - Python 3.9+ — **every version of the declared range (3.9, 3.10, 3.11, 3.12,
-  3.13) runs the full test suite and all 855 ACVP vectors in CI.** The floor is
+  3.13) runs the full test suite and all 1479 ACVP vectors in CI.** The floor is
   3.9 rather than 3.8 because `pq-verify[full]` cannot resolve below it:
   `kyber-py` and `dilithium-py` both require `>=3.9`. `requires-python` and the
   code are held together mechanically — a module that stops parsing at the
   declared floor fails the suite, and widening the floor fails it too.
 - gcc and g++ (the C/C++ engines compile at runtime)
 
-**For the full 160/160 self-suite and the 855/855 ACVP claim:**
+**For the full 160/160 self-suite and the 1479/1479 ACVP claim:**
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
 - `dilithium-py` — **required** for `pqverify_mldsa_acvp()` (the 615 ML-DSA vectors)
 - `coq` — required for the Coq certificate verification tests
@@ -533,7 +542,7 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 
 **Optional (1 test each, everything works without them):**
 - `cryptominisat` — the CMS5 speed-comparison benchmark
-- `slh-dsa` — SLH-DSA live roundtrip (parameters still validate without it)
+- `slh-dsa` — the SLH-DSA ACVP reference and live roundtrip (parameters still validate without it)
 - network access — `pqverify_acvp()` fetches NIST vectors from GitHub live; for air-gapped use the pinned vectors are used by default, or pass `vector_dir=` pointing at your own local vector set
 
 **Deliberately NOT required** (a deployment advantage):

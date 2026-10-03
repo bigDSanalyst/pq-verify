@@ -188,8 +188,12 @@ def test_watcher_covers_every_bundled_vector():
         import pytest
         pytest.skip("bundle or watcher not present in this layout")
 
-    with gzip.open(bundle, "rt") as fh:
-        bundled = set(json.load(fh).keys())
+    bundled = set()
+    for arc in bundle.parent.glob("*.json.gz"):
+        if arc.name != "edge_vectors.json.gz":          # C2SP, not NIST
+            with gzip.open(arc, "rt") as fh:
+                bundled |= set(json.load(fh).keys())
+    assert any(k.startswith("SLH-DSA-sigGen") for k in bundled)
 
     src = watcher.read_text()
     block = re.search(r"TARGETS = \{(.*?)\n\}", src, re.S).group(1)
@@ -263,8 +267,10 @@ def test_manifest_records_every_bundled_file_and_its_nist_commit():
     reports cite as the vector revision, so it must cover the whole bundle."""
     import gzip, json, pathlib, re
     vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
-    with gzip.open(vec / "acvp_vectors.json.gz", "rt") as fh:
-        bundled = set(json.load(fh))
+    bundled = set()
+    for arc in ("acvp_vectors.json.gz", "slhdsa_sig_vectors.json.gz"):
+        with gzip.open(vec / arc, "rt") as fh:
+            bundled |= set(json.load(fh))
     manifest = json.loads((vec / "MANIFEST.json").read_text())
     assert set(manifest) == bundled
     for name, entry in manifest.items():
@@ -2557,7 +2563,7 @@ def _doctor_repo(tmp_path, history=None):
     repo = tmp_path / "repo"
     (repo / "pq_verify" / "vectors").mkdir(parents=True)
     (repo / "tools" / "vector_state").mkdir(parents=True)
-    for f in ("acvp_vectors.json.gz", "MANIFEST.json",
+    for f in ("acvp_vectors.json.gz", "slhdsa_sig_vectors.json.gz", "MANIFEST.json",
               "edge_vectors.json.gz", "EDGE_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
@@ -3441,3 +3447,266 @@ def test_per_run_certificates_use_the_proved_transform():
     src = (pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "coq" / "NTT.v").read_text()
     shared = src[src.index("(* BEGIN SHARED"):src.index("(* END SHARED *)")]
     assert shared in _coq_ntt_prelude(3329, 17, 7, 7)
+
+
+# ----------------------------------------------------------------------
+# SLH-DSA signatures (FIPS 205 sigVer and sigGen)
+#
+# NIST's SLH-DSA signature vectors are pinned verbatim in their own archive,
+# opened only by the SLH-DSA suite. sigVer (504) runs by default; sigGen
+# (624 byte-exact signatures, ~30 min) is opt-in and runs weekly in CI. The
+# negative controls show each check can fail: a verifier that accepts or
+# rejects everything, a message encoding that drops the context, a signer
+# that ignores NIST's randomness.
+# ----------------------------------------------------------------------
+
+def _slh_docs(mode):
+    from pq_verify.core import _load_vector_json, _pkg_dir
+    import os
+    d = f"SLH-DSA-{mode}-FIPS205"
+    base = os.path.join(_pkg_dir(), "vectors", d)
+    return (_load_vector_json(os.path.join(base, "prompt.json"), f"{d}/prompt.json"),
+            _load_vector_json(os.path.join(base, "expectedResults.json"),
+                              f"{d}/expectedResults.json"))
+
+
+def _slh_sigver(**kw):
+    pytest.importorskip("slhdsa")
+    from pq_verify.core import pqverify_slhdsa_acvp
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_slhdsa_acvp(verbose=False, keygen=False, **kw)
+
+
+def test_slhdsa_sigver_matches_every_nist_verdict():
+    r = _slh_sigver()
+    assert (r["passed"], r["total"]) == (504, 504), r["failures"][:5]
+    assert r["modes"] == ["sigVer"]
+    assert "112690e" in r["vectors"]
+    # every interface and both hash families are in the denominator
+    labels = set(r["detail"])
+    for iface in ("internal", "pure", "preHash"):
+        for ps in ("SLH-DSA-SHA2-128s", "SLH-DSA-SHAKE-256f"):
+            assert f"sigVer/{ps}/{iface}" in labels
+
+
+@pytest.mark.parametrize("verdict, want_failures", [(True, 432), (False, 72)])
+def test_slhdsa_sigver_control_constant_verifier_fails(monkeypatch, verdict,
+                                                       want_failures):
+    """A verifier that ignores its input must fail exactly NIST's cases of the
+    other verdict: 72 valid signatures, 432 invalid ones (modified message,
+    R, FORS and hypertree parts, one byte short, one byte long)."""
+    import slhdsa.lowlevel.slhdsa as LL
+    monkeypatch.setattr(LL, "verify", lambda *a, **k: verdict)
+    r = _slh_sigver()
+    assert r["total"] - r["passed"] == want_failures
+
+
+def test_slhdsa_sigver_control_message_encoding_is_checked(monkeypatch):
+    """Dropping the context from M' (FIPS 205 Alg. 24/25) must fail NIST's
+    valid external signatures with a non-empty context: pq-verify builds M'
+    itself, so the encoding is under test, not the library's wrapper."""
+    from pq_verify import core
+    real = core._slhdsa_message
+
+    def no_ctx(g, t):
+        return real(g, dict(t, context=""))
+    monkeypatch.setattr(core, "_slhdsa_message", no_ctx)
+    r = _slh_sigver()
+    p, _ = _slh_docs("sigVer")
+    _, e = _slh_docs("sigVer")
+    passed = {str(t["tcId"]): t["testPassed"] for g in e["testGroups"] for t in g["tests"]}
+    want = sum(1 for g in p["testGroups"] if g["signatureInterface"] == "external"
+               for t in g["tests"] if t["context"] and passed[str(t["tcId"])])
+    assert want > 0 and r["total"] - r["passed"] == want
+
+
+def test_slhdsa_prehash_oids_are_fips205_der():
+    """FIPS 205 §10.2.2: the OID is DER 06 09 60 86 48 01 65 03 04 02 xx."""
+    from pq_verify.core import _slhdsa_message, _SLHDSA_PREHASH
+    import hashlib
+    want = {"SHA2-256": 0x01, "SHA2-384": 0x02, "SHA2-512": 0x03, "SHA2-224": 0x04,
+            "SHA2-512/224": 0x05, "SHA2-512/256": 0x06, "SHA3-224": 0x07,
+            "SHA3-256": 0x08, "SHA3-384": 0x09, "SHA3-512": 0x0A,
+            "SHAKE-128": 0x0B, "SHAKE-256": 0x0C}
+    assert {k: v[0] for k, v in _SLHDSA_PREHASH.items()} == want
+    g = {"signatureInterface": "external", "preHash": "preHash"}
+    m = _slhdsa_message(g, {"message": "616263", "context": "0102", "hashAlg": "SHA2-256"})
+    assert m == (b"\x01\x02\x01\x02" + bytes.fromhex("0609608648016503040201")
+                 + hashlib.sha256(b"abc").digest())
+    m = _slhdsa_message({"signatureInterface": "external", "preHash": "pure"},
+                        {"message": "616263", "context": ""})
+    assert m == b"\x00\x00abc"
+    assert _slhdsa_message({"signatureInterface": "internal"},
+                           {"message": "616263"}) == b"abc"
+    with pytest.raises(ValueError):
+        _slhdsa_message(g, {"message": "", "context": "00" * 256, "hashAlg": "SHA2-256"})
+
+
+def _slh_siggen_cases(param_set):
+    p, e = _slh_docs("sigGen")
+    sig = {str(t["tcId"]): t["signature"] for g in e["testGroups"] for t in g["tests"]}
+    out = []
+    for g in p["testGroups"]:
+        if g["parameterSet"] == param_set:
+            t = g["tests"][0]
+            out.append((g, t, sig[str(t["tcId"])]))
+    return out
+
+
+@pytest.mark.parametrize("param_set", ["SLH-DSA-SHA2-128f", "SLH-DSA-SHAKE-128f"])
+def test_slhdsa_siggen_is_byte_exact_for_every_interface(param_set):
+    """One NIST case per group (internal, pure, pre-hash; deterministic and
+    randomised) signed byte-exact. The full 624 run weekly."""
+    pytest.importorskip("slhdsa")
+    from pq_verify.core import _slhdsa_sign_internal, _slhdsa_message
+    import slhdsa.lowlevel.parameters as LP
+    par = getattr(LP, param_set.replace("SLH-DSA-", "").replace("-", "_").lower())
+    cases = _slh_siggen_cases(param_set)
+    assert len(cases) == 6
+    for g, t, want in cases:
+        addrnd = None if g["deterministic"] else bytes.fromhex(t["additionalRandomness"])
+        got = _slhdsa_sign_internal(_slhdsa_message(g, t), bytes.fromhex(t["sk"]),
+                                    addrnd, par)
+        assert got.hex().upper() == want.upper(), (g["tgId"], t["tcId"])
+
+
+def test_slhdsa_siggen_control_randomness_is_used():
+    """A signer that ignores additionalRandomness signs deterministically, so
+    it must miss every randomised case and still match every deterministic one."""
+    pytest.importorskip("slhdsa")
+    from pq_verify.core import _slhdsa_sign_internal, _slhdsa_message
+    import slhdsa.lowlevel.parameters as LP
+    for g, t, want in _slh_siggen_cases("SLH-DSA-SHA2-128f"):
+        got = _slhdsa_sign_internal(_slhdsa_message(g, t), bytes.fromhex(t["sk"]),
+                                    None, LP.sha2_128f)
+        assert (got.hex().upper() == want.upper()) == bool(g["deterministic"])
+
+
+def test_slhdsa_siggen_suite_runs_from_a_vector_dir(tmp_path):
+    """The opt-in suite end to end, on one fast parameter set, through
+    --vector-dir; a corrupted expected signature is a failure, not a pass."""
+    pytest.importorskip("slhdsa")
+    import json
+    from pq_verify.core import pqverify_slhdsa_acvp
+    p, e = _slh_docs("sigGen")
+    keep = {g["tgId"] for g in p["testGroups"] if g["parameterSet"] == "SLH-DSA-SHA2-128f"}
+    p2 = dict(p, testGroups=[g for g in p["testGroups"] if g["tgId"] in keep])
+    e2 = json.loads(json.dumps(dict(e, testGroups=[g for g in e["testGroups"]
+                                                   if g["tgId"] in keep])))
+    sig = e2["testGroups"][0]["tests"][0]["signature"]
+    e2["testGroups"][0]["tests"][0]["signature"] = ("00" if sig[:2] != "00" else "11") + sig[2:]
+    d = tmp_path / "SLH-DSA-sigGen-FIPS205"
+    d.mkdir()
+    (d / "prompt.json").write_text(json.dumps(p2))
+    (d / "expectedResults.json").write_text(json.dumps(e2))
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_slhdsa_acvp(vector_dir=str(tmp_path), verbose=False,
+                                 keygen=False, sigver=False, siggen=True)
+    n = sum(len(g["tests"]) for g in p2["testGroups"])
+    assert r["modes"] == ["sigGen"] and r["total"] == n
+    assert r["passed"] == n - 1 and len(r["failures"]) == 1
+
+
+def test_slhdsa_signature_archive_is_opened_only_when_needed():
+    """ML-KEM and ML-DSA runs never decompress the 39 MB SLH-DSA archive."""
+    import subprocess, sys, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    code = (
+        "import os\n"
+        "from pq_verify import core\n"
+        "d = os.path.join(core._pkg_dir(), 'vectors', 'ML-KEM-keyGen-FIPS203')\n"
+        "core._load_vector_json(os.path.join(d, 'prompt.json'), 'ML-KEM-keyGen-FIPS203/prompt.json')\n"
+        "assert list(core._VECTOR_BUNDLE_CACHE) == ['acvp_vectors.json.gz'], core._VECTOR_BUNDLE_CACHE.keys()\n"
+        "d = os.path.join(core._pkg_dir(), 'vectors', 'SLH-DSA-sigVer-FIPS205')\n"
+        "doc = core._load_vector_json(os.path.join(d, 'expectedResults.json'), 'SLH-DSA-sigVer-FIPS205/expectedResults.json')\n"
+        "assert 'slhdsa_sig_vectors.json.gz' in core._VECTOR_BUNDLE_CACHE\n"
+        "assert doc['testGroups'][0]['tests'][0]['tcId'] == 1\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], cwd=root,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_slhdsa_signature_archive_is_nist_verbatim():
+    """Each entry hashes to MANIFEST.json's sha256: NIST's bytes, offline."""
+    import gzip, hashlib, json, pathlib
+    vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
+    manifest = json.loads((vec / "MANIFEST.json").read_text())
+    with gzip.open(vec / "slhdsa_sig_vectors.json.gz", "rt") as fh:
+        arc = json.load(fh)
+    assert sorted(arc) == [f"SLH-DSA-{m}-FIPS205/{f}" for m in ("sigGen", "sigVer")
+                           for f in ("expectedResults.json", "prompt.json")]
+    for k, text in arc.items():
+        assert isinstance(text, str)
+        assert hashlib.sha256(text.encode()).hexdigest() == manifest[k]["sha256"], k
+        assert manifest[k]["nist_commit"] == "112690e"
+
+
+def test_doctor_blocks_an_altered_verbatim_vector_file(tmp_path):
+    """A verbatim entry whose bytes no longer match its pinned sha256 is caught
+    offline, even when it still parses and has the same tests."""
+    import gzip, json
+    D, _ = _doctor()
+    repo = _doctor_repo(tmp_path)
+    arc = repo / "pq_verify" / "vectors" / "slhdsa_sig_vectors.json.gz"
+    with gzip.open(arc, "rt") as fh:
+        entries = json.load(fh)
+    k = "SLH-DSA-sigVer-FIPS205/expectedResults.json"
+    entries[k] = entries[k].replace('"testPassed": false', '"testPassed": true', 1)
+    D.write_bundle(arc, entries, verbatim=True)
+    code, doc, st = _doctor_run(repo, "--fast")
+    assert code == 1 and st["manifest"] == "BLOCK"
+    detail = next(c for c in doc["checks"] if c["check"] == "manifest")["detail"]
+    assert k in detail and "sha256" in detail
+
+
+def test_doctor_repin_rewrites_only_the_archive_that_changed(tmp_path):
+    """Re-pinning an SLH-DSA signature file rewrites that archive, verbatim,
+    and leaves the main archive byte-identical."""
+    import gzip, hashlib, json
+    D, _ = _doctor()
+    repo = _doctor_repo(tmp_path)
+    P = D.paths(repo)
+    main_before = P["bundle"].read_bytes()
+    bundle, manifest = D.load_bundle(P["bundles"]), json.loads(P["manifest"].read_text())
+    k = "SLH-DSA-sigVer-FIPS205/expectedResults.json"
+    raw = bundle[k].replace("\n", "\r\n").encode()          # new bytes, same content
+    D.apply_candidate(repo, bundle, manifest, {k: raw}, {k: {"sha": "abcdef1"}})
+    assert P["bundle"].read_bytes() == main_before
+    with gzip.open(P["bundles"]["slhdsa_sig_vectors.json.gz"], "rt", newline="") as fh:
+        assert json.load(fh)[k].encode() == raw
+    m = json.loads(P["manifest"].read_text())[k]
+    assert m == {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                 "nist_commit": "abcdef1"}
+    code, doc, st = _doctor_run(repo, "--fast")
+    assert st["manifest"] == "ok"
+
+
+def test_main_archive_is_rewritten_byte_identically():
+    """write_bundle reproduces the shipped main archive exactly, so a re-pin's
+    diff is only the change."""
+    import gzip, json, tempfile, pathlib
+    D, root = _doctor()
+    src = root / "pq_verify" / "vectors" / "acvp_vectors.json.gz"
+    with gzip.open(src, "rt") as fh:
+        entries = json.load(fh)
+    with tempfile.TemporaryDirectory() as d:
+        out = pathlib.Path(d) / "acvp_vectors.json.gz"
+        D.write_bundle(out, entries, verbatim=False)
+        assert out.read_bytes() == src.read_bytes()
+
+
+def test_slhdsa_counts_match_the_docs():
+    """1248 = keyGen 120 + sigVer 504 + sigGen 624, and 1479 = 855 + 624,
+    counted from the pinned prompts, not typed."""
+    n = {m: sum(len(g["tests"]) for g in _slh_docs(m)[0]["testGroups"])
+         for m in ("sigVer", "sigGen")}
+    from pq_verify.core import _load_bundle
+    kg = _load_bundle()["SLH-DSA-keyGen-FIPS205/prompt.json"]
+    n["keyGen"] = sum(len(g["tests"]) for g in kg["testGroups"])
+    assert n == {"keyGen": 120, "sigVer": 504, "sigGen": 624}
+    readme = _docs_text()["README.md"]
+    assert "SLH--DSA%20ACVP-1248%2F1248" in readme
+    assert "1479/1479" in readme and "2103/2103" in readme
+    assert 855 + n["keyGen"] + n["sigVer"] == 1479
+    assert 1479 + n["sigGen"] == 2103

@@ -26,7 +26,7 @@ Colab:
           !pip install -q "pq-verify[full]"
   Cell 2: from pq_verify import main, pqverify_acvp_all
   Cell 3: main()                # 160/160
-          pqverify_acvp_all()   # 855/855
+          pqverify_acvp_all()   # 1479/1479
 
 Author: Nicholas Maino (iamweare)
 License: MIT
@@ -5292,6 +5292,17 @@ _ACVP_BASE = "https://raw.githubusercontent.com/usnistgov/ACVP-Server/master/gen
 
 _VECTOR_BUNDLE_CACHE = {}
 
+# The pinned NIST vectors live in two archives. The SLH-DSA signature files
+# (~39 MB compressed) have their own, opened only when an SLH-DSA signature
+# suite asks for one of them, so every other run never decompresses them.
+# Those entries are NIST's file text verbatim (sha256 equals MANIFEST.json's);
+# the main archive holds parsed JSON. Keys route by prefix.
+_VECTOR_BUNDLES = {
+    "acvp_vectors.json.gz": (),
+    "slhdsa_sig_vectors.json.gz": ("SLH-DSA-sigGen-FIPS205/",
+                                   "SLH-DSA-sigVer-FIPS205/"),
+}
+
 def _pkg_dir():
     """Directory of this module. Falls back to CWD when run via exec() as a
     standalone script, where __file__ is undefined."""
@@ -5301,22 +5312,31 @@ def _pkg_dir():
     except NameError:
         return _o.getcwd()
 
-def _bundle_path():
-    import os as _o
-    return _o.path.join(_pkg_dir(), "vectors", "acvp_vectors.json.gz")
+def _bundle_name(key=None):
+    """The archive that holds `key` ('DIR/file.json'); the main one if None."""
+    for name, prefixes in _VECTOR_BUNDLES.items():
+        if key and prefixes and key.startswith(prefixes):
+            return name
+    return "acvp_vectors.json.gz"
 
-def _load_bundle():
-    """Load (and memoise) the single combined pinned-vector archive, if present.
-    One gzipped JSON keyed by 'DIR/file.json' — one file instead of a nested tree,
-    which keeps the package simple and installable anywhere."""
-    global _VECTOR_BUNDLE_CACHE
-    if _VECTOR_BUNDLE_CACHE: return _VECTOR_BUNDLE_CACHE
+def _bundle_path(key=None):
+    import os as _o
+    return _o.path.join(_pkg_dir(), "vectors", _bundle_name(key))
+
+def _load_bundle(key=None):
+    """Load (and memoise) the pinned-vector archive that holds `key`, if
+    present. Each is one gzipped JSON keyed by 'DIR/file.json' -- one file
+    instead of a nested tree, which keeps the package simple and installable
+    anywhere."""
     import os as _o, gzip as _gz, json as _j
-    p = _bundle_path()
-    if _o.path.exists(p):
+    name = _bundle_name(key)
+    if name not in _VECTOR_BUNDLE_CACHE:
+        p = _bundle_path(key)
+        if not _o.path.exists(p):
+            return {}
         with _gz.open(p, "rt") as fh:
-            _VECTOR_BUNDLE_CACHE = _j.load(fh)
-    return _VECTOR_BUNDLE_CACHE
+            _VECTOR_BUNDLE_CACHE[name] = _j.load(fh)
+    return _VECTOR_BUNDLE_CACHE[name]
 
 
 def _vector_revision(*suites):
@@ -5371,8 +5391,10 @@ def _load_vector_json(path, bundle_key=None):
     pinned_dir = _os.path.abspath(_os.path.join(_pkg_dir(), "vectors"))
     in_pinned = _os.path.abspath(path).startswith(pinned_dir + _os.sep)
     if bundle_key and in_pinned:
-        b = _load_bundle()
+        b = _load_bundle(bundle_key)
         if bundle_key in b:
+            if isinstance(b[bundle_key], str):     # verbatim NIST text
+                b[bundle_key] = _j.loads(b[bundle_key])
             return b[bundle_key]
     if _os.path.exists(path):
         return _j.load(open(path))
@@ -5551,7 +5573,8 @@ import hashlib as _hashlib
 #             ML-DSA verification (FIPS 204)
 # ----------------------------------------------------------------
 # Companion to pqverify_acvp (ML-KEM / FIPS 203).
-# Together: 240 (ML-KEM) + 615 (ML-DSA) = 855/855 NIST ACVP vectors.
+# Together: 240 (ML-KEM) + 615 (ML-DSA) + 624 (SLH-DSA keyGen 120 + sigVer 504)
+# = 1479/1479 NIST ACVP vectors; SLH-DSA sigGen (624) is opt-in.
 # Requires: pip install "pq-verify[full]"  (dilithium-py)
 # ================================================================
 _MLDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
@@ -5739,38 +5762,137 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
 
 _SLHDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
                      "master/gen-val/json-files/")
-_SLHDSA_DIRS = {'keyGen': 'SLH-DSA-keyGen-FIPS205'}
+_SLHDSA_DIRS = {'keyGen': 'SLH-DSA-keyGen-FIPS205',
+                'sigVer': 'SLH-DSA-sigVer-FIPS205',
+                'sigGen': 'SLH-DSA-sigGen-FIPS205'}
+
+# FIPS 205 §10.2.2 (HashSLH-DSA): the approved pre-hash functions, by ACVP's
+# hashAlg name -> (last arc of the OID 2.16.840.1.101.3.4.2.x, digest).
+# SHAKE128 and SHAKE256 output 256 and 512 bits.
+_SLHDSA_PREHASH = {
+    'SHA2-256':     (1,  lambda m: hashlib.sha256(m).digest()),
+    'SHA2-384':     (2,  lambda m: hashlib.sha384(m).digest()),
+    'SHA2-512':     (3,  lambda m: hashlib.sha512(m).digest()),
+    'SHA2-224':     (4,  lambda m: hashlib.sha224(m).digest()),
+    'SHA2-512/224': (5,  lambda m: hashlib.new('sha512_224', m).digest()),
+    'SHA2-512/256': (6,  lambda m: hashlib.new('sha512_256', m).digest()),
+    'SHA3-224':     (7,  lambda m: hashlib.sha3_224(m).digest()),
+    'SHA3-256':     (8,  lambda m: hashlib.sha3_256(m).digest()),
+    'SHA3-384':     (9,  lambda m: hashlib.sha3_384(m).digest()),
+    'SHA3-512':     (10, lambda m: hashlib.sha3_512(m).digest()),
+    'SHAKE-128':    (11, lambda m: hashlib.shake_128(m).digest(32)),
+    'SHAKE-256':    (12, lambda m: hashlib.shake_256(m).digest(64)),
+}
 
 
-def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
-    """NIST ACVP end-to-end SLH-DSA key generation verification (FIPS 205).
+def _slhdsa_message(group, test):
+    """M', the message slh_sign_internal / slh_verify_internal see.
 
-    Verifies byte-exact key generation across all TWELVE FIPS 205 parameter
-    sets (SHA2 and SHAKE, 128/192/256, fast and small variants) against NIST's
-    published ACVP vectors.
+    pq-verify builds it itself rather than calling the library's pure/pre-hash
+    wrappers, so the FIPS 205 encodings are checked against NIST too:
+      internal  M' = M
+      pure      M' = 0x00 || |ctx| || ctx || M                (Alg. 22/24)
+      pre-hash  M' = 0x01 || |ctx| || ctx || OID || PH(M)     (Alg. 23/25)
+    """
+    m = bytes.fromhex(test['message'])
+    if group.get('signatureInterface') == 'internal':
+        return m
+    ctx = bytes.fromhex(test.get('context', ''))
+    if len(ctx) > 255:
+        raise ValueError("context longer than 255 bytes")
+    if group.get('preHash') == 'preHash':
+        arc, ph = _SLHDSA_PREHASH[test['hashAlg']]
+        oid = bytes.fromhex('06096086480165030402') + bytes([arc])  # DER
+        return b'\x01' + bytes([len(ctx)]) + ctx + oid + ph(m)
+    return b'\x00' + bytes([len(ctx)]) + ctx + m
 
-    Each test supplies (skSeed, skPrf, pkSeed) and NIST supplies the expected
-    (sk, pk). FIPS 205 defines:
-        pk = pkSeed || pkRoot
-        sk = skSeed || skPrf || pkSeed || pkRoot
-    where pkRoot is the root of the top-level XMSS tree. The seeds are copied
-    through; pkRoot is the computed quantity, so it is the real check.
+
+def _slhdsa_sign_internal(msg, sk, addrnd, par):
+    """FIPS 205 Algorithm 19, slh_sign_internal(M, SK, addrnd).
+
+    The `slhdsa` package's own sign() draws opt_rand from the OS when
+    randomising, so NIST's additionalRandomness cannot be injected through it.
+    This is Algorithm 19 over that package's FORS and hypertree primitives;
+    addrnd=None is the deterministic variant (opt_rand = PK.seed).
+    """
+    from slhdsa.lowlevel.addresses import FORSTreeAddress
+    from slhdsa.lowlevel.fors import FORS
+    from slhdsa.lowlevel.hypertree import HyperTree
+    from slhdsa.lowlevel.wots import WOTSParameter
+    n = par.n
+    if len(sk) != 4 * n:
+        raise ValueError(f"SK is {len(sk)} bytes, FIPS 205 says {4 * n}")
+    sk_seed, sk_prf, pk_seed, pk_root = (sk[i * n:(i + 1) * n] for i in range(4))
+    opt_rand = pk_seed if addrnd is None else addrnd
+    r = par.PRFmsg(sk_prf, opt_rand, msg)
+    sig = bytearray((1 + par.k * (par.a + 1) + par.h
+                     + par.d * WOTSParameter(par).len) * n)
+    view = memoryview(sig)
+    view[:n] = r
+    digest = par.Hmsg(r, pk_seed, pk_root, msg)
+    ka = -(-par.k * par.a // 8)
+    ht = -(-(par.h - par.h // par.d) // 8)
+    lf = -(-par.h // (8 * par.d))
+    md = digest[:ka]
+    idx_tree = int.from_bytes(digest[ka:ka + ht], 'big') % (1 << (par.h - par.h // par.d))
+    idx_leaf = int.from_bytes(digest[ka + ht:ka + ht + lf], 'big') % (1 << (par.h // par.d))
+    adrs = FORSTreeAddress(0, 0)
+    adrs.tree, adrs.keypair = idx_tree, idx_leaf
+    fl = par.k * (par.a + 1) * n
+    FORS(par).sign(md, sk_seed, pk_seed, adrs, view[n:n + fl])
+    pk_fors = FORS(par).publickey_from_sign(view[n:n + fl], md, pk_seed, adrs)
+    HyperTree(par).sign(pk_fors, sk_seed, pk_seed, idx_tree, idx_leaf, view[n + fl:])
+    return bytes(sig)
+
+
+def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None,
+                         siggen=False, sigver=True, keygen=True, param_sets=None):
+    """NIST ACVP end-to-end SLH-DSA verification (FIPS 205), all twelve
+    parameter sets (SHA2 and SHAKE, 128/192/256, fast and small).
+
+    keyGen (120): each test supplies (skSeed, skPrf, pkSeed) and NIST the
+    expected (sk, pk). FIPS 205 defines pk = pkSeed || pkRoot and
+    sk = skSeed || skPrf || pkSeed || pkRoot, where pkRoot is the root of the
+    top-level XMSS tree. The seeds are copied through; pkRoot is the computed
+    quantity, so it is the real check.
+
+    sigVer (504, on by default): the verdict on every (pk, M, ctx, sig)
+    matches NIST's testPassed. Per parameter set NIST supplies a valid
+    signature, a modified message, a modified R, FORS and hypertree
+    signature, and signatures one byte too short and too long, over the
+    internal interface and the external pure and pre-hash ones (twelve
+    hash functions).
+
+    sigGen (624, opt-in): the signature is byte-exact with NIST's, both
+    deterministic and with NIST's additionalRandomness, over the same three
+    interfaces. Signing a small ('s') parameter set takes seconds per
+    signature, so the full set takes about half an hour; pass siggen=True
+    (CLI --slhdsa-siggen). CI runs it weekly.
+
+    For the external interfaces pq-verify builds M' itself (see
+    _slhdsa_message) rather than calling the library's wrappers, so the
+    domain separator, context and pre-hash OID encodings are checked too.
 
     Reference: the `slhdsa` package, verified FIPS 205-conformant against these
-    same NIST vectors (24/24, all twelve parameter sets) before adoption.
-    NOTE: `pyspx` is NOT usable here -- it implements the SPHINCS+ round-3
-    submission, whose tweakable-hash/address encoding differs from FIPS 205,
-    and produces a different pkRoot. Using it would report CORRECT FIPS 205
-    implementations as wrong.
+    same NIST vectors before adoption. NOTE: `pyspx` is NOT usable here -- it
+    implements the SPHINCS+ round-3 submission, whose tweakable-hash/address
+    encoding differs from FIPS 205, and produces a different pkRoot. Using it
+    would report CORRECT FIPS 205 implementations as wrong.
+
+    keygen/sigver/siggen select the modes; param_sets (e.g.
+    ['SLH-DSA-SHA2-128s']) limits every mode to those sets, which is how CI
+    spreads sigGen over parallel jobs.
 
     Vector source precedence matches pqverify_acvp: prompt_dir/vector_dir,
-    then live=True, else the pinned bundle shipped in-package.
+    then live=True, else the pinned bundles shipped in-package (the signature
+    vectors sit in their own archive, opened only here).
 
     Requires: pip install slh-dsa   (PyPI name is hyphenated; module is `slhdsa`)
     """
     import json as _j3, os as _os3
     try:
         from slhdsa.lowlevel.slhdsa import Address, XMSS
+        from slhdsa.lowlevel.slhdsa import verify as _slh_verify
         import slhdsa.lowlevel.parameters as _LP
     except ImportError:
         DEGRADED['deps'].append('slh-dsa')
@@ -5778,11 +5900,14 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         print("  slh-dsa required:  pip install slh-dsa   (module name: slhdsa)")
         return None
 
+    modes = ((['keyGen'] if keygen else []) + (['sigVer'] if sigver else [])
+             + (['sigGen'] if siggen else []))
+    dirs = [_SLHDSA_DIRS[m] for m in modes]
     _local = prompt_dir or vector_dir
     if not _local and not live:
         _local = _os3.path.join(_pkg_dir(), "vectors")
     if verbose:
-        print(f"  vectors: {_vector_label(_local, *_SLHDSA_DIRS.values())}")
+        print(f"  vectors: {_vector_label(_local, *dirs)}")
         print(f"  reference: {_reference('slh-dsa')}")
 
     def load(name):
@@ -5801,57 +5926,117 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
     def _par(ps):
         return getattr(_LP, ps.replace('SLH-DSA-', '').replace('-', '_').lower(), None)
 
+    def _label(mode, g):
+        if mode == 'keyGen':
+            return f"keyGen/{g['parameterSet']}"
+        iface = g.get('signatureInterface', '?')
+        if iface == 'external':
+            iface = g.get('preHash', 'pure')
+        det = ''
+        if mode == 'sigGen':
+            det = '/det' if g.get('deterministic') else '/rnd'
+        return f"{mode}/{g['parameterSet']}/{iface}{det}"
+
+    def _hex_eq(a, b):
+        return a.upper() == str(b).upper()
+
+    def _passed(v):
+        # NIST writes testPassed as a JSON boolean; tolerate "true"/"false".
+        return v if isinstance(v, bool) else str(v).lower() == 'true'
+
+    def keygen_ok(par, t, ref):
+        sk_seed = bytes.fromhex(t['skSeed'])
+        sk_prf = bytes.fromhex(t['skPrf'])
+        pk_seed = bytes.fromhex(t['pkSeed'])
+        pk_root = XMSS(par).node(sk_seed, 0, par.h_m, pk_seed, Address(par.d - 1, 0))
+        return (_hex_eq((pk_seed + pk_root).hex(), ref['pk'])
+                and _hex_eq((sk_seed + sk_prf + pk_seed + pk_root).hex(), ref['sk']))
+
+    def sigver_ok(par, g, t, ref):
+        pk = bytes.fromhex(t['pk'])
+        if len(pk) != 2 * par.n:
+            got = False
+        else:
+            got = bool(_slh_verify(_slhdsa_message(g, t), bytes.fromhex(t['signature']),
+                                   (pk[:par.n], pk[par.n:]), par))
+        return got == _passed(ref['testPassed'])
+
+    def siggen_ok(par, g, t, ref):
+        addrnd = None
+        if not g.get('deterministic'):
+            addrnd = bytes.fromhex(t['additionalRandomness'])
+        sig = _slhdsa_sign_internal(_slhdsa_message(g, t), bytes.fromhex(t['sk']),
+                                    addrnd, par)
+        return _hex_eq(sig.hex(), ref['signature'])
+
     if verbose:
         print("=" * 64)
         print("  NIST ACVP END-TO-END SLH-DSA VERIFICATION (FIPS 205)")
         print(f"  Source: {'pinned/local' if _local else 'LIVE NIST ACVP-Server'}")
-        print("  keyGen: byte-exact pk and sk, all 12 parameter sets")
+        if keygen:
+            print("  keyGen: byte-exact pk and sk, all 12 parameter sets")
+        if sigver:
+            print("  sigVer: verdict = NIST testPassed (internal, pure, pre-hash)")
+        if siggen:
+            print("  sigGen: byte-exact signatures, deterministic and randomised")
         print("=" * 64)
 
-    p, e = load('keyGen')
-    exp = {t['tcId']: t for g in e['testGroups'] for t in g['tests']}
-    detail, ok_all, tot_all = {}, 0, 0
-    for g in p['testGroups']:
-        ps = g['parameterSet']
-        par = _par(ps)
-        if par is None:
-            if verbose:
-                print(f"  SKIP  {ps}: parameter set not available in reference")
-            continue
-        ok = tot = 0
-        for t in g['tests']:
-            tot += 1
-            try:
-                sk_seed = bytes.fromhex(t['skSeed'])
-                sk_prf = bytes.fromhex(t['skPrf'])
-                pk_seed = bytes.fromhex(t['pkSeed'])
-                pk_root = XMSS(par).node(sk_seed, 0, par.h_m, pk_seed,
-                                         Address(par.d - 1, 0))
-                got_pk = (pk_seed + pk_root).hex().upper()
-                got_sk = (sk_seed + sk_prf + pk_seed + pk_root).hex().upper()
-                ref = exp[t['tcId']]
-                if got_pk == ref['pk'].upper() and got_sk == ref['sk'].upper():
-                    ok += 1
-            except Exception:
-                pass
-        detail[f'keyGen/{ps}'] = (ok, tot)
-        ok_all += ok
-        tot_all += tot
-        if verbose:
-            print(f"  {'PASS' if ok == tot else 'FAIL'}      keyGen/{ps:22s} {ok}/{tot}")
+    check = {'keyGen': lambda par, g, t, r: keygen_ok(par, t, r),
+             'sigVer': sigver_ok, 'sigGen': siggen_ok}
+    detail, failures, ok_all, tot_all = {}, [], 0, 0
+    for mode in modes:
+        p, e = load(mode)
+        exp = {str(t['tcId']): t for g in e['testGroups'] for t in g['tests']}
+        for g in p['testGroups']:
+            ps = g['parameterSet']
+            if param_sets and ps not in param_sets:
+                continue
+            par = _par(ps)
+            label = _label(mode, g)
+            if par is None:
+                if verbose:
+                    print(f"  SKIP  {ps}: parameter set not available in reference")
+                continue
+            ok = tot = 0
+            for t in g['tests']:
+                tot += 1
+                try:
+                    good = check[mode](par, g, t, exp[str(t['tcId'])])
+                except Exception as ex:        # malformed input or missing answer
+                    good = False
+                    failures.append(f"{label} tcId {t['tcId']}: "
+                                    f"{type(ex).__name__}: {ex}")
+                else:
+                    if not good:
+                        failures.append(f"{label} tcId {t['tcId']}")
+                ok += good
+            prev = detail.get(label, (0, 0))
+            detail[label] = (prev[0] + ok, prev[1] + tot)
+            ok_all += ok
+            tot_all += tot
+            if verbose and mode != 'keyGen' and ok != tot:
+                print(f"  FAIL      {label:40s} {ok}/{tot}")
+            elif verbose and mode == 'keyGen':
+                print(f"  {'PASS' if ok == tot else 'FAIL'}      {label:40s} {ok}/{tot}")
+        if verbose and mode != 'keyGen':
+            mp = sum(v[0] for k, v in detail.items() if k.startswith(mode + '/'))
+            mt = sum(v[1] for k, v in detail.items() if k.startswith(mode + '/'))
+            print(f"  {'PASS' if mp == mt else 'FAIL'}      {mode + ' (all groups)':40s} {mp}/{mt}")
 
     verified = (ok_all == tot_all and tot_all > 0)
     if verbose:
         print("=" * 64)
         print(f"  ACVP RESULT: {ok_all}/{tot_all} NIST SLH-DSA vectors verified")
-        print("  keyGen byte-exact (pk and sk), all 12 FIPS 205 parameter sets")
-        print("  SCOPE: key generation only. sigGen/sigVer are not included --")
-        print("         SLH-DSA signing is slow (seconds per 's'-variant sig)")
-        print("         and those vector sets total ~34 MB.")
+        print("  scope: " + ", ".join(modes) + ", all 12 FIPS 205 parameter sets")
+        if not siggen:
+            print("  sigGen (624 byte-exact signatures, ~30 min) is opt-in:")
+            print("         pq-verify --slhdsa-siggen")
+        for f in failures[:10]:
+            print(f"  failed: {f}")
         print("=" * 64)
     return {'verified': verified, 'passed': ok_all, 'total': tot_all,
-            'detail': detail,
-            'vectors': _vector_label(_local, *_SLHDSA_DIRS.values()),
+            'detail': detail, 'modes': modes, 'failures': failures,
+            'vectors': _vector_label(_local, *dirs),
             'reference': _reference('slh-dsa')}
 
 
@@ -6143,26 +6328,30 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
 
 
 def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None,
-                      slhdsa=False):
-    """Run both ACVP suites: ML-KEM (FIPS 203) + ML-DSA (FIPS 204).
+                      slhdsa=True, slhdsa_siggen=False):
+    """Run the three ACVP suites: ML-KEM (FIPS 203), ML-DSA (FIPS 204) and
+    SLH-DSA (FIPS 205) key generation and signature verification.
 
     By default runs against the FROZEN vectors bundled in this package, so the
-    result is deterministic and offline. Combined coverage against the pinned
-    snapshot is stated in the release notes; pass live=True to verify against
-    NIST's current upstream vectors instead (the ML-KEM count can differ when
-    NIST changes the encapDecap keyFormat schema).
-    Requires: pip install "pq-verify[full]"  (kyber-py, dilithium-py)
+    result is deterministic and offline: 240 + 615 + 624 = 1479 vectors.
+    slhdsa=False leaves FIPS 205 out (855 vectors, ML-KEM + ML-DSA only);
+    slhdsa_siggen=True adds SLH-DSA signature generation, 624 byte-exact
+    signatures that take about half an hour. Pass live=True to verify against
+    NIST's current upstream vectors instead.
+    Requires: pip install "pq-verify[full]"  (kyber-py, dilithium-py, slh-dsa)
     """
     if verbose:
         print("#" * 64)
-        print("  NIST ACVP — FULL COVERAGE (FIPS 203 + FIPS 204)")
+        print("  NIST ACVP — FULL COVERAGE (FIPS 203 + FIPS 204"
+              + (" + FIPS 205)" if slhdsa else ")"))
         print("#" * 64)
     kem = pqverify_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
     dsa = pqverify_mldsa_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
     slh = None
-    if slhdsa:
+    if slhdsa or slhdsa_siggen:
         slh = pqverify_slhdsa_acvp(prompt_dir=prompt_dir, verbose=verbose,
-                                   live=live, vector_dir=vector_dir)
+                                   live=live, vector_dir=vector_dir,
+                                   siggen=slhdsa_siggen)
     kem_p = kem['passed'] if kem else 0
     kem_t = kem['total'] if kem else 0
     dsa_p = dsa['passed'] if dsa else 0
@@ -6176,11 +6365,12 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
         print("  SCOPE: reference-chain conformance, not a vendor audit.")
         print(f"    ML-KEM (FIPS 203): {kem_p}/{kem_t}")
         print(f"    ML-DSA (FIPS 204): {dsa_p}/{dsa_t}")
-        if slh:
-            print(f"    SLH-DSA (FIPS 205, keyGen only): {slh_p}/{slh_t}")
+        if slhdsa or slhdsa_siggen:
+            scope = ", ".join(slh['modes']) if slh else "did not run"
+            print(f"    SLH-DSA (FIPS 205, {scope}): {slh_p}/{slh_t}")
         print("#" * 64)
     return {'verified': (total_p == total_t and total_t > 0),
-            'slh_dsa': slh,
+            'slh_dsa': slh, 'slh_dsa_requested': bool(slhdsa or slhdsa_siggen),
             'passed': total_p, 'total': total_t,
             'ml_kem': kem, 'ml_dsa': dsa}
 

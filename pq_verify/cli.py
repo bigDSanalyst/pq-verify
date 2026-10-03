@@ -4,6 +4,8 @@ pq-verify command-line interface.
     pq-verify                      run the 160-check self-suite
     pq-verify --quick              fast subset of the self-suite
     pq-verify --acvp               full NIST ACVP (all 12 ML-KEM groups)
+    pq-verify --acvp-all           ML-KEM + ML-DSA + SLH-DSA (1479 vectors)
+    pq-verify --slhdsa-siggen      SLH-DSA sigGen, 624 signatures (~30 min)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
     pq-verify --leakage            per-layer algebraic protection allocation
@@ -23,6 +25,7 @@ from .core import (
     pqverify_acvp,
     pqverify_mldsa_acvp,
     pqverify_acvp_all,
+    pqverify_slhdsa_acvp,
     pqverify_params,
     pqverify_kem,
     pqverify_leakage,
@@ -46,7 +49,15 @@ def build_parser():
     p.add_argument("--mldsa-acvp", action="store_true",
                    help="full NIST ACVP end-to-end ML-DSA (FIPS 204, 615 vectors)")
     p.add_argument("--acvp-all", action="store_true",
-                   help="both ACVP suites: ML-KEM + ML-DSA (855 pinned vectors)")
+                   help="all three ACVP suites: ML-KEM + ML-DSA + SLH-DSA keyGen "
+                        "and sigVer (1479 pinned vectors, about a minute)")
+    p.add_argument("--slhdsa-acvp", action="store_true",
+                   help="NIST ACVP SLH-DSA (FIPS 205) alone: keyGen and sigVer, "
+                        "all 12 parameter sets (624 vectors)")
+    p.add_argument("--slhdsa-siggen", action="store_true",
+                   help="add SLH-DSA sigGen: 624 byte-exact signatures, "
+                        "deterministic and randomised, about 30 min. Extends "
+                        "--acvp-all, or runs the SLH-DSA suite on its own")
     p.add_argument("--edge-cases", nargs="?", const="all", metavar="SET",
                    help="pinned Wycheproof/CCTV edge-case vectors against pq-verify's "
                         "own references (kyber-py, dilithium-py); SET limits it to "
@@ -128,12 +139,18 @@ def main(argv=None):
     if getattr(args, "mldsa_acvp", False):
         acvp_results["ML-DSA (FIPS 204)"] = pqverify_mldsa_acvp(**_vsrc)
         ran_task = True
+    _siggen = getattr(args, "slhdsa_siggen", False)
     if getattr(args, "acvp_all", False):
-        _all = pqverify_acvp_all(**_vsrc)
+        _all = pqverify_acvp_all(slhdsa_siggen=_siggen, **_vsrc)
         acvp_results["ML-KEM (FIPS 203)"] = _all.get("ml_kem")
         acvp_results["ML-DSA (FIPS 204)"] = _all.get("ml_dsa")
-        if _all.get("slh_dsa"):
-            acvp_results["SLH-DSA (FIPS 205)"] = _all["slh_dsa"]
+        # Listed even when it could not run: a requested suite that is absent
+        # from the report reads as one that was never asked for.
+        acvp_results["SLH-DSA (FIPS 205)"] = _all.get("slh_dsa")
+        ran_task = True
+    elif getattr(args, "slhdsa_acvp", False) or _siggen:
+        acvp_results["SLH-DSA (FIPS 205)"] = pqverify_slhdsa_acvp(siggen=_siggen,
+                                                                   **_vsrc)
         ran_task = True
     proofs_result = None
     if getattr(args, "proofs", False):

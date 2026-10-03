@@ -337,7 +337,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/pure/True"
       },
       {
         "fields": [
@@ -350,7 +351,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/preHash/True"
       },
       {
         "fields": [
@@ -362,32 +364,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
-      },
-      {
-        "fields": [
-          "context",
-          "hashAlg",
-          "message",
-          "sk",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-65"
-      },
-      {
-        "fields": [
-          "context",
-          "message",
-          "sk",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/pure/True"
       },
       {
         "fields": [
@@ -400,7 +378,35 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/preHash/True"
       },
       {
         "fields": [
@@ -411,7 +417,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -422,7 +429,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -433,7 +441,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -444,7 +453,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -455,7 +465,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -466,7 +477,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal/True"
       },
       {
         "fields": [
@@ -479,34 +491,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
-      },
-      {
-        "fields": [
-          "context",
-          "hashAlg",
-          "message",
-          "rnd",
-          "sk",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-44"
-      },
-      {
-        "fields": [
-          "context",
-          "message",
-          "rnd",
-          "sk",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/pure/False"
       },
       {
         "fields": [
@@ -520,7 +506,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/preHash/False"
       },
       {
         "fields": [
@@ -533,7 +520,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/pure/False"
       },
       {
         "fields": [
@@ -547,7 +535,37 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "rnd",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/preHash/False"
       },
       {
         "fields": [
@@ -559,7 +577,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal/False"
       },
       {
         "fields": [
@@ -571,7 +590,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal/False"
       },
       {
         "fields": [
@@ -583,7 +603,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal/False"
       },
       {
         "fields": [
@@ -595,7 +616,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal/False"
       },
       {
         "fields": [
@@ -607,7 +629,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal/False"
       },
       {
         "fields": [
@@ -619,7 +642,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal/False"
       }
     ],
     "total_tests": 360
@@ -766,7 +790,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/pure"
       },
       {
         "fields": [
@@ -780,7 +805,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "external/preHash"
       },
       {
         "fields": [
@@ -793,34 +819,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
-      },
-      {
-        "fields": [
-          "context",
-          "hashAlg",
-          "message",
-          "pk",
-          "signature",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-65"
-      },
-      {
-        "fields": [
-          "context",
-          "message",
-          "pk",
-          "signature",
-          "tcId"
-        ],
-        "function": null,
-        "keyFormat": null,
-        "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/pure"
       },
       {
         "fields": [
@@ -834,7 +834,37 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-65",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 15,
+        "paramSet": "ML-DSA-87",
+        "variant": "external/preHash"
       },
       {
         "fields": [
@@ -846,7 +876,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal"
       },
       {
         "fields": [
@@ -858,7 +889,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-44"
+        "paramSet": "ML-DSA-44",
+        "variant": "internal"
       },
       {
         "fields": [
@@ -870,7 +902,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal"
       },
       {
         "fields": [
@@ -882,7 +915,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-65"
+        "paramSet": "ML-DSA-65",
+        "variant": "internal"
       },
       {
         "fields": [
@@ -894,7 +928,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal"
       },
       {
         "fields": [
@@ -906,7 +941,8 @@
         "function": null,
         "keyFormat": null,
         "n": 15,
-        "paramSet": "ML-DSA-87"
+        "paramSet": "ML-DSA-87",
+        "variant": "internal"
       }
     ],
     "total_tests": 180
@@ -1773,5 +1809,2589 @@
       }
     ],
     "total_tests": 120
+  },
+  "SLH-DSA-sigGen-FIPS205/expectedResults.json": {
+    "bytes": 32595492,
+    "sha256": "71e8e0f7e4b0cfd1747314299204d9d4d50968d200a4ae873921eaa7aabeaad1",
+    "structure": [
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": null
+      }
+    ],
+    "total_tests": 624
+  },
+  "SLH-DSA-sigGen-FIPS205/prompt.json": {
+    "bytes": 5512830,
+    "sha256": "afa673eacdf0aec53512a159159b7632684adfcd0d88f8640a7f6f5796aacdc8",
+    "structure": [
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/pure/True"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/preHash/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "internal/True"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/pure/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "context",
+          "hashAlg",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 12,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/preHash/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "internal/False"
+      },
+      {
+        "fields": [
+          "additionalRandomness",
+          "message",
+          "sk",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 7,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "internal/False"
+      }
+    ],
+    "total_tests": 624
+  },
+  "SLH-DSA-sigVer-FIPS205/expectedResults.json": {
+    "bytes": 39216,
+    "sha256": "259f5e2a0665de0adc0fefa45b5db3a2a6ed13c3c44d14bdaf64a80aee12c687",
+    "structure": [
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      },
+      {
+        "fields": [
+          "tcId",
+          "testPassed"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": null
+      }
+    ],
+    "total_tests": 504
+  },
+  "SLH-DSA-sigVer-FIPS205/prompt.json": {
+    "bytes": 30513796,
+    "sha256": "4e7beb1233e47baa0acdd36417c66c45811aa40a4e32ffdb1a35d93b13b289fb",
+    "structure": [
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256f",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "context",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/pure"
+      },
+      {
+        "fields": [
+          "context",
+          "hashAlg",
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "external/preHash"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-128s",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-192s",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHA2-256s",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-128s",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-192s",
+        "variant": "internal"
+      },
+      {
+        "fields": [
+          "message",
+          "pk",
+          "signature",
+          "tcId"
+        ],
+        "function": null,
+        "keyFormat": null,
+        "n": 14,
+        "paramSet": "SLH-DSA-SHAKE-256s",
+        "variant": "internal"
+      }
+    ],
+    "total_tests": 504
   }
 }
