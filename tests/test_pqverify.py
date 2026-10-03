@@ -3504,7 +3504,7 @@ def test_slhdsa_sigver_control_constant_verifier_fails(monkeypatch, verdict,
     """A verifier that ignores its input must fail exactly NIST's cases of the
     other verdict: 72 valid signatures, 432 invalid ones (modified message,
     R, FORS and hypertree parts, one byte short, one byte long)."""
-    import slhdsa.lowlevel.slhdsa as LL
+    LL = pytest.importorskip("slhdsa.lowlevel.slhdsa")
     monkeypatch.setattr(LL, "verify", lambda *a, **k: verdict)
     r = _slh_sigver()
     assert r["total"] - r["passed"] == want_failures
