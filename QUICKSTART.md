@@ -25,7 +25,8 @@ Ending in `OVERALL: 160/160 tests passed`, or fewer with some reported
 the ratio and names the dependency it needed.
 
 ```bash
-pq-verify --acvp-all      # 855/855 pinned NIST ACVP vectors (ML-KEM + ML-DSA)
+pq-verify --acvp-all      # 1479/1479 pinned NIST ACVP vectors (ML-KEM + ML-DSA + SLH-DSA)
+pq-verify --slhdsa-siggen # + 624 SLH-DSA signatures, byte-exact (~30 min)
 ```
 
 ---

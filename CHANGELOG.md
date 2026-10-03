@@ -3,6 +3,67 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **SLH-DSA signatures, against every NIST ACVP vector** (FIPS 205, all 12
+  parameter sets). Until now pq-verify checked SLH-DSA key generation only.
+  - **sigVer, 504 vectors, on by default.** Every verdict must match NIST's
+    `testPassed`: valid signatures, and ones with a modified message, R, FORS
+    or hypertree part, or one byte too short or too long.
+  - **sigGen, 624 vectors, opt-in** (`--slhdsa-siggen`,
+    `pqverify_slhdsa_acvp(siggen=True)`). Every signature must be byte-exact
+    with NIST's, deterministic and with NIST's `additionalRandomness`.
+    Signing an 's' parameter set takes seconds per signature, so the full run
+    takes about 30 minutes; a weekly workflow runs it with one job per
+    parameter set, and on changes to the code, the vectors or the reference.
+  - Both cover the internal interface and the external pure and pre-hash
+    ones, the latter over all twelve approved hash functions. pq-verify builds
+    M′ itself (domain separator, context, DER OID, digest) rather than calling
+    the reference's wrappers, so those encodings are checked against NIST too.
+    The reference's `sign()` cannot take injected randomness, so signing uses
+    FIPS 205 Algorithm 19 written over its FORS and hypertree primitives.
+  - Negative controls: a verifier that always accepts or always rejects
+    fails exactly 432 or 72 vectors; dropping the context from M′ fails every
+    valid external signature with a non-empty one; a signer that ignores
+    `additionalRandomness` misses every randomised case.
+- **`--slhdsa-acvp`** runs the SLH-DSA suite on its own (keyGen and sigVer);
+  `param_sets=` limits it to chosen parameter sets.
+
+### Changed
+
+- **`--acvp-all` and `pqverify_acvp_all()` include SLH-DSA keyGen and
+  sigVer: 1479 vectors (240 + 615 + 624), up from 855.** The run takes about
+  a minute. `pqverify_acvp_all(slhdsa=False)` gives the previous 855; the
+  `slh-dsa` reference was already part of `pq-verify[full]`. If it is missing,
+  the SLH-DSA suite is reported as not run instead of being left out of the
+  report.
+- **The SLH-DSA signature vectors ship in a second archive,**
+  `pq_verify/vectors/slhdsa_sig_vectors.json.gz` (39 MB). It holds NIST's
+  files verbatim (ACVP-Server `112690e`) and is opened only when an SLH-DSA
+  signature suite runs. The doctor checks each entry's sha256 offline, the
+  watcher tracks all four files, and `--apply` rewrites only the archive that
+  changed. The wheel grows from about 15 MB to about 54 MB.
+- The watcher's structural fingerprint tells signature groups apart by
+  interface (`signatureInterface`/`preHash`/`deterministic`), so a change
+  report no longer merges the six groups that share a parameter set.
+
+### Fixed
+
+- **The GitHub Action's `slhdsa` input did nothing.** It was declared but
+  never read. SLH-DSA keyGen and sigVer now run with the ACVP suites, and
+  `slhdsa: siggen` adds sigGen.
+- **An ACVP report was VERIFIED when a requested suite could not run.** Only
+  the suites that ran were counted, so with kyber-py and dilithium-py missing,
+  `--acvp-all --fail-on-finding` would pass on SLH-DSA's 624/624 alone. A
+  suite that did not run now makes the report CANNOT VERIFY and is listed
+  under `summary.not_run`.
+- **Nothing in CI ran the SLH-DSA ACVP suite.** The documented keyGen
+  120/120 was never checked on a push. CI and the release workflow now
+  install `slh-dsa` and fail unless all three ACVP suites ran, because
+  `--fail-on-finding` alone passes a suite that could not run.
+
 ## [2.9.0] — 2026-10-01
 
 ### Fixed

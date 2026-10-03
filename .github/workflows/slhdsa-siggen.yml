@@ -1,0 +1,82 @@
+name: SLH-DSA sigGen (weekly)
+
+# NIST's 624 SLH-DSA signature-generation vectors, signed byte-exact, both
+# deterministic and with NIST's additionalRandomness, over the internal,
+# pure and pre-hash interfaces. Signing a small ('s') parameter set takes
+# seconds per signature, so this is not part of every push: `--acvp-all`
+# runs SLH-DSA keyGen and sigVer, and this job covers sigGen weekly, on
+# changes to the code, the pinned vectors or the reference, and on demand. One job per
+# parameter set, so the slowest finishes in a few minutes.
+
+on:
+  pull_request:
+    paths:
+      - "pq_verify/core.py"
+      - "pq_verify/vectors/slhdsa_sig_vectors.json.gz"
+      - "pq_verify/vectors/MANIFEST.json"
+      - "constraints-reference.txt"
+      - ".github/workflows/slhdsa-siggen.yml"
+  schedule:
+    - cron: "15 7 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  siggen:
+    name: ${{ matrix.set }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        set:
+          - SLH-DSA-SHA2-128s
+          - SLH-DSA-SHA2-128f
+          - SLH-DSA-SHA2-192s
+          - SLH-DSA-SHA2-192f
+          - SLH-DSA-SHA2-256s
+          - SLH-DSA-SHA2-256f
+          - SLH-DSA-SHAKE-128s
+          - SLH-DSA-SHAKE-128f
+          - SLH-DSA-SHAKE-192s
+          - SLH-DSA-SHAKE-192f
+          - SLH-DSA-SHAKE-256s
+          - SLH-DSA-SHAKE-256f
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints-reference.txt . slh-dsa
+      - name: sigGen, byte-exact against NIST
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          from pq_verify.core import pqverify_slhdsa_acvp
+          ps = os.environ["SET"]
+          r = pqverify_slhdsa_acvp(keygen=False, sigver=False, siggen=True,
+                                   param_sets=[ps])
+          if r is None:
+              print("::error::slh-dsa is not installed"); sys.exit(1)
+          # 6 groups (internal / pure / pre-hash, deterministic / randomised)
+          # of 7 or 12 tests: a run that signed fewer than all 52 did not
+          # cover the set, whatever it passed.
+          if r["total"] != 52:
+              print(f"::error::{ps}: {r['total']} sigGen vectors, expected 52"); sys.exit(1)
+          if not r["verified"]:
+              for f in r["failures"]:
+                  print(f"::error title={ps}::{f}")
+              sys.exit(1)
+          print(f"{ps}: {r['passed']}/{r['total']} signatures byte-exact ({r['vectors']})")
+          PY

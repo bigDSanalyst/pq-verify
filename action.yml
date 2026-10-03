@@ -30,7 +30,10 @@ inputs:
     required: false
     default: 'true'
   slhdsa:
-    description: 'Also run FIPS 205 SLH-DSA key generation vectors.'
+    description: >
+      FIPS 205 SLH-DSA keyGen and sigVer run with the ACVP suites. 'siggen'
+      adds the 624 sigGen vectors, signed byte-exact (about 30 minutes).
+      'true' and 'false' are accepted for compatibility and change nothing.
     required: false
     default: 'false'
   hybrid-transcript:
@@ -128,6 +131,7 @@ runs:
         if [ "${{ inputs.acvp }}" != "false" ]; then
           EXTRA=""
           [ "${{ inputs.acvp }}" = "live" ] && EXTRA="--live"
+          [ "${{ inputs.slhdsa }}" = "siggen" ] && EXTRA="$EXTRA --slhdsa-siggen"
           echo "::group::NIST ACVP suites"
           pq-verify --acvp-all $EXTRA
           [ $? -ne 0 ] && STATUS=1

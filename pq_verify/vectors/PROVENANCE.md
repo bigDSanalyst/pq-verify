@@ -1,7 +1,7 @@
 # Pinned NIST ACVP Vectors
 
 Frozen snapshot of NIST ACVP-Server test vectors for FIPS 203 (ML-KEM),
-captured from https://github.com/usnistgov/ACVP-Server (gen-val/json-files).
+FIPS 204 (ML-DSA) and FIPS 205 (SLH-DSA), captured from https://github.com/usnistgov/ACVP-Server (gen-val/json-files).
 
 These are bundled so pq-verify is DETERMINISTIC and OFFLINE by default: the
 same input yields the same result regardless of upstream edits or network.
@@ -27,6 +27,16 @@ MANIFEST.json records each file's `nist_commit`; reports print it as
 | ML-DSA-sigGen-FIPS204 | `2972def` | 2026-07-20 |
 | ML-DSA-sigVer-FIPS204 | `a7f283c` | 2026-07-31 |
 | SLH-DSA-keyGen-FIPS205 | `112690e` | 2025-06-12 |
+| SLH-DSA-sigGen-FIPS205 | `112690e` | 2025-06-12 |
+| SLH-DSA-sigVer-FIPS205 | `112690e` | 2025-06-12 |
+
+The SLH-DSA sigGen and sigVer files (`prompt.json`, `expectedResults.json`;
+about 68 MB uncompressed) are in their own archive,
+`slhdsa_sig_vectors.json.gz`, which pq-verify opens only when an SLH-DSA
+signature suite runs. Its entries are NIST's file text verbatim, so the
+sha256 of each equals `MANIFEST.json`'s and the sha256 of the file at that
+NIST commit; `tools/doctor.py` checks this offline. The other files are
+stored as parsed JSON in `acvp_vectors.json.gz`.
 
 Superseded pins (pq-verify ≤ 2.8.0):
 

@@ -1,9 +1,9 @@
 """
-pq-verify — Independent verification for ML-KEM / ML-DSA implementations.
+pq-verify — Independent verification for ML-KEM / ML-DSA / SLH-DSA implementations.
 
 Verifies that post-quantum cryptography implementations compute the
-FIPS 203/204 standard correctly: native field-native NTT verification,
-non-circular Known Answer Tests, NIST ACVP end-to-end (855/855), a
+FIPS 203/204/205 standards correctly: native field-native NTT verification,
+non-circular Known Answer Tests, NIST ACVP end-to-end (1479/1479), a
 Bai-Galbraith lattice parameter-security estimator, RFC 10024 hybrid
 key-agreement composition, and per-layer algebraic protection allocation.
 The full ML-KEM NTT and both FIPS zeta tables are re-derived and checked in
