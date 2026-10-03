@@ -54,6 +54,11 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - **The GitHub Action's `slhdsa` input did nothing.** It was declared but
   never read. SLH-DSA keyGen and sigVer now run with the ACVP suites, and
   `slhdsa: siggen` adds sigGen.
+- **An ACVP report was VERIFIED when a requested suite could not run.** Only
+  the suites that ran were counted, so with kyber-py and dilithium-py missing,
+  `--acvp-all --fail-on-finding` would pass on SLH-DSA's 624/624 alone. A
+  suite that did not run now makes the report CANNOT VERIFY and is listed
+  under `summary.not_run`.
 - **Nothing in CI ran the SLH-DSA ACVP suite.** The documented keyGen
   120/120 was never checked on a push. CI and the release workflow now
   install `slh-dsa` and fail unless all three ACVP suites ran, because

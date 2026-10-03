@@ -733,6 +733,15 @@ def test_acvp_report_marks_a_suite_that_did_not_run():
     assert doc["status"] == "CANNOT VERIFY" and doc["verified"] is False
 
 
+def test_acvp_report_is_not_verified_when_one_requested_suite_did_not_run():
+    """SLH-DSA passing 624/624 must not cover for ML-KEM and ML-DSA missing."""
+    doc = to_json_acvp({"ML-KEM (FIPS 203)": None, "ML-DSA (FIPS 204)": None,
+                        "SLH-DSA (FIPS 205)": {"verified": True, "passed": 624,
+                                               "total": 624, "detail": {}}})
+    assert doc["verified"] is False and doc["status"] == "CANNOT VERIFY"
+    assert doc["summary"]["not_run"] == ["ML-DSA (FIPS 204)", "ML-KEM (FIPS 203)"]
+
+
 # ----------------------------------------------------------------------
 # CLI exit codes — a run that did not verify must not pass a CI gate
 # ----------------------------------------------------------------------

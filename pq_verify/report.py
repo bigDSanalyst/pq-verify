@@ -358,9 +358,13 @@ def to_json_acvp(suites, artifact=None):
             doc["groups"][f"{label}/{g}"] = {"passed": v[0], "total": v[1]}
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "findings": 0 if p == t else t - p}
-    doc["verified"] = bool(t) and p == t
-    doc["status"] = "VERIFIED" if doc["verified"] else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    # A requested suite that could not run leaves its claim unchecked, so the
+    # run is not verified however well the others did.
+    missing = sorted(k for k, v in doc["suites"].items() if not v["ran"])
+    doc["summary"]["not_run"] = missing
+    doc["verified"] = bool(t) and p == t and not missing
+    doc["status"] = ("VERIFIED" if doc["verified"] else
+                     "FINDINGS PRESENT" if p < t else "CANNOT VERIFY")
     return doc
 
 
