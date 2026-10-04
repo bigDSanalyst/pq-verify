@@ -4,7 +4,8 @@ pq-verify command-line interface.
     pq-verify                      run the 160-check self-suite
     pq-verify --quick              fast subset of the self-suite
     pq-verify --acvp               full NIST ACVP (all 12 ML-KEM groups)
-    pq-verify --acvp-all           ML-KEM + ML-DSA + SLH-DSA (1479 vectors)
+    pq-verify --acvp-all           ML-KEM + ML-DSA + SLH-DSA + LMS (1566 vectors)
+    pq-verify --lms-xmss           LMS/HSS + XMSS/XMSS^MT, every SP 800-208 family
     pq-verify --slhdsa-siggen      SLH-DSA sigGen, 624 signatures (~30 min)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
@@ -49,8 +50,18 @@ def build_parser():
     p.add_argument("--mldsa-acvp", action="store_true",
                    help="full NIST ACVP end-to-end ML-DSA (FIPS 204, 615 vectors)")
     p.add_argument("--acvp-all", action="store_true",
-                   help="all three ACVP suites: ML-KEM + ML-DSA + SLH-DSA keyGen "
-                        "and sigVer (1479 pinned vectors, about a minute)")
+                   help="every ACVP suite: ML-KEM + ML-DSA + SLH-DSA keyGen and "
+                        "sigVer + LMS (1566 pinned NIST vectors, about a minute)")
+    p.add_argument("--lms-acvp", action="store_true",
+                   help="NIST ACVP LMS (SP 800-208) alone: keyGen, sigGen, sigVer "
+                        "(87 vectors)")
+    p.add_argument("--lms-xmss", action="store_true",
+                   help="LMS/HSS and XMSS/XMSS^MT against every pinned non-NIST "
+                        "source (every SP 800-208 family, RFC 8554's test cases, "
+                        "XMSS^MT); key generation and signing within a hash budget")
+    p.add_argument("--lms-xmss-full", action="store_true",
+                   help="--lms-xmss with every tree of height 10 or less built and "
+                        "signed byte-exactly (about ten minutes)")
     p.add_argument("--slhdsa-acvp", action="store_true",
                    help="NIST ACVP SLH-DSA (FIPS 205) alone: keyGen and sigVer, "
                         "all 12 parameter sets (624 vectors)")
@@ -147,10 +158,20 @@ def main(argv=None):
         # Listed even when it could not run: a requested suite that is absent
         # from the report reads as one that was never asked for.
         acvp_results["SLH-DSA (FIPS 205)"] = _all.get("slh_dsa")
+        acvp_results["LMS (SP 800-208)"] = _all.get("lms")
         ran_task = True
     elif getattr(args, "slhdsa_acvp", False) or _siggen:
         acvp_results["SLH-DSA (FIPS 205)"] = pqverify_slhdsa_acvp(siggen=_siggen,
                                                                    **_vsrc)
+        ran_task = True
+    if getattr(args, "lms_acvp", False) and not getattr(args, "acvp_all", False):
+        from .hbs_suite import pqverify_lms_acvp
+        acvp_results["LMS (SP 800-208)"] = pqverify_lms_acvp(**_vsrc)
+        ran_task = True
+    hbs_result = None
+    if getattr(args, "lms_xmss", False) or getattr(args, "lms_xmss_full", False):
+        from .hbs_suite import pqverify_hbs
+        hbs_result = pqverify_hbs(full=getattr(args, "lms_xmss_full", False))
         ran_task = True
     proofs_result = None
     if getattr(args, "proofs", False):
@@ -382,6 +403,16 @@ def main(argv=None):
         if args.fail_on_finding and not edge_result["verified"]:
             print(f"  FAILING: edge cases {edge_result['status']} "
                   f"({edge_result['passed']}/{edge_result['total']})")
+            exit_code = 1
+
+    if hbs_result is not None:
+        from .report import to_json_hbs
+        doc = to_json_hbs(hbs_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--lms-xmss"
+        if args.fail_on_finding and not doc["verified"]:
+            print(f"  FAILING: LMS/XMSS {doc['status']} "
+                  f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
             exit_code = 1
 
     if acvp_results:

@@ -3,7 +3,7 @@ pq-verify — Independent verification for ML-KEM / ML-DSA / SLH-DSA implementat
 
 Verifies that post-quantum cryptography implementations compute the
 FIPS 203/204/205 standards correctly: native field-native NTT verification,
-non-circular Known Answer Tests, NIST ACVP end-to-end (1479/1479), a
+non-circular Known Answer Tests, NIST ACVP end-to-end (1566/1566), a
 Bai-Galbraith lattice parameter-security estimator, RFC 10024 hybrid
 key-agreement composition, and per-layer algebraic protection allocation.
 The full ML-KEM NTT and both FIPS zeta tables are re-derived and checked in
@@ -50,6 +50,9 @@ from .hybrid import (
     verify_hybrid,
 )
 
+# Stateful hash-based signatures (SP 800-208): LMS/HSS and XMSS/XMSS^MT.
+from .hbs_suite import pqverify_lms_acvp, pqverify_hbs
+
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
 try:
     from .core import check_encapsulation_key, check_decapsulation_key
@@ -65,6 +68,8 @@ __all__ = [
     "pqverify_mldsa_acvp",
     "pqverify_slhdsa_acvp",
     "pqverify_acvp_all",
+    "pqverify_lms_acvp",
+    "pqverify_hbs",
     "pqverify_params",
     "pqverify_leakage",
     "pqverify_load_so",

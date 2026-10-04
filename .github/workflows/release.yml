@@ -66,7 +66,7 @@ jobs:
       - run: python -m pytest tests/ -q
       - run: |
           python -m pq_verify.cli --acvp-all --fail-on-finding --json /tmp/acvp.json
-          python -c "import json; d = json.load(open('/tmp/acvp.json')); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 3, s; print(d['summary'])"
+          python -c "import json; d = json.load(open('/tmp/acvp.json')); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 4, s; print(d['summary'])"
 
   build:
     name: build, attest and release
@@ -179,7 +179,7 @@ jobs:
             echo '```'
             echo ""
             echo "Built by \`.github/workflows/release.yml\` from commit \`${{ steps.meta.outputs.sha }}\`,"
-            echo "after the full suite and all 1479 NIST ACVP vectors passed on Python 3.9 through 3.13."
+            echo "after the full suite and all 1566 NIST ACVP vectors passed on Python 3.9 through 3.13."
             echo "An SPDX SBOM is attached and attested."
           } >> NOTES.md
 

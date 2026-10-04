@@ -77,17 +77,21 @@ def _sha(b):
     return hashlib.sha256(b).hexdigest()
 
 
-def fetch(source, path):
-    s = SOURCES[source]
+def fetch(source, path, sources=None):
+    s = (sources or SOURCES)[source]
     url = f"{s['raw']}/{s['commit']}/{path}"
     with urllib.request.urlopen(url, timeout=60) as r:
         return r.read()
 
 
-def build(fetcher=fetch):
+def build(fetcher=fetch, sources=None, file_list=None):
+    """Fetch every file and return (bundle, manifest). pin_hbs_vectors.py
+    reuses this with its own sources and files."""
+    sources = sources or SOURCES
     bundle, files = {}, {}
-    for source, path in FILES:
-        raw = fetcher(source, path)
+    for source, path in (file_list or FILES):
+        raw = (fetcher(source, path, sources) if fetcher is fetch
+               else fetcher(source, path))
         entry = {"source": source, "path": path}
         if path.endswith(".gz"):
             entry["upstream_sha256"] = _sha(raw)
@@ -97,7 +101,7 @@ def build(fetcher=fetch):
         bundle[key] = text
         entry.update(bytes=len(raw), sha256=_sha(raw))
         files[key] = entry
-    manifest = {"sources": SOURCES, "files": files}
+    manifest = {"sources": sources, "files": files}
     return bundle, manifest
 
 
@@ -115,15 +119,16 @@ def write(bundle, manifest):
 def verify(bundle_path=BUNDLE, manifest_path=MANIFEST):
     """Offline: every stored entry hashes to its manifest digest. Returns
     a list of problems (empty when sound)."""
+    mname = pathlib.Path(manifest_path).name
     with gzip.open(bundle_path, "rt", encoding="utf-8") as fh:
         bundle = json.load(fh)
     manifest = json.loads(pathlib.Path(manifest_path).read_text())
     files = manifest["files"]
     problems = []
     for key in sorted(set(files) - set(bundle)):
-        problems.append(f"{key}: in EDGE_MANIFEST.json, missing from the bundle")
+        problems.append(f"{key}: in {mname}, missing from the bundle")
     for key in sorted(set(bundle) - set(files)):
-        problems.append(f"{key}: in the bundle, not described by EDGE_MANIFEST.json")
+        problems.append(f"{key}: in the bundle, not described by {mname}")
     for key in sorted(set(files) & set(bundle)):
         raw = bundle[key].encode("utf-8")
         if _sha(raw) != files[key]["sha256"] or len(raw) != files[key]["bytes"]:
