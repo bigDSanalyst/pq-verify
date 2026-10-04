@@ -344,6 +344,87 @@ design.
 
 ---
 
+## LMS/HSS and XMSS library audit, with mutants
+
+`--audit-hbs` audits a stateful hash-based signature library (SP 800-208,
+the schemes CNSA 2.0 requires for firmware signing). LMS and XMSS libraries
+share no C API, so each is loaded through a **pqv_hbs adapter**: five C
+functions (`supports`, `verify`, `keygen`, `sign`, plus a name and ABI
+version) that map the library onto one encoding (`pq_verify/harness/hbs/
+pqv_hbs.h`). Adapters for cisco/hash-sigs and xmss-reference ship with
+pq-verify; another library needs one small C file.
+
+The audit drives the library with:
+
+- **verify**: every pinned verification vector (NIST's LMS sigVer and sigGen
+  signatures, post-quantum-cryptography/KAT's LMS and XMSS, liboqs's XMSS,
+  XMSS^MT and HSS, RFC 8554 Appendix F), verdict exact
+- **keyGen** and **sigGen**: seed → public key and seed + leaf → signature,
+  byte-exact, where the library exposes them; LMS uses the ACVP derivation
+  (child seeds and the randomizer C from the parent SEED and I)
+- **malformed**: from the first valid signature of each parameter set,
+  signatures wrong in exactly one field — the leaf index (out of range, or
+  another leaf), the typecodes, the randomizer, the first and last chain
+  values, the first and last authentication nodes, one byte short or long,
+  another message, another key. pq-verify's own verifier confirms each is
+  invalid; the library must reject it.
+
+Parameter sets the library does not implement are **not applicable**, with
+the reason. Key generation and signing build whole trees, so by default they
+run within a hash budget and for two cases per parameter set; the rest are
+**not run** (`--audit-hbs-full` runs every case up to height 16). Neither is
+ever counted as a pass.
+
+<!-- vendor-audits-hbs:begin -->
+| Library | Commit | Schemes | Verify | keyGen | sigGen | Malformed rejected | Not applicable | Not run | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| cisco/hash-sigs | [`44e6c7d`](https://github.com/cisco/hash-sigs/commit/44e6c7de934c05942bf17cc819a81e765cfe67d7) (2026-09-04) | LMS/HSS | 340/340 | 18/18 | 18/18 | 300/300 | 2,788 | 460 | 4/4 | 676/676 **VERIFIED** |
+| XMSS/xmss-reference | [`171ccbd`](https://github.com/XMSS/xmss-reference/commit/171ccbd26f098542a67eb5d2b128281c80bd71a6) (2021-03-16) | XMSS, XMSS^MT | 141/141 | 8/8 | 8/8 | 407/407 | 3,371 | 96 | 4/4 | 564/564 **VERIFIED** |
+<!-- vendor-audits-hbs:end -->
+
+Both are correct on everything they implement. hash-sigs implements
+RFC 8554's SHA-256 sets only, so SP 800-208's 192-bit and SHAKE LMS sets are
+not applicable to it; built in its ACVP mode (`SECRET_METHOD 2`), its key
+generation and signatures are byte-exact. xmss-reference implements every
+RFC 8391 and SP 800-208 XMSS and XMSS^MT set with SP 800-208's
+`PRF_keygen`; its reference signer rebuilds the tree for every signature, so
+its signing is sampled.
+
+**Mutants** (CI requires the audit to fail each):
+
+| Library | Planted bug | Caught by |
+|---|---|---|
+| hash-sigs | LMS verify skips the root comparison | verify (invalid vectors), malformed |
+| hash-sigs | LM-OTS typecode in the signature not checked | **malformed only** |
+| hash-sigs | verify drops the LM-OTS checksum | verify |
+| hash-sigs | signing drops the LM-OTS checksum | sigGen |
+| xmss-reference | verify skips the root comparison | verify (invalid vectors), malformed |
+| xmss-reference | WOTS+ checksum not shifted | verify, sigGen |
+| xmss-reference | randomizer r from the wrong leaf index | sigGen |
+| xmss-reference | `PRF_keygen` uses PRF's domain separator | keyGen, sigGen |
+
+A verifier that ignores the LM-OTS typecode in the signature passes every
+published vector; only the malformed stage catches it. Two further candidate
+mutants were discarded as **equivalent** (they change no verdict, so no
+vector can see them): removing hash-sigs' HSS level check, which an earlier
+line repeats, and removing its leaf-index range check, after which an
+out-of-range index is still rejected by the root comparison (the defect is
+a one-node out-of-bounds read, which needs a memory sanitizer, not a
+conformance audit).
+
+Reproduce every row and mutant: `python3 tools/vendor_audit.py --only LMS/XMSS`
+(about 12 minutes, most of it xmss-reference signing). By hand:
+
+```bash
+git clone https://github.com/cisco/hash-sigs.git                 # 44e6c7d
+A=$(python3 -c "import pq_verify, os; print(os.path.join(os.path.dirname(pq_verify.__file__), 'harness', 'hbs'))")
+gcc -O2 -fPIC -shared -I"$A" -Ihash-sigs -o libhashsigs.so "$A/adapter_hash_sigs.c" \
+    hash-sigs/{hss,hss_alloc,hss_aux,hss_common,hss_compute,hss_generate,hss_keygen,hss_param,hss_reserve,hss_sign,hss_sign_inc,hss_thread_single,hss_verify,hss_verify_inc,hss_derive,hss_zeroize,lm_common,lm_ots_common,lm_ots_sign,lm_ots_verify,lm_verify,endian,hash,sha256}.c -lcrypto
+pq-verify --audit-hbs ./libhashsigs.so
+```
+
+---
+
 ## Which implementations can be audited by symbol
 
 | Linkage | Examples | Symbol audit |
@@ -363,8 +444,8 @@ produce output — which is every one of them.
 ## Scope
 
 The symbol audits verify the **number-theoretic transform** against the FIPS
-203/204 definitions; `--audit-kem` and `--audit-dsa` verify a library's whole
-scheme against NIST's and Wycheproof's vectors. None of them:
+203/204 definitions; `--audit-kem`, `--audit-dsa` and `--audit-hbs` verify a
+library's whole scheme against the pinned vectors. None of them:
 
 - verify constant-time behaviour or side-channel resistance
 - constitute a security review of the surrounding implementation

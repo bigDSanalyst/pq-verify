@@ -3,7 +3,7 @@
 
   python3 tools/vendor_audit.py              build every row, check its result
   python3 tools/vendor_audit.py --markdown   print the AUDITS.md tables (offline)
-  python3 tools/vendor_audit.py --only ML-DSA   just one scheme
+  python3 tools/vendor_audit.py --only ML-DSA   just one scheme (ML-KEM, ML-DSA, LMS/XMSS)
 
 ML-KEM rows are re-run with --audit-kem, ML-DSA rows with --audit-dsa. ML-DSA
 libraries are linked with pq-verify's randomness harness
@@ -54,6 +54,9 @@ DSA_STAGES = ("keyGen", "sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGen
               "sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu")
 DSA_EDGE_STAGES = ("edge:sigVerify", "edge:sigGen", "edge:edgeLength")
 DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa")
+HBS_BEGIN, HBS_END = "<!-- vendor-audits-hbs:begin -->", "<!-- vendor-audits-hbs:end -->"
+HBS_BUILDS = ("hash-sigs", "xmss-reference")
+HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
                 b"int randombytes(uint8_t *o, size_t n)"
@@ -68,6 +71,11 @@ def load_table(path=TABLE):
 def load_dsa_table(path=TABLE):
     with open(path) as fh:
         return json.load(fh).get("dsa_audits", [])
+
+
+def load_hbs_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("hbs_audits", [])
 
 
 # ─────────────────────────────── build ───────────────────────────────
@@ -135,6 +143,31 @@ def build_dsa(recipe, src, param_set, out_dir, tag=""):
     return str(so)
 
 
+def build_hbs(recipe, src, out_dir, tag=""):
+    """Compile an LMS/XMSS library with its pqv_hbs adapter. Both use OpenSSL
+    for SHA-2, so -lcrypto."""
+    so = Path(out_dir) / f"{recipe}{tag}.so"
+    cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared", "-w",
+          "-I", str(HBS_ADAPTERS), "-I", str(src)]
+    src = Path(src)
+    if recipe == "hash-sigs":
+        files = ("hss hss_alloc hss_aux hss_common hss_compute hss_generate hss_keygen "
+                 "hss_param hss_reserve hss_sign hss_sign_inc hss_thread_single hss_verify "
+                 "hss_verify_inc hss_derive hss_zeroize lm_common lm_ots_common lm_ots_sign "
+                 "lm_ots_verify lm_verify endian hash sha256").split()
+        cmd = cc + ["-o", str(so), str(HBS_ADAPTERS / "adapter_hash_sigs.c"),
+                    *(str(src / f"{f}.c") for f in files), "-lcrypto"]
+    elif recipe == "xmss-reference":
+        files = ("params hash fips202 hash_address wots xmss xmss_core xmss_commons "
+                 "utils").split()
+        cmd = cc + ["-o", str(so), str(HBS_ADAPTERS / "adapter_xmss_reference.c"),
+                    *(str(src / f"{f}.c") for f in files), "-lcrypto"]
+    else:
+        raise ValueError(f"unknown LMS/XMSS build recipe {recipe!r}")
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
 def mutate(src, mutant, dest):
     """A copy of the source tree with one planted bug. The change must apply
     exactly once: a pattern that no longer matches would test nothing."""
@@ -163,6 +196,15 @@ def audit_dsa(so, param_set):
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
             "not_applicable": r["not_applicable_total"], "rng": r["rng"]}
+
+
+def audit_hbs(so):
+    sys.path.insert(0, str(REPO))
+    from pq_verify.hbs_audit import pqverify_audit_hbs
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_hbs(so, verbose=False)
+    return {"results": {k: list(v) for k, v in r["detail"].items()},
+            "not_applicable": r["not_applicable_total"], "not_run": r["not_run_total"]}
 
 
 def audit(so, param_set):
@@ -295,6 +337,85 @@ def check_dsa(rows, workdir):
     return 0
 
 
+def _check_mutants(row, src, workdir, build_fn, audit_fn):
+    """Build each mutant of a row and require the audit to fail it in every
+    listed stage. Returns the number missed (or 2 on a build error)."""
+    missed_rows = 0
+    for i, m in enumerate(row.get("mutants", [])):
+        label = f"{row['library']} mutant {m['name']!r}"
+        try:
+            msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+            so = build_fn(msrc, i)
+        except (RuntimeError, subprocess.CalledProcessError) as e:
+            print(f"  ERROR  {label}: {e}")
+            return None
+        got = audit_fn(so)
+        missed = []
+        for stage in m["fails"]:
+            if stage == "rng":
+                if not got.get("rng"):
+                    missed.append("rng")
+                continue
+            p, t = got["results"].get(stage, (0, 0))
+            if not (t and p < t):
+                missed.append(f"{stage} {p}/{t}")
+        if not missed:
+            bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
+            print(f"  caught {label}: fails {', '.join(bad)}")
+            continue
+        missed_rows += 1
+        print(f"  MISSED {label}: the audit did not fail {', '.join(missed)}. "
+              f"pq-verify cannot see this bug class.")
+    return missed_rows
+
+
+def check_hbs(rows, workdir):
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        label = f"{row['library']} @ {row['commit'][:7]}"
+        try:
+            if not (src / ".git").exists():
+                fetch(row["url"], row["commit"], src)
+            so = build_hbs(row["build"], src, workdir)
+        except subprocess.CalledProcessError as e:
+            print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
+            return 2
+        except Exception as e:
+            print(f"  ERROR  {label}: fetch failed: {e}")
+            return 2
+        got = audit_hbs(so)
+        want = {"results": row["results"], "not_applicable": row["not_applicable"],
+                "not_run": row["not_run"]}
+        if got == want:
+            p, t = total(got["results"])
+            print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, "
+                  f"{got['not_run']} not run, as recorded")
+        else:
+            failures += 1
+            print(f"  DIFF   {label}")
+            for s in sorted(set(got["results"]) | set(want["results"])):
+                if got["results"].get(s) != want["results"].get(s):
+                    print(f"         {s:32s} recorded {want['results'].get(s)}  "
+                          f"now {got['results'].get(s)}")
+            for k in ("not_applicable", "not_run"):
+                if got[k] != want[k]:
+                    print(f"         {k} recorded {want[k]}  now {got[k]}")
+        missed = _check_mutants(
+            row, src, workdir,
+            lambda msrc, i, r=row: build_hbs(r["build"], msrc, workdir, tag=f"-mut{i}"),
+            audit_hbs)
+        if missed is None:
+            return 2
+        failures += missed
+    if failures:
+        print(f"\n  {failures} LMS/XMSS row(s) or mutant(s) differ. Fix the regression, "
+              f"or, if intended, update tools/vendor_audits.json and AUDITS.md in "
+              f"the same PR and say why.")
+        return 1
+    return 0
+
+
 # ─────────────────────────────── table ───────────────────────────────
 
 def edge_total(row):
@@ -351,28 +472,56 @@ def dsa_markdown(rows):
     return "\n".join(lines)
 
 
+def hbs_markdown(rows):
+    lines = ["| Library | Commit | Schemes | Verify | keyGen | sigGen | Malformed rejected "
+             "| Not applicable | Not run | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        r = row["results"]
+
+        def cell(kind):
+            ks = [k for k in r if k.split(" ")[1].startswith(kind)]
+            if not ks:
+                return "n/a"
+            return f"{sum(r[k][0] for k in ks):,}/{sum(r[k][1] for k in ks):,}"
+        p, t = total(r)
+        muts = row.get("mutants", [])
+        lines.append(" | ".join([
+            f"| {row['library']}",
+            f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
+            row["schemes"], cell("verify"), cell("keyGen"), cell("sigGen"),
+            cell("malformed"), f"{row['not_applicable']:,}", f"{row['not_run']:,}",
+            f"{len(muts)}/{len(muts)}" if muts else "—",
+            f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--markdown", action="store_true",
                     help="print the AUDITS.md table from the pinned rows; no build")
     ap.add_argument("--workdir", help="where to fetch and build (default: a "
                                       "temporary directory, removed afterwards)")
-    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA"),
+    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS"),
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
-    rows, dsa_rows = load_table(), load_dsa_table()
+    rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
     if a.markdown:
         print(markdown(rows))
         print()
         print(dsa_markdown(dsa_rows))
+        print()
+        print(hbs_markdown(hbs_rows))
         return 0
 
     def run(work):
         code = 0
-        if a.only != "ML-DSA":
+        if a.only in (None, "ML-KEM"):
             code = max(code, check_all(rows, work))
-        if a.only != "ML-KEM":
+        if a.only in (None, "ML-DSA"):
             code = max(code, check_dsa(dsa_rows, work))
+        if a.only in (None, "LMS/XMSS"):
+            code = max(code, check_hbs(hbs_rows, work))
         return code
     if a.workdir:
         return run(a.workdir)

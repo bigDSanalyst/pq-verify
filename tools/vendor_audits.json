@@ -14,7 +14,11 @@
     "linked with pq_verify/harness/pqv_randombytes.c so their randomised APIs are",
     "audited too. \"results\" and \"not_applicable\" are per parameter set. Each",
     "mutant plants one known bug class in the pinned source; CI requires the audit",
-    "to fail it in every stage listed under \"fails\" (\"rng\": a randomness finding)."
+    "to fail it in every stage listed under \"fails\" (\"rng\": a randomness finding).",
+    "hbs_audits: LMS/HSS and XMSS libraries audited with --audit-hbs through a",
+    "pqv_hbs adapter (pq_verify/harness/hbs). One row per library: \"results\" are the",
+    "audit's stages, \"not_applicable\" what the library does not implement, \"not_run\"",
+    "key generation and signing over the default budget or sample. Mutants as above."
   ],
   "audits": [
     {
@@ -689,6 +693,171 @@
           "fails": [
             "sigVerPure",
             "edge:sigVerify"
+          ]
+        }
+      ]
+    }
+  ],
+  "hbs_audits": [
+    {
+      "library": "cisco/hash-sigs",
+      "url": "https://github.com/cisco/hash-sigs",
+      "commit": "44e6c7de934c05942bf17cc819a81e765cfe67d7",
+      "date": "2026-09-04",
+      "schemes": "LMS/HSS",
+      "note": "RFC 8554's SHA-256 n=32 sets only: SP 800-208's 192-bit and SHAKE LMS sets are not applicable. Built with SECRET_METHOD 2 (ACVP derivation), so key generation and signing are byte-exact.",
+      "build": "hash-sigs",
+      "results": {
+        "LMS keyGen [pqc-kat]": [
+          18,
+          18
+        ],
+        "LMS verify [pqc-kat]": [
+          320,
+          320
+        ],
+        "LMS malformed": [
+          300,
+          300
+        ],
+        "LMS sigGen [pqc-kat]": [
+          18,
+          18
+        ],
+        "LMS verify [liboqs]": [
+          18,
+          18
+        ],
+        "LMS verify [RFC 8554]": [
+          2,
+          2
+        ]
+      },
+      "not_applicable": 2788,
+      "not_run": 460,
+      "mutants": [
+        {
+          "name": "LMS verify skips the root comparison",
+          "file": "lm_verify.c",
+          "find": "    return 0 == memcmp( computed_public_key, public_key + offset, n );",
+          "replace": "    return 1;",
+          "fails": [
+            "LMS verify [pqc-kat]",
+            "LMS malformed"
+          ]
+        },
+        {
+          "name": "LM-OTS typecode in the signature unchecked",
+          "file": "lm_ots_verify.c",
+          "find": "    if (parameter_set != expected_parameter_set) {\n        return false;\n    }",
+          "replace": "    parameter_set = expected_parameter_set;",
+          "fails": [
+            "LMS malformed"
+          ]
+        },
+        {
+          "name": "verify drops the LM-OTS checksum",
+          "file": "lm_ots_verify.c",
+          "find": "    put_bigendian( &Q[n], lm_ots_compute_checksum(Q, n, w, ls), 2 );",
+          "replace": "    put_bigendian( &Q[n], 0, 2 );",
+          "fails": [
+            "LMS verify [pqc-kat]",
+            "LMS verify [liboqs]",
+            "LMS verify [RFC 8554]"
+          ]
+        },
+        {
+          "name": "signing drops the LM-OTS checksum",
+          "file": "lm_ots_sign.c",
+          "find": "    put_bigendian( &Q[n], lm_ots_compute_checksum(Q, n, w, ls), 2 );",
+          "replace": "    put_bigendian( &Q[n], 0, 2 );",
+          "fails": [
+            "LMS sigGen [pqc-kat]"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "XMSS/xmss-reference",
+      "url": "https://github.com/XMSS/xmss-reference",
+      "commit": "171ccbd26f098542a67eb5d2b128281c80bd71a6",
+      "date": "2021-03-16",
+      "schemes": "XMSS, XMSS^MT",
+      "note": "every RFC 8391 and SP 800-208 set, SP 800-208 PRF_keygen; built with xmss_core.c, which rebuilds the tree to sign, so signing is sampled",
+      "build": "xmss-reference",
+      "results": {
+        "XMSS keyGen [pqc-kat]": [
+          8,
+          8
+        ],
+        "XMSS verify [pqc-kat]": [
+          104,
+          104
+        ],
+        "XMSS malformed": [
+          231,
+          231
+        ],
+        "XMSS sigGen [pqc-kat]": [
+          8,
+          8
+        ],
+        "XMSS verify [liboqs]": [
+          21,
+          21
+        ],
+        "XMSS^MT verify [liboqs]": [
+          16,
+          16
+        ],
+        "XMSS^MT malformed": [
+          176,
+          176
+        ]
+      },
+      "not_applicable": 3371,
+      "not_run": 96,
+      "mutants": [
+        {
+          "name": "verify skips the root comparison",
+          "file": "xmss_commons.c",
+          "find": "    if (memcmp(root, pub_root, params->n)) {",
+          "replace": "    if (0) {",
+          "fails": [
+            "XMSS verify [pqc-kat]",
+            "XMSS malformed",
+            "XMSS^MT malformed"
+          ]
+        },
+        {
+          "name": "WOTS+ checksum not shifted",
+          "file": "wots.c",
+          "find": "    csum = csum << (8 - ((params->wots_len2 * params->wots_log_w) % 8));",
+          "replace": "    csum = csum << 0;",
+          "fails": [
+            "XMSS verify [pqc-kat]",
+            "XMSS sigGen [pqc-kat]",
+            "XMSS verify [liboqs]",
+            "XMSS^MT verify [liboqs]"
+          ]
+        },
+        {
+          "name": "randomizer r from the wrong index",
+          "file": "xmss_core.c",
+          "find": "    ull_to_bytes(idx_bytes_32, 32, idx);",
+          "replace": "    ull_to_bytes(idx_bytes_32, 32, idx + 1);",
+          "fails": [
+            "XMSS sigGen [pqc-kat]"
+          ]
+        },
+        {
+          "name": "PRF_keygen uses PRF's domain separator",
+          "file": "hash.c",
+          "find": "#define XMSS_HASH_PADDING_PRF_KEYGEN 4",
+          "replace": "#define XMSS_HASH_PADDING_PRF_KEYGEN 3",
+          "fails": [
+            "XMSS keyGen [pqc-kat]",
+            "XMSS sigGen [pqc-kat]"
           ]
         }
       ]

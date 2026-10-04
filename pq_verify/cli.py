@@ -12,6 +12,7 @@ pq-verify command-line interface.
     pq-verify --leakage            per-layer algebraic protection allocation
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
+    pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
     pq-verify --emit-prompt SET    write the ACVP questions for SET
     pq-verify --verify-response F  check a response against the pinned answers
     pq-verify --emit-hybrid-prompt G   write what to supply for hybrid group G
@@ -103,6 +104,14 @@ def build_parser():
                         "cases, e.g. --audit-dsa lib.so ML-DSA-65. Each interface "
                         "(internal, pure, pre-hash, external mu) goes through the "
                         "library's own entry point for it")
+    p.add_argument("--audit-hbs", metavar="PATH",
+                   help="audit an LMS/HSS or XMSS/XMSS^MT library built with a pqv_hbs "
+                        "adapter (pq_verify/harness/hbs): every pinned verification "
+                        "vector, byte-exact key generation and signing, and signatures "
+                        "malformed in one field")
+    p.add_argument("--audit-hbs-full", action="store_true",
+                   help="with --audit-hbs: every key generation and signing case up to "
+                        "height 16, not a sample")
     p.add_argument("--dsa-abi", choices=("pqcrystals", "mldsa-native"),
                    help="with --audit-dsa: the calling convention, when "
                         "auto-detection from the symbol names is wrong")
@@ -320,6 +329,22 @@ def main(argv=None):
         except OSError as exc:
             dsa_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {dsa_reason}")
+    hbsa_result = hbsa_reason = hbsa_artifact = None
+    hbsa_ran = bool(getattr(args, "audit_hbs", None))
+    if hbsa_ran:
+        from .hbs_audit import pqverify_audit_hbs, AdapterError
+        ran_task = True
+        try:
+            hbsa_artifact = artifact_bound(args.audit_hbs)
+        except OSError as exc:
+            print(f"  cannot audit {args.audit_hbs}: {exc}")
+            return 2
+        print(f"  artifact: {hbsa_artifact['summary']}")
+        try:
+            hbsa_result = pqverify_audit_hbs(args.audit_hbs, full=args.audit_hbs_full)
+        except (OSError, AdapterError) as exc:
+            hbsa_reason = str(exc)
+            print(f"  cannot audit: {hbsa_reason}")
     if args.audit_so:
         path, sym = args.audit_so
         # Compile the engines first. Without them pqverify_scan silently omits
@@ -351,8 +376,8 @@ def main(argv=None):
     # tasks in one command cannot silently overwrite each other's file. The
     # exit code still reflects EVERY task that ran, not just the reported one.
     from .report import (to_json, to_json_acvp, to_json_hybrid, to_json_kem,
-                         to_json_dsa, to_json_response, to_sarif, artifact_unbound,
-                         write)
+                         to_json_dsa, to_json_hbs_audit, to_json_response, to_sarif,
+                         artifact_unbound, write)
     from .core import VERSION
 
     exit_code = 0
@@ -405,6 +430,22 @@ def main(argv=None):
                 tool_version=VERSION, artifact=dsa_artifact)
         if args.fail_on_finding and not doc["verified"]:
             print(f"  FAILING: ML-DSA audit {doc['status']}")
+            exit_code = 1
+
+    if hbsa_ran:
+        doc = to_json_hbs_audit(hbsa_result, artifact=hbsa_artifact,
+                                library=args.audit_hbs, reason=hbsa_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-hbs"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_hbs}:LMS/XMSS",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=hbsa_artifact)
+        if args.fail_on_finding and not doc["verified"]:
+            print(f"  FAILING: LMS/XMSS audit {doc['status']}")
             exit_code = 1
 
     if response_result is not None:
