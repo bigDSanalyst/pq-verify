@@ -97,6 +97,7 @@ To audit a compiled library:
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
 pq-verify --audit-kem build/libmlkem768.so ML-KEM-768     # the whole KEM
 pq-verify --audit-dsa build/libmldsa65.so ML-DSA-65       # the whole signature scheme
+pq-verify --audit-hbs build/libhashsigs.so                # LMS/XMSS, via a pqv_hbs adapter
 ```
 
 For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
@@ -212,7 +213,7 @@ runs rather than in a terminal someone has to read.
 
 ## Independent audits
 
-pq-verify has been run against six upstream projects — all verify clean, with
+pq-verify has been run against eight upstream projects — all verify clean, with
 negative controls that correctly fail. Exact commits, build commands and
 per-check output are in [AUDITS.md](AUDITS.md).
 
@@ -225,6 +226,8 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; 3 mutants | 1,503/1,503; every mutant caught |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,335/1,335; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,065/1,065; the mutant caught |
+| cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures; 4 mutants | 676/676; every mutant caught |
+| XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures; 4 mutants | 564/564; every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 
@@ -310,6 +313,7 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 | `pqverify_scan(target)` | Auto-discover + audit NTT functions |
 | `pqverify_audit_kem(path, set)` | A vendor's own ML-KEM keygen/encaps/decaps vs NIST + Wycheproof/CCTV |
 | `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface |
+| `pqverify_audit_hbs(path)` | A vendor's own LMS/HSS or XMSS library (pqv_hbs adapter) vs every pinned vector + malformed signatures |
 | `pqverify_leakage()` | Per-layer protection-allocation table |
 | `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |
 | `verify_response(file)` | Check a response byte-exact against the pinned answers |
@@ -376,7 +380,7 @@ Every report states its binding as a field, not as prose:
 
 | Path | `artifact` |
 |------|-----------|
-| `--audit-so`, `--audit-kem`, `--audit-dsa` | `sha256 <hash>` — that file performed the computation |
+| `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
 | `--verify-hybrid` | `none — vendor-supplied transcript` |
 | `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |

@@ -4116,3 +4116,185 @@ def test_lms_xmss_report_and_gate():
     assert doc["schema"] == "pq-verify/hbs-result"
     assert doc["status"] == "FINDINGS PRESENT" and doc["summary"]["not_run"] == 5
     assert doc["not_run"]["y"]["count"] == 5
+
+
+# ----------------------------------------------------------------------
+# --audit-hbs: a vendor's own LMS/HSS and XMSS library, through a pqv_hbs
+# adapter. The pinned libraries (cisco/hash-sigs, xmss-reference) and their
+# mutants run in CI; here a shim whose adapter functions call back into
+# pq_verify.hbs exercises the ctypes path offline, with faults planted.
+# ----------------------------------------------------------------------
+
+def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=False):
+    import ctypes as C, pathlib, shutil, subprocess, struct
+    from pq_verify import hbs as H
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libhbsshim{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-I",
+                    str(root / "pq_verify" / "harness" / "hbs"), "-o", str(so),
+                    str(root / "tests" / "data" / "hbs_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    U8, SZ, PSZ = C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_size_t)
+    SUP = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32)
+    VER = C.CFUNCTYPE(C.c_int, C.c_uint32, U8, SZ, U8, SZ, U8, SZ)
+    KG = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, U8, SZ, U8, PSZ)
+    SG = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, U8, SZ, C.c_uint64,
+                     U8, SZ, U8, PSZ)
+    at = lambda p, n: C.string_at(p, n) if n else b""
+
+    def sup(s, t, o):
+        if s != 1 and lms_only:
+            return 0
+        return 1 if no_keygen else 7
+
+    def ver(s, pk, pkl, m, ml, sig, sl):
+        args = (at(pk, pkl), at(m, ml), at(sig, sl))
+        if verify:
+            return 0 if verify(s, *args) else 1
+        ok = H.hss_verify(*args) if s == 1 else H.xmss_verify(*args, mt=s == 3)
+        return 0 if ok else 1
+
+    def tree(s, t, o, seed):
+        if s == 1:
+            m = H.LMS[t][2]
+            return H.LMSTree(t, o, seed[:m], seed[m:m + 16])
+        P = H.XMSS_SETS[("XMSS", t)]
+        return H.XMSSTree(P, seed[:P.n], seed[P.n:2 * P.n], seed[2 * P.n:3 * P.n])
+
+    def kg(s, t, o, seed, sl, pk, pkl):
+        tr = tree(s, t, o, at(seed, sl))
+        out = H.u32(1) + tr.public_key if s == 1 else tr.public_key(t)
+        C.memmove(pk, out, len(out)); pkl[0] = len(out)
+        return 0
+
+    def sg(s, t, o, seed, sl, idx, m, ml, sig, sigl):
+        tr = tree(s, t, o, at(seed, sl))
+        msg = at(m, ml)
+        if s == 1:
+            Cr = (sign_c or (lambda tr, q: H.LMOTS[o][1](
+                tr.I + H.u32(q) + H.u16(0xFFFD) + b"\xff" + tr.seed)))(tr, idx)
+            out = H.u32(0) + tr.sign(msg, idx, Cr)
+        else:
+            out = tr.sign(msg, idx)
+        C.memmove(sig, out, len(out)); sigl[0] = len(out)
+        return 0
+
+    keep = (SUP(sup), VER(ver), KG(kg), SG(sg))
+    lib.pqvtest_hbs_register(*keep)
+    return str(so), (lib, keep)
+
+
+def _audit_hbs(path, **kw):
+    from pq_verify.hbs_audit import pqverify_audit_hbs
+    kw.setdefault("budget", 100_000)          # LMS h = 5 trees, in Python
+    kw.setdefault("per_group", 1)
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_hbs(path, **kw)
+
+
+def test_hbs_audit_passes_a_correct_library_and_runs_every_stage(tmp_path):
+    path, keep = _hbs_shim(tmp_path)
+    r = _audit_hbs(path)
+    assert r["verified"], r["failures"][:3]
+    d = r["detail"]
+    for stage in ("LMS verify [NIST]", "LMS verify [pqc-kat]", "LMS verify [liboqs]",
+                  "LMS verify [RFC 8554]", "XMSS verify [pqc-kat]", "XMSS verify [liboqs]",
+                  "XMSS^MT verify [liboqs]", "LMS keyGen [pqc-kat]", "LMS sigGen [pqc-kat]",
+                  "LMS malformed", "XMSS malformed", "XMSS^MT malformed"):
+        assert d.get(stage, (0, 0))[1] > 0, stage
+    assert d["LMS verify [NIST]"] == (78, 78)
+    assert r["not_run_total"] > 0          # over budget or sampled: counted, not passed
+    assert all(v[1] for v in r["not_run"].values())
+
+
+def test_hbs_audit_catches_a_verifier_that_accepts_everything(tmp_path):
+    path, keep = _hbs_shim(tmp_path, verify=lambda s, pk, m, sig: True)
+    r = _audit_hbs(path, budget=0)
+    assert not r["verified"]
+    for stage in ("LMS malformed", "XMSS malformed", "LMS verify [pqc-kat]"):
+        p, t = r["detail"][stage]
+        assert p < t, stage
+
+
+def test_hbs_audit_catches_a_wrong_randomizer(tmp_path):
+    """C from random bytes instead of the ACVP derivation: every signature
+    still verifies, none is byte-exact."""
+    from pq_verify import hbs as H
+    path, keep = _hbs_shim(tmp_path, sign_c=lambda tr, q: bytes(H.LMS[tr.lms_type][2]))
+    r = _audit_hbs(path)
+    p, t = r["detail"]["LMS sigGen [pqc-kat]"]
+    assert t and p == 0
+    assert r["detail"]["LMS verify [pqc-kat]"][0] == r["detail"]["LMS verify [pqc-kat]"][1]
+
+
+def test_hbs_audit_reports_what_the_library_lacks_as_not_applicable(tmp_path):
+    path, keep = _hbs_shim(tmp_path, lms_only=True, no_keygen=True)
+    r = _audit_hbs(path, budget=0)
+    assert not any(k.startswith("XMSS") for k in r["detail"])
+    na = r["not_applicable"]
+    assert "does not implement XMSS" in na["XMSS verify"][1]
+    assert "no keyGen" in na["LMS keyGen"][1] and "no sigGen" in na["LMS sigGen"][1]
+    assert r["not_applicable_total"] > 0
+
+
+def test_hbs_malformations_are_each_rejected_by_the_reference():
+    """Every derived malformation the audit scores is one pq-verify's own
+    verifier rejects; and each changes the signature or key."""
+    from pq_verify.hbs_audit import cases, malformed, _reference_verify
+    seen = set()
+    for c in cases():
+        if c["kind"] != "verify" or not c["want"] or c["set"] in seen:
+            continue
+        seen.add(c["set"])
+        assert _reference_verify(c["scheme"], c["pk"], c["msg"], c["sig"]), c["label"]
+        for what, pk, msg, sig in malformed(c):
+            assert (pk, msg, sig) != (c["pk"], c["msg"], c["sig"]), what
+        if len(seen) > 12:
+            break
+
+
+def test_hbs_adapter_loader_refuses_a_library_without_the_abi(tmp_path):
+    import shutil, subprocess
+    from pq_verify.hbs_audit import HBSAdapter, AdapterError
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    src = tmp_path / "x.c"
+    src.write_text("int unrelated(void) { return 0; }\n")
+    so = tmp_path / "libx.so"
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(so), str(src)], check=True)
+    with pytest.raises(AdapterError):
+        HBSAdapter(str(so))
+
+
+def test_hbs_vendor_rows_and_mutants_are_well_formed_and_published():
+    import re
+    mod, root = _vendor_audit()
+    rows = mod.load_hbs_table()
+    assert {r["build"] for r in rows} == set(mod.HBS_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert row["mutants"]
+        for m in row["mutants"]:
+            assert m["fails"] and set(m["fails"]) <= set(row["results"]), m["name"]
+    text = (root / "AUDITS.md").read_text()
+    assert mod.HBS_BEGIN in text and mod.HBS_END in text
+    published = text.split(mod.HBS_BEGIN, 1)[1].split(mod.HBS_END, 1)[0].strip()
+    assert published == mod.hbs_markdown(rows).strip(), (
+        "AUDITS.md is out of date: paste the LMS/XMSS table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-hbs markers")
+
+
+def test_hbs_audit_report_and_rule():
+    from pq_verify.report import to_json_hbs_audit, _rule_for
+    doc = to_json_hbs_audit({"verified": False, "passed": 1, "total": 2,
+                             "detail": {"LMS malformed": (1, 2)},
+                             "failures": [{"stage": "LMS malformed", "case": "x: q = 2^h",
+                                           "detail": "accepted"}],
+                             "not_applicable": {}, "not_run": {}, "name": "lib"},
+                            library="lib.so")
+    assert doc["schema"] == "pq-verify/hbs-audit-result"
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert "q = 2^h" in doc["findings"][0] and _rule_for(doc["findings"][0]) == "PQV009"

@@ -105,6 +105,17 @@ RULES = {
                  "breaks interoperability."),
         "level": "error",
     },
+    "PQV009": {
+        "name": "StatefulSignatureConformanceFailure",
+        "short": "LMS/XMSS library output or verdict differs from the pinned vectors",
+        "full": ("Driven through its pqv_hbs adapter with NIST's LMS vectors, the "
+                 "pinned LMS/XMSS KATs, RFC 8554's test cases and signatures "
+                 "malformed in one field, the library produced a key or signature "
+                 "that differs from the vector, rejected a valid signature, or "
+                 "accepted one that must be rejected. Accepting a malformed "
+                 "signature is a forgery path."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -115,11 +126,14 @@ RULES = {
 }
 
 _FINDING_MAP = (
+    # Scheme prefixes first: a finding's own text may contain a later needle
+    # ("LMS malformed" holds "malformed", which means CannotVerify below).
+    ("ML-DSA:",     "PQV008"),
+    ("LMS/XMSS:",   "PQV009"),
     ("cannot verify", "PQV000"),
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
     ("hybrid:",     "PQV007"),
-    ("ML-DSA:",     "PQV008"),
     ("NTT:",        "PQV001"),
     ("Freivalds",   "PQV002"),
     ("Primitiv",    "PQV003"),
@@ -426,6 +440,48 @@ def to_json_hbs(result):
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "not_run": result.get("not_run_total", 0),
                       "findings": 0 if p == t else t - p}
+    return doc
+
+
+def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
+    """Native schema for pqverify_audit_hbs. Not applicable (the library
+    does not implement it) and not run (over budget or sampled) are listed
+    separately and never counted as passed."""
+    doc = _envelope("pq-verify/hbs-audit-result", artifact)
+    doc["library"] = library or (result or {}).get("library")
+    if result is None:
+        doc.update(status="CANNOT VERIFY", verified=False, stages={},
+                   not_applicable={}, not_run={},
+                   summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
+                   findings=["cannot verify: " + (reason or "no pqv_hbs adapter")])
+        return doc
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["implementation"] = result.get("name")
+    doc["vectors"] = result.get("vectors")
+    doc["budget"] = result.get("budget")
+    doc["per_group"] = result.get("per_group")
+    doc["stages"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
+                             for k, v in (result.get("not_applicable") or {}).items()}
+    doc["not_run"] = {k: {"count": v[0], "reason": v[1]}
+                      for k, v in (result.get("not_run") or {}).items()}
+    fails = result.get("failures") or []
+    findings = []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            first = next((f for f in fails if f["stage"] == k), None)
+            findings.append(f"LMS/XMSS: stage {k}: {v[0]}/{v[1]}"
+                            + (f"; first: {first['case']}: {first['detail']}" if first else ""))
+    doc["failures"] = fails
+    doc["findings"] = findings
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "not_applicable": result.get("not_applicable_total", 0),
+                      "not_run": result.get("not_run_total", 0),
+                      "findings": len(findings)}
     return doc
 
 

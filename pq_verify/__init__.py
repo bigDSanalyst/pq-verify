@@ -56,6 +56,7 @@ from .dsa_audit import pqverify_audit_dsa
 
 # Stateful hash-based signatures (SP 800-208): LMS/HSS and XMSS/XMSS^MT.
 from .hbs_suite import pqverify_lms_acvp, pqverify_hbs
+from .hbs_audit import pqverify_audit_hbs
 
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
 try:
@@ -75,6 +76,7 @@ __all__ = [
     "pqverify_audit_dsa",
     "pqverify_lms_acvp",
     "pqverify_hbs",
+    "pqverify_audit_hbs",
     "pqverify_params",
     "pqverify_leakage",
     "pqverify_load_so",

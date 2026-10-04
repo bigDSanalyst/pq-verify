@@ -17,6 +17,7 @@ on:
       - "tools/vendor_audit.py"
       - "tools/vendor_audits.json"
       - "tests/data/mldsa_shim.c"
+      - "tests/data/hbs_shim.c"
       - "constraints-reference.txt"
       - ".github/workflows/vendor-audits.yml"
   push:
@@ -37,6 +38,9 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: System dependencies
+        # hash-sigs and xmss-reference hash with OpenSSL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev
       - name: Install
         run: |
           python -m pip install --upgrade pip

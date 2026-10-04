@@ -7,6 +7,29 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`--audit-hbs`: a vendor's own LMS/HSS or XMSS/XMSS^MT library.**
+  `pqverify_audit_hbs()` loads a library through a **pqv_hbs adapter**
+  (`pq_verify/harness/hbs/pqv_hbs.h`, ABI 1): five C functions that map its
+  API onto one encoding, since LMS and XMSS libraries share no C API.
+  Adapters for cisco/hash-sigs and xmss-reference ship in the package.
+  - Stages: **verify** (every pinned vector: NIST LMS, the pqc-kat LMS and
+    XMSS sets, liboqs XMSS/XMSS^MT/HSS, RFC 8554), **keyGen** and **sigGen**
+    byte-exact (LMS with the ACVP derivation), and **malformed**: signatures
+    derived from valid ones, wrong in exactly one field (leaf index,
+    typecodes, randomizer, chain values, authentication nodes, length,
+    message, key), each confirmed invalid by pq-verify's own verifier.
+  - What the library does not implement is not applicable; key generation
+    and signing over the budget, or beyond two cases per parameter set,
+    are not run (`--audit-hbs-full`). Neither counts as a pass.
+  - JSON (`pq-verify/hbs-audit-result`) and SARIF (new rule PQV009).
+- **LMS/XMSS vendor audits in CI, with mutants.** cisco/hash-sigs
+  `44e6c7d` (676/676) and xmss-reference `171ccbd` (564/564) are pinned in
+  `tools/vendor_audits.json`, with four mutants each, all caught. A verifier
+  that ignores the LM-OTS typecode in the signature passes every published
+  vector and is caught only by the malformed stage. Two candidate mutants
+  were discarded as equivalent (no verdict changes), and AUDITS.md says
+  which and why.
+
 - **LMS/HSS and XMSS/XMSS^MT** (RFC 8554, RFC 8391, SP 800-208), the
   stateful hash-based signatures CNSA 2.0 requires for firmware signing.
   `pq_verify/hbs.py` implements both from the specifications, every
@@ -106,6 +129,11 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **SARIF filed some findings under the wrong rule.** Rules were chosen by
+  the first matching keyword, and "malformed" (CannotVerify) matched before
+  a scheme's own prefix, so a finding about malformed signatures being
+  accepted would have been reported as "could not verify". Scheme prefixes
+  are now matched first.
 - **The GitHub Action's `slhdsa` input did nothing.** It was declared but
   never read. SLH-DSA keyGen and sigVer now run with the ACVP suites, and
   `slhdsa: siggen` adds sigGen.
