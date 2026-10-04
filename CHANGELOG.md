@@ -28,6 +28,36 @@ versioning](https://semver.org/spec/v2.0.0.html).
     reported as not run with its cost, never as passed.
   - The doctor checks the new bundle's digests offline, and the watcher
     tracks NIST's five LMS directories.
+- **`--audit-dsa`: a vendor's own ML-DSA, against every NIST vector.**
+  `pqverify_audit_dsa()` drives a compiled library's key generation, signing
+  and verification with all of NIST's ACVP ML-DSA vectors for a parameter set
+  (25 keyGen, 120 sigGen, 60 sigVer) and Wycheproof's ML-DSA verify and sign
+  vectors.
+  - Every FIPS 204 interface is its own stage (internal, pure, pre-hash over
+    twelve hashes, external μ). Each goes through the most public entry
+    point the library has for it, and the report names that symbol.
+    Interfaces the API lacks are reported as not applicable with the
+    reason, never as passes.
+  - The pq-crystals/PQClean and mldsa-native calling conventions are
+    detected from symbol names; `--dsa-abi` and `--dsa-symbol ROLE=SYM`
+    override. An ambiguous symbol is refused, not guessed.
+  - **Randomness harness** (`pq_verify/harness/pqv_randombytes.c`, shipped
+    in the package). Linked in place of `randombytes()`, it lets pq-verify
+    serve NIST's seed and `rnd`, so the randomised `keypair()` and
+    `signature()` that users call are audited byte-exactly, not only the
+    seed-taking internals. A call that draws more or less randomness than
+    FIPS 204 calls for is a finding.
+  - JSON (`pq-verify/dsa-audit-result`) and SARIF (new rule PQV008) reports
+    name the first failing NIST tcId or Wycheproof case.
+- **ML-DSA vendor audits in CI, with mutants.** `tools/vendor_audits.json`
+  pins mldsa-native `159509d`, pq-crystals dilithium ref `d35ba3f` and
+  PQClean `0586a82`, all three parameter sets each. All three are byte-exact
+  on every interface they expose: 1,503, 1,335 and 1,065 checks. Each row
+  carries mutants, one planted bug each, and CI requires the audit to fail
+  every one; all ten are caught. Two of them, a hint decoder that accepts a
+  repeated index and a verifier that skips the ‖z‖ bound, pass every NIST
+  sigVer vector and are caught only by Wycheproof. AUDITS.md publishes both
+  tables, and tests hold them equal to the pinned file.
 
 - **SLH-DSA signatures, against every NIST ACVP vector** (FIPS 205, all 12
   parameter sets). Until now pq-verify checked SLH-DSA key generation only.
@@ -54,6 +84,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
   `param_sets=` limits it to chosen parameter sets.
 
 ### Changed
+
+- The Wycheproof edge-case runner counts ML-DSA cases a backend cannot
+  express as not applicable. They used to be skipped without a count.
 
 - **`--acvp-all` and `pqverify_acvp_all()` include SLH-DSA keyGen and
   sigVer (624) and NIST's LMS vectors (87): 1566 vectors, up from 855.** The run takes about

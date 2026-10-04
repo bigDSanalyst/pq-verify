@@ -57,7 +57,7 @@ packages = ["pq_verify", "pq_verify.vectors"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md", "coq/*.v"]
+pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md", "coq/*.v", "harness/*.c"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

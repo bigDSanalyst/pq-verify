@@ -9,7 +9,12 @@
     "AUDITS.md renders this table (python3 tools/vendor_audit.py --markdown) and",
     "a test holds the two equal.",
     "\"edge\" is per parameter set: the Wycheproof/CCTV edge-case stages of",
-    "pq_verify/edge.py (valid vectors, invalid eks, invalid dks)."
+    "pq_verify/edge.py (valid vectors, invalid eks, invalid dks).",
+    "dsa_audits: third-party ML-DSA implementations audited with --audit-dsa,",
+    "linked with pq_verify/harness/pqv_randombytes.c so their randomised APIs are",
+    "audited too. \"results\" and \"not_applicable\" are per parameter set. Each",
+    "mutant plants one known bug class in the pinned source; CI requires the audit",
+    "to fail it in every stage listed under \"fails\" (\"rng\": a randomness finding)."
   ],
   "audits": [
     {
@@ -169,6 +174,524 @@
           ]
         }
       }
+    }
+  ],
+  "dsa_audits": [
+    {
+      "library": "mldsa-native",
+      "url": "https://github.com/pq-code-package/mldsa-native",
+      "commit": "159509d78063316bf090bbcd0aa50af5bb03cf70",
+      "date": "2026-10-01",
+      "note": "every FIPS 204 interface exposed and byte-exact, including external mu and the native HashML-DSA API; fixed-size signature arguments, so wrong-length signatures are not applicable",
+      "build": "mldsa-native",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            83,
+            83
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            102,
+            102
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            93,
+            93
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 10,
+        "ML-DSA-65": 10,
+        "ML-DSA-87": 10
+      },
+      "mutants": [
+        {
+          "name": "hint decoder accepts a repeated index",
+          "set": "ML-DSA-65",
+          "file": "mldsa/src/packing.c",
+          "find": "packed_hints[j] <= packed_hints[j - 1]",
+          "replace": "packed_hints[j] < packed_hints[j - 1]",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        },
+        {
+          "name": "verify skips the z norm bound",
+          "set": "ML-DSA-65",
+          "file": "mldsa/src/sign.c",
+          "find": "  if (mld_polyvecl_chknorm(z, MLDSA_GAMMA1 - MLDSA_BETA))\n  {\n    ret = MLD_ERR_INVALID_SIGNATURE;",
+          "replace": "  if (0)\n  {\n    ret = MLD_ERR_INVALID_SIGNATURE;",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        },
+        {
+          "name": "HashML-DSA encoded as pure ML-DSA",
+          "set": "ML-DSA-65",
+          "file": "mldsa/src/sign.c",
+          "find": "prefix[0] = (hashalg == MLD_PREHASH_NONE) ? 0 : 1;",
+          "replace": "prefix[0] = 0;",
+          "fails": [
+            "sigGenPreHash",
+            "sigVerPreHash"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "pq-crystals dilithium ref",
+      "url": "https://github.com/pq-crystals/dilithium",
+      "commit": "d35ba3fe5449bee3e6d43e1f296c3ca818bd36be",
+      "date": "2026-06-03",
+      "note": "internal, pure and pre-hash (through signature_internal) byte-exact; no external-mu API",
+      "build": "pqcrystals-ref",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            75,
+            75
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            85,
+            85
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            76,
+            76
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 60,
+        "ML-DSA-65": 69,
+        "ML-DSA-87": 69
+      },
+      "mutants": [
+        {
+          "name": "verify skips the challenge comparison",
+          "set": "ML-DSA-65",
+          "file": "ref/sign.c",
+          "find": "    if(c[i] != c2[i])\n      return -1;",
+          "replace": "    if(0)\n      return -1;",
+          "fails": [
+            "sigVerInternal",
+            "sigVerPure",
+            "sigVerPreHash",
+            "edge:sigVerify"
+          ]
+        },
+        {
+          "name": "hint decoder accepts a repeated index",
+          "set": "ML-DSA-65",
+          "file": "ref/packing.c",
+          "find": "sig[j] <= sig[j-1]",
+          "replace": "sig[j] < sig[j-1]",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        },
+        {
+          "name": "verify skips the z norm bound",
+          "set": "ML-DSA-65",
+          "file": "ref/sign.c",
+          "find": "  if(polyvecl_chknorm(&z, GAMMA1 - BETA))\n    return -1;",
+          "replace": "  if(0)\n    return -1;",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        },
+        {
+          "name": "signing ignores rnd",
+          "set": "ML-DSA-65",
+          "file": "ref/sign.c",
+          "find": "  shake256_absorb(&state, rnd, RNDBYTES);",
+          "replace": "  shake256_absorb(&state, (const uint8_t[RNDBYTES]){0}, RNDBYTES);",
+          "fails": [
+            "sigGenInternal",
+            "sigGenPure",
+            "sigGenPreHash"
+          ]
+        },
+        {
+          "name": "signing omits the context length",
+          "set": "ML-DSA-65",
+          "file": "ref/sign.c",
+          "find": "  /* Prepare pre = (0, ctxlen, ctx) */\n  pre[0] = 0;\n  pre[1] = ctxlen;",
+          "replace": "  /* Prepare pre = (0, ctxlen, ctx) */\n  pre[0] = 0;\n  pre[1] = 0;",
+          "fails": [
+            "sigGenPure"
+          ]
+        },
+        {
+          "name": "keypair draws extra randomness",
+          "set": "ML-DSA-65",
+          "file": "ref/sign.c",
+          "find": "  randombytes(seedbuf, SEEDBYTES);",
+          "replace": "  randombytes(seedbuf, SEEDBYTES);\n  randombytes(seedbuf + SEEDBYTES, 16);",
+          "fails": [
+            "keyGen",
+            "rng"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "PQClean clean",
+      "url": "https://github.com/PQClean/PQClean",
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "note": "pure ML-DSA only (crypto_sign_signature_ctx / verify_ctx), byte-exact; no internal, pre-hash or external-mu API",
+      "build": "pqclean-mldsa",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            75,
+            75
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            85,
+            85
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            76,
+            76
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 150,
+        "ML-DSA-65": 159,
+        "ML-DSA-87": 159
+      },
+      "mutants": [
+        {
+          "name": "verify skips the challenge comparison",
+          "set": "ML-DSA-65",
+          "file": "crypto_sign/ml-dsa-65/clean/sign.c",
+          "find": "        if (c[i] != c2[i]) {",
+          "replace": "        if (0) {",
+          "fails": [
+            "sigVerPure",
+            "edge:sigVerify"
+          ]
+        }
+      ]
     }
   ]
 }
