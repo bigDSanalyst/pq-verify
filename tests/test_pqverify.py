@@ -3816,7 +3816,7 @@ def test_dsa_audit_catches_a_verifier_that_accepts_everything(tmp_path):
 
 
 def test_dsa_audit_catches_a_signer_that_ignores_rnd(tmp_path):
-    from dilithium_py.ml_dsa import ML_DSA_65 as D
+    D = pytest.importorskip("dilithium_py.ml_dsa").ML_DSA_65
     path, keep = _dsa_shim(tmp_path, sign=lambda sk, m, rnd: D._sign_internal(sk, m, bytes(32)))
     r = _audit_shim(path, edge=False)
     # the deterministic half (rnd = 0^32) still matches; the randomised half not
