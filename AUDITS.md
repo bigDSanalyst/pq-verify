@@ -285,7 +285,7 @@ definitions. They do not:
 
 - verify constant-time behaviour or side-channel resistance
 - verify the full KEM/signature scheme end-to-end (that is what the ACVP
-  suites do: 1479/1479 with FIPS 205 keyGen and sigVer, 2103/2103 with
+  suites do: 1566/1566 with FIPS 205 keyGen and sigVer and LMS, 2190/2190 with
   SLH-DSA sigGen)
 - constitute a security review of the surrounding implementation
 

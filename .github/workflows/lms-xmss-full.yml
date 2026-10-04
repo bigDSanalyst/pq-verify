@@ -1,0 +1,43 @@
+name: LMS/XMSS full (weekly)
+
+# Every LMS and XMSS tree of height 10 or less, built and signed byte-exactly
+# against the pinned non-NIST vectors (pq-verify --lms-xmss-full). Building a
+# tree costs up to a few million hash calls in pure Python, so the default
+# --lms-xmss runs a smaller budget on every push and this runs the rest weekly,
+# on changes to the implementation or the vectors, and on demand.
+
+on:
+  pull_request:
+    paths:
+      - "pq_verify/hbs.py"
+      - "pq_verify/hbs_suite.py"
+      - "pq_verify/vectors/hbs_vectors.json.gz"
+      - "pq_verify/vectors/HBS_MANIFEST.json"
+      - ".github/workflows/lms-xmss-full.yml"
+  schedule:
+    - cron: "45 7 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    name: LMS/XMSS, every height-10 tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+      - name: LMS/HSS + XMSS/XMSS^MT, full budget
+        run: python -m pq_verify.cli --lms-xmss-full --fail-on-finding

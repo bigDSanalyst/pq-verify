@@ -1,4 +1,74 @@
 {
+  "LMS-keyGen-1.0/expectedResults.json": {
+    "fda6cbdc498bda9af70b73ab27be42136b9ddbfcbc76e9792576df78b88cfb7e": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-keyGen-1.0/prompt.json": {
+    "0573a969d942cbe229731cee4904dacffa27314632f87ed04afd35f10ae042ce": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigGen-1.0/expectedResults.json": {
+    "2c537ffb54a2d510a7903bbf00816fbfccc3ae149466eee4005a4e0b7009d586": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigGen-1.0/prompt.json": {
+    "cabf6f7bdee3b4dfd320d671038f3c7668ee4121ca89a91b2707fb21d829caeb": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigGen-SP800-208/expectedResults.json": {
+    "8b846bfaf99a7e663a466696aae670394041b2c6b5b4a7e4bfe288e3b28866fc": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigGen-SP800-208/prompt.json": {
+    "531b0edaa5eb06454f56530e279da03cac076ef6806c27b908ff8788daab5f2b": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigVer-1.0/expectedResults.json": {
+    "de2887c62dfa4bb9c4d706306e72dbf4794a5dd14e3388f32605f5f1c6cd4df1": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigVer-1.0/prompt.json": {
+    "5a99355c7524c08a6116be6583eb00e2cc12f903d1a810613c736900a56eb43d": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigVer-SP800-208/expectedResults.json": {
+    "3bff3e961e8e9bbdeca8d4e2428ac2fd162f95d3b5f76837a761b7b4424bbb7a": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
+  "LMS-sigVer-SP800-208/prompt.json": {
+    "eaa38d203490458871dac8dfc31cf9f2b8938a22654681261ea6783abc9704ff": {
+      "count": 1,
+      "first_seen": "2026-10-04",
+      "last_seen": "2026-10-04"
+    }
+  },
   "ML-DSA-keyGen-FIPS204/expectedResults.json": {
     "361f47ca19d592adcc66ff2cb591686ad785fea157b295648738bed6921a68df": {
       "count": 8,

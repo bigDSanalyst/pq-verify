@@ -329,6 +329,30 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
     return doc
 
 
+def to_json_hbs(result):
+    """Native schema for pqverify_hbs (LMS/HSS, XMSS/XMSS^MT, non-NIST
+    vectors). Cases over the key-generation budget are listed under
+    `not_run` and never counted as passed."""
+    doc = _envelope("pq-verify/hbs-result", None,
+                    reason="reference conformance, no vendor binary loaded")
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["vectors"] = result.get("vectors")
+    doc["reference"] = result.get("reference")
+    doc["budget"] = result.get("budget")
+    doc["groups"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_run"] = {k: {"count": v[0], "reason": v[1]}
+                      for k, v in (result.get("not_run") or {}).items()}
+    doc["failures"] = result.get("failures", [])
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "not_run": result.get("not_run_total", 0),
+                      "findings": 0 if p == t else t - p}
+    return doc
+
+
 def to_json_acvp(suites, artifact=None):
     """Native schema for the ACVP suites (pqverify_acvp / _mldsa_ / _slhdsa_).
 

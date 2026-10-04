@@ -70,6 +70,11 @@ TARGETS = {
     # Pinned in pq_verify/vectors/slhdsa_sig_vectors.json.gz, verbatim.
     "SLH-DSA-sigGen-FIPS205":    ["prompt.json", "expectedResults.json"],
     "SLH-DSA-sigVer-FIPS205":    ["prompt.json", "expectedResults.json"],
+    "LMS-keyGen-1.0":            ["prompt.json", "expectedResults.json"],
+    "LMS-sigGen-1.0":            ["prompt.json", "expectedResults.json"],
+    "LMS-sigGen-SP800-208":      ["prompt.json", "expectedResults.json"],
+    "LMS-sigVer-1.0":            ["prompt.json", "expectedResults.json"],
+    "LMS-sigVer-SP800-208":      ["prompt.json", "expectedResults.json"],
 }
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
