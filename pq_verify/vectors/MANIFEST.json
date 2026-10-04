@@ -1,4 +1,54 @@
 {
+  "LMS-keyGen-1.0/expectedResults.json": {
+    "bytes": 1705,
+    "sha256": "fda6cbdc498bda9af70b73ab27be42136b9ddbfcbc76e9792576df78b88cfb7e",
+    "nist_commit": "2972def"
+  },
+  "LMS-keyGen-1.0/prompt.json": {
+    "bytes": 1898,
+    "sha256": "0573a969d942cbe229731cee4904dacffa27314632f87ed04afd35f10ae042ce",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigGen-1.0/expectedResults.json": {
+    "bytes": 154957,
+    "sha256": "2c537ffb54a2d510a7903bbf00816fbfccc3ae149466eee4005a4e0b7009d586",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigGen-1.0/prompt.json": {
+    "bytes": 6890,
+    "sha256": "cabf6f7bdee3b4dfd320d671038f3c7668ee4121ca89a91b2707fb21d829caeb",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigGen-SP800-208/expectedResults.json": {
+    "bytes": 374545,
+    "sha256": "8b846bfaf99a7e663a466696aae670394041b2c6b5b4a7e4bfe288e3b28866fc",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigGen-SP800-208/prompt.json": {
+    "bytes": 27135,
+    "sha256": "531b0edaa5eb06454f56530e279da03cac076ef6806c27b908ff8788daab5f2b",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigVer-1.0/expectedResults.json": {
+    "bytes": 803,
+    "sha256": "de2887c62dfa4bb9c4d706306e72dbf4794a5dd14e3388f32605f5f1c6cd4df1",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigVer-1.0/prompt.json": {
+    "bytes": 64718,
+    "sha256": "5a99355c7524c08a6116be6583eb00e2cc12f903d1a810613c736900a56eb43d",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigVer-SP800-208/expectedResults.json": {
+    "bytes": 809,
+    "sha256": "3bff3e961e8e9bbdeca8d4e2428ac2fd162f95d3b5f76837a761b7b4424bbb7a",
+    "nist_commit": "2972def"
+  },
+  "LMS-sigVer-SP800-208/prompt.json": {
+    "bytes": 115106,
+    "sha256": "eaa38d203490458871dac8dfc31cf9f2b8938a22654681261ea6783abc9704ff",
+    "nist_commit": "2972def"
+  },
   "ML-DSA-keyGen-FIPS204/expectedResults.json": {
     "bytes": 873632,
     "sha256": "361f47ca19d592adcc66ff2cb591686ad785fea157b295648738bed6921a68df",

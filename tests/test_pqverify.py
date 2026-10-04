@@ -188,11 +188,11 @@ def test_watcher_covers_every_bundled_vector():
         import pytest
         pytest.skip("bundle or watcher not present in this layout")
 
+    from pq_verify.core import _VECTOR_BUNDLES        # the NIST archives
     bundled = set()
-    for arc in bundle.parent.glob("*.json.gz"):
-        if arc.name != "edge_vectors.json.gz":          # C2SP, not NIST
-            with gzip.open(arc, "rt") as fh:
-                bundled |= set(json.load(fh).keys())
+    for name in _VECTOR_BUNDLES:
+        with gzip.open(bundle.parent / name, "rt") as fh:
+            bundled |= set(json.load(fh).keys())
     assert any(k.startswith("SLH-DSA-sigGen") for k in bundled)
 
     src = watcher.read_text()
@@ -2573,7 +2573,8 @@ def _doctor_repo(tmp_path, history=None):
     (repo / "pq_verify" / "vectors").mkdir(parents=True)
     (repo / "tools" / "vector_state").mkdir(parents=True)
     for f in ("acvp_vectors.json.gz", "slhdsa_sig_vectors.json.gz", "MANIFEST.json",
-              "edge_vectors.json.gz", "EDGE_MANIFEST.json"):
+              "edge_vectors.json.gz", "EDGE_MANIFEST.json",
+              "hbs_vectors.json.gz", "HBS_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
                 repo / "tools" / "vector_state" / "baseline.json")
@@ -3706,8 +3707,8 @@ def test_main_archive_is_rewritten_byte_identically():
 
 
 def test_slhdsa_counts_match_the_docs():
-    """1248 = keyGen 120 + sigVer 504 + sigGen 624, and 1479 = 855 + 624,
-    counted from the pinned prompts, not typed."""
+    """1248 = keyGen 120 + sigVer 504 + sigGen 624, and 1566 = 855 + 624 +
+    87 LMS, counted from the pinned prompts, not typed."""
     n = {m: sum(len(g["tests"]) for g in _slh_docs(m)[0]["testGroups"])
          for m in ("sigVer", "sigGen")}
     from pq_verify.core import _load_bundle
@@ -3716,9 +3717,9 @@ def test_slhdsa_counts_match_the_docs():
     assert n == {"keyGen": 120, "sigVer": 504, "sigGen": 624}
     readme = _docs_text()["README.md"]
     assert "SLH--DSA%20ACVP-1248%2F1248" in readme
-    assert "1479/1479" in readme and "2103/2103" in readme
-    assert 855 + n["keyGen"] + n["sigVer"] == 1479
-    assert 1479 + n["sigGen"] == 2103
+    assert "1566/1566" in readme and "2190/2190" in readme
+    assert 855 + n["keyGen"] + n["sigVer"] + 87 == 1566        # + NIST LMS
+    assert 1566 + n["sigGen"] == 2190
 
 
 # ----------------------------------------------------------------------
@@ -3932,3 +3933,186 @@ def test_audits_md_matches_the_pinned_dsa_vendor_table():
     assert published == mod.dsa_markdown(mod.load_dsa_table()).strip(), (
         "AUDITS.md is out of date: paste the ML-DSA table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-dsa markers")
+
+
+# ----------------------------------------------------------------------
+# LMS/HSS and XMSS/XMSS^MT (RFC 8554, RFC 8391, SP 800-208)
+# ----------------------------------------------------------------------
+
+def test_lmots_and_wots_parameters_match_the_standards():
+    """p and ls from RFC 8554 Table 1 / SP 800-208 Table 2; WOTS+ len from
+    RFC 8391 §5.2 / SP 800-208 §5. Computed, then held to the tables."""
+    from pq_verify import hbs as H
+    table = {(32, 1): (265, 7), (32, 2): (133, 6), (32, 4): (67, 4), (32, 8): (34, 0),
+             (24, 1): (200, 8), (24, 2): (101, 6), (24, 4): (51, 4), (24, 8): (26, 0)}
+    for (n, w), want in table.items():
+        assert H.lmots_params(n, w) == want, (n, w)
+    assert len(H.LMOTS) == 16 and len(H.LMS) == 20
+    assert H.LMOTS[0x05][0] == "LMOTS_SHA256_N24_W1" and H.LMOTS[0x10][0] == "LMOTS_SHAKE_N24_W8"
+    assert H.LMS[0x0A][0] == "LMS_SHA256_M24_H5" and H.LMS[0x18][0] == "LMS_SHAKE_M24_H25"
+    lens = {p.n: p.len for p in H.XMSS_SETS.values()}
+    assert lens == {24: 51, 32: 67, 64: 131}
+    assert H.XMSS_SETS[("XMSS", 1)].name == "XMSS-SHA2_10_256"
+    assert H.XMSS_SETS[("XMSS", 0x0D)].name == "XMSS-SHA2_10_192"
+    assert H.XMSS_SETS[("XMSS", 0x15)].name == "XMSS-SHAKE256_20_192"
+    assert H.XMSS_SETS[("XMSS", 0x0D)].pad == 4 and H.XMSS_SETS[("XMSS", 0x10)].pad == 32
+
+
+def test_nist_lms_acvp_is_complete():
+    from pq_verify.hbs_suite import pqverify_lms_acvp
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_lms_acvp()
+    assert (r["passed"], r["total"]) == (87, 87), r["failures"][:3]
+    assert r["vectors"] == "pinned (NIST ACVP-Server 2972def)"
+    assert sum(t for k, (p, t) in r["detail"].items() if k.startswith("keyGen")) == 9
+    assert sum(t for k, (p, t) in r["detail"].items() if k.startswith("sigVer")) == 16
+    assert sum(t for k, (p, t) in r["detail"].items() if k.startswith("sigGen")) == 62
+
+
+def test_lms_xmss_other_sources_verify_and_report_what_did_not_run():
+    from pq_verify.hbs_suite import pqverify_hbs
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_hbs(budget=0)
+    assert r["verified"] and (r["passed"], r["total"]) == (1441, 1441)
+    d = r["detail"]
+    assert d["RFC 8554 HSS verify"] == (2, 2)
+    assert d["liboqs XMSS^MT verify"] == (16, 16)
+    assert d["liboqs XMSS verify"] == (21, 21)
+    for fam in ("SHA256_M24", "SHA256_M32", "SHAKE_M24", "SHAKE_M32"):
+        assert d[f"pqc-kat LMS sigVer {fam}"] == (80, 80)
+    # budget 0: no tree is built, and every skipped case is counted, not passed
+    assert not any("keyGen" in k for k in d)
+    assert r["not_run_total"] == 2096
+    assert all(v[1].startswith("tree over budget") for v in r["not_run"].values())
+
+
+def test_lms_trees_are_byte_exact_on_every_family():
+    """One height-5 tree per hash family: key generation and a signature
+    (with the hash-sigs randomizer derivation) byte-exact."""
+    import gzip, json, pathlib
+    from pq_verify import hbs as H
+    vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
+    with gzip.open(vec / "hbs_vectors.json.gz", "rt") as fh:
+        b = json.load(fh)
+    seen = set()
+    for fam in ("SHA256-M24", "SHA256-M32", "SHAKE-M24", "SHAKE-M32"):
+        doc = json.loads(b[f"pqc-kat/LMS/LMS-sigGen-1.0-{fam}-H5_H10/internalProjection.json"])
+        g = next(g for g in doc["testGroups"] if g["lmsMode"].endswith("_H5")
+                 and g["lmOtsMode"].endswith("_W4"))
+        lt, ot = H.LMS_BY_NAME[g["lmsMode"]], H.LMOTS_BY_NAME[g["lmOtsMode"]]
+        seed, I = bytes.fromhex(g["seed"]), bytes.fromhex(g["i"])
+        tree = H.LMSTree(lt, ot, seed, I)
+        assert tree.public_key.hex().upper() == g["publicKey"].upper(), fam
+        t = g["tests"][0]
+        q = int(t["q"])
+        C = H.LMOTS[ot][1](I + H.u32(q) + H.u16(0xFFFD) + b"\xff" + seed)
+        assert tree.sign(bytes.fromhex(t["message"]), q, C).hex().upper() == t["signature"].upper()
+        seen.add(fam)
+    assert len(seen) == 4
+
+
+def test_xmss_tree_is_byte_exact_sp800_208_keygen():
+    """SP 800-208's PRF_keygen derivation, a 192-bit set: the whole height-10
+    tree and one signature, byte-exact (about 6 s)."""
+    import gzip, json, pathlib
+    from pq_verify import hbs as H
+    from pq_verify.hbs_suite import _xmss_sig
+    vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
+    with gzip.open(vec / "hbs_vectors.json.gz", "rt") as fh:
+        b = json.load(fh)
+    p = json.loads(b["pqc-kat/XMSS/XMSS-sigGen-SHA256-N24-H10/prompt.json"])
+    e = json.loads(b["pqc-kat/XMSS/XMSS-sigGen-SHA256-N24-H10/expectedResults.json"])
+    g = p["testGroups"][0]
+    P = H.XMSS_SETS[("XMSS", int(g["OID"]))]
+    tree = H.XMSSTree(P, bytes.fromhex(g["S_XMSS"]), bytes.fromhex(g["SK_PRF"]),
+                      bytes.fromhex(g["I"]))
+    assert tree.root.hex().upper() == g["PK_root"].upper()
+    t, ex = g["tests"][0], e["testGroups"][0]["tests"][0]
+    msg = bytes.fromhex(t["message"])
+    sig = _xmss_sig(bytes.fromhex(ex["signature"]), msg, P)
+    assert tree.sign(msg, int.from_bytes(sig[:4], "big")) == sig
+
+
+def test_lms_and_xmss_verifiers_reject_every_tampering():
+    """Negative controls: a valid signature with any one byte changed (in q,
+    C, the OTS chains, the type fields or the path), truncated, extended, or
+    under a key of another type, must be rejected."""
+    import gzip, json, pathlib
+    from pq_verify import hbs as H
+    from pq_verify.hbs_suite import _xmss_sig, _c_arrays
+    vec = pathlib.Path(__file__).resolve().parent.parent / "pq_verify" / "vectors"
+    with gzip.open(vec / "hbs_vectors.json.gz", "rt") as fh:
+        b = json.load(fh)
+    doc = json.loads(b["pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M24-H5_H10/internalProjection.json"])
+    g = doc["testGroups"][0]
+    pk, t = bytes.fromhex(g["publicKey"]), g["tests"][0]
+    msg, sig = bytes.fromhex(t["message"]), bytes.fromhex(t["signature"])
+    assert H.lms_verify(pk, msg, sig)
+    for pos in sorted({0, 3, 7, 8, 20, len(sig) // 2, len(sig) - 40, len(sig) - 1}):
+        bad = bytearray(sig)
+        bad[pos] ^= 1
+        assert not H.lms_verify(pk, msg, bytes(bad)), pos
+    assert not H.lms_verify(pk, msg, sig[:-1])
+    assert not H.lms_verify(pk, msg, sig + b"\x00")
+    assert not H.lms_verify(pk, msg + b"\x00", sig)
+    assert not H.lms_verify(pk[:4] + H.u32(H.LMOTS_BY_NAME["LMOTS_SHAKE_N24_W8"]) + pk[8:], msg, sig)
+    # q at or beyond 2^h
+    h = H.LMS[int.from_bytes(pk[:4], "big")][3]
+    assert not H.lms_verify(pk, msg, H.u32(1 << h) + sig[4:])
+    # HSS: the RFC cases, then L that disagrees with the signature
+    case = _c_arrays(b["hash-sigs/test_testvector.c"])[0]
+    assert H.hss_verify(case["public_key"], case["message"], case["signature"])
+    assert not H.hss_verify(case["public_key"], case["message"] + b".", case["signature"])
+    assert not H.hss_verify(H.u32(3) + case["public_key"][4:], case["message"], case["signature"])
+    # XMSS
+    p = json.loads(b["pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N32-H10/prompt.json"])
+    e = json.loads(b["pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N32-H10/expectedResults.json"])
+    g = p["testGroups"][0]
+    P = H.XMSS_SETS[("XMSS", int(g["OID"]))]
+    xpk = H.u32(int(g["OID"])) + bytes.fromhex(g["PK_root"]) + bytes.fromhex(g["I"])
+    xmsg = bytes.fromhex(g["tests"][0]["message"])
+    xsig = _xmss_sig(bytes.fromhex(e["testGroups"][0]["tests"][0]["signature"]), xmsg, P)
+    assert H.xmss_verify(xpk, xmsg, xsig)
+    for pos in (0, 3, 4, 40, len(xsig) // 2, len(xsig) - 1):
+        bad = bytearray(xsig)
+        bad[pos] ^= 0x80
+        assert not H.xmss_verify(xpk, xmsg, bytes(bad)), pos
+    assert not H.xmss_verify(xpk, xmsg, xsig[:-1])
+    assert not H.xmss_verify(xpk, xmsg, H.u32(1 << P.h) + xsig[4:])
+    # signed-message form whose appended copy differs from the message
+    assert _xmss_sig(xsig + xmsg[:-1] + b"\x00", xmsg, P) is None
+
+
+def test_hbs_bundle_is_pinned_and_checked(tmp_path):
+    import gzip, json, pathlib, sys
+    root = pathlib.Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "tools"))
+    import pin_hbs_vectors as P
+    assert P.verify() == []
+    m = json.loads((root / "pq_verify" / "vectors" / "HBS_MANIFEST.json").read_text())
+    assert set(m["sources"]) == {"pqc-kat", "liboqs", "hash-sigs"}
+    for s in m["sources"].values():
+        assert len(s["commit"]) == 40
+    # the doctor blocks an altered entry
+    D, _ = _doctor()
+    repo = _doctor_repo(tmp_path)
+    arc = repo / "pq_verify" / "vectors" / "hbs_vectors.json.gz"
+    with gzip.open(arc, "rt") as fh:
+        entries = json.load(fh)
+    entries["hash-sigs/test_testvector.c"] = entries["hash-sigs/test_testvector.c"].replace(
+        "0x54,0x68", "0x54,0x69", 1)
+    with gzip.open(arc, "wt") as fh:
+        json.dump(entries, fh)
+    code, doc, st = _doctor_run(repo, "--fast")
+    assert code == 1 and st["hbs:manifest"] == "BLOCK"
+
+
+def test_lms_xmss_report_and_gate():
+    from pq_verify.report import to_json_hbs
+    doc = to_json_hbs({"verified": False, "passed": 9, "total": 10,
+                       "detail": {"x": (9, 10)}, "not_run": {"y": [5, "tree over budget"]},
+                       "not_run_total": 5, "failures": [{"stage": "x", "case": "c"}],
+                       "budget": 0, "vectors": "v", "reference": "pq_verify.hbs"})
+    assert doc["schema"] == "pq-verify/hbs-result"
+    assert doc["status"] == "FINDINGS PRESENT" and doc["summary"]["not_run"] == 5
+    assert doc["not_run"]["y"]["count"] == 5

@@ -35,8 +35,8 @@ dependencies = []
 # slh-dsa (all optional, in [full])
 
 [project.optional-dependencies]
-# Required to reproduce the 1479/1479 ACVP claim (ML-KEM 240 + ML-DSA 615 +
-# SLH-DSA 624) and
+# Required to reproduce the 1566/1566 ACVP claim (ML-KEM 240 + ML-DSA 615 +
+# SLH-DSA 624; LMS 87 needs nothing beyond hashlib) and
 # the live KEM roundtrip. sympy is required for the Engine-6 Conjecture 7
 # exact-rational residue test; without it that check is reported SKIPPED
 # (the self-suite total stays 160).

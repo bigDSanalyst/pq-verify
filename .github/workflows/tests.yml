@@ -51,17 +51,20 @@ jobs:
       - name: Self-suite (smoke — must not crash)
         run: python -m pq_verify.cli --quick
 
-      - name: NIST ACVP — 1479 pinned vectors, offline
+      - name: NIST ACVP — 1566 pinned vectors, offline
         run: |
           python -m pq_verify.cli --acvp-all --fail-on-finding --json /tmp/acvp.json
           # --fail-on-finding passes a suite that could not run (its gate is
-          # --require-full-coverage, which also wants coq); all three must have.
-          python -c "import json; d = json.load(open('/tmp/acvp.json')); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 3, s; print(d['summary'])"
+          # --require-full-coverage, which also wants coq); all four must have.
+          python -c "import json; d = json.load(open('/tmp/acvp.json')); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 4, s; print(d['summary'])"
 
       # The suite above scored 240/240 on the malformed vectors 2.8.0 shipped;
       # only the doctor's structural checks catch that class of defect.
       - name: Pinned vectors are sound (doctor, offline)
         run: python tools/doctor.py
+
+      - name: LMS/HSS + XMSS/XMSS^MT, default budget
+        run: python -m pq_verify.cli --lms-xmss --fail-on-finding
 
       - name: Hybrid (RFC 10024) — prompt emits and round-trips
         run: |
@@ -233,6 +236,16 @@ jobs:
               n += got
           print("SLH-DSA signature vectors present:", n, "from",
                 _vector_revision("SLH-DSA-sigVer-FIPS205"))
+          PY
+      - name: The wheel must carry the LMS/XMSS vectors
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          from pq_verify.hbs_suite import pqverify_hbs, pqverify_lms_acvp
+          r = pqverify_lms_acvp(verbose=False)
+          assert (r["passed"], r["total"]) == (87, 87), r
+          r = pqverify_hbs(budget=0, verbose=False)
+          assert r["verified"] and r["total"] == 1441, (r["passed"], r["total"])
+          print("LMS/XMSS vectors present:", r["vectors"])
           PY
       - name: The wheel must carry the hybrid module
         run: |

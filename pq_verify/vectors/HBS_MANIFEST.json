@@ -1,0 +1,960 @@
+{
+  "files": {
+    "hash-sigs/test_testvector.c": {
+      "bytes": 43638,
+      "path": "test_testvector.c",
+      "sha256": "9fbf946d3f81963d6cdbc1c99b39815e0b544b8a73bd4e8a012f354dcf375518",
+      "source": "hash-sigs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W1.rsp": {
+      "bytes": 18197,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W1.rsp",
+      "sha256": "fe7d769b96e08ca580109af6207e8cb158dfb163f45db70e67b0a9742e183461",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W2.rsp": {
+      "bytes": 9718,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W2.rsp",
+      "sha256": "a1a2709362ac8aeb956d0d88cd4a42ce2fc8df9a69979270299b9471f61c3dbd",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W4.rsp": {
+      "bytes": 5494,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W4.rsp",
+      "sha256": "707e4ff1adb835f6e79453caca0c787c156a2ee270b1657a42ebbe6eb7424494",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W4_H5_W8.rsp": {
+      "bytes": 8124,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W4_H5_W8.rsp",
+      "sha256": "f51cd27e5a35f63586796a39f00d6729f5148fb6d454e61737fbdeebbde3aed8",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W8.rsp": {
+      "bytes": 3382,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H10_W8.rsp",
+      "sha256": "799e7bdf00fc0839519e6847b7df40763b89949e1d1b99bd5b9f669387bf0fbc",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W1.rsp": {
+      "bytes": 18486,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W1.rsp",
+      "sha256": "af9d334c2d306bb1f5409f45c4669799c952593cb23e1ecd5acce37900bf598b",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W2.rsp": {
+      "bytes": 10038,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W2.rsp",
+      "sha256": "0c6455312cd68eb9023ed4e74474c000210d67d042038a62dbe322a3f4c43c2b",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W4.rsp": {
+      "bytes": 5814,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W4.rsp",
+      "sha256": "9e2a4d4b52212ecfbb0a1df877aaef0406e373bcec54597df81bd1d300c2eaba",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W8.rsp": {
+      "bytes": 3702,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H15_W8.rsp",
+      "sha256": "ea0f3dcdcf73a2b990b86707c480fc698f9325537672928064c9b40348ce1cca",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W1.rsp": {
+      "bytes": 18806,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W1.rsp",
+      "sha256": "5670ee0668ccb704e15c9f6e42f4a017f4b8cf8aa34c311ca905b1b538a2352f",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W2.rsp": {
+      "bytes": 10358,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W2.rsp",
+      "sha256": "53e844066e5dda43713261704c6d07b785373dccc37293b2cbe2ba1b7b961382",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W4.rsp": {
+      "bytes": 6134,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W4.rsp",
+      "sha256": "55a9c196d69acdff73b2e95f9d0bb97b9edd260bd93f53b5ce4f50c26d6575a4",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W8.rsp": {
+      "bytes": 4022,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H20_W8.rsp",
+      "sha256": "2b95ce8e6c44c7ec1bc4753238047354b363d965cc4f0132ac0479586e672a3a",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W1.rsp": {
+      "bytes": 17881,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W1.rsp",
+      "sha256": "64ec1043fbcace02425cfc5b3592ce67dcf9f8884ae73472b121eac11b9de31d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W2.rsp": {
+      "bytes": 9398,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W2.rsp",
+      "sha256": "a4877dbf9f06a08469afaee13cf25ef98e20064d2be0009888c68698995aca7d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W4.rsp": {
+      "bytes": 5174,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W4.rsp",
+      "sha256": "e13ceda1f66c90cad1a15087f26bb025378f7fbb69ecfc138ac365a9bf3fb6a5",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W8.rsp": {
+      "bytes": 3062,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W8.rsp",
+      "sha256": "175f2b5b8a6e8a5faa82bdeb2779a88cc977ad7cca46d815b0d02c6dd672396d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W8_H5_W8.rsp": {
+      "bytes": 5754,
+      "path": "tests/KATs/sig_stfl/lms/LMS_SHA256_H5_W8_H5_W8.rsp",
+      "sha256": "a20ce5f27d9962865463223a138a7507f30690ec7268e802eb6ba2f04c6bd99e",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_192.rsp": {
+      "bytes": 5457,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_192.rsp",
+      "sha256": "6efee401869dafee754165a22a6f2f3b467fbaaa4f054bad5b70c7f4c5857133",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_256.rsp": {
+      "bytes": 8145,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_256.rsp",
+      "sha256": "7acc06cc456a087456f937d07c7acae2ffeee517cf71b1693adc916f638df388",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_512.rsp": {
+      "bytes": 24017,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_10_512.rsp",
+      "sha256": "854cb9aede50a359703934010d08db846a3a8c4b9b984471cba74ef07d620bc5",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_192.rsp": {
+      "bytes": 6851,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_192.rsp",
+      "sha256": "33225885b04da07a95ea63f993d05ee50223d3484f537f324b290d8a317d7bd7",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_256.rsp": {
+      "bytes": 9971,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_256.rsp",
+      "sha256": "b20ee19984d6a47529c8e2c127e43e619090a7dff0f2dfdc750d96b6d2453275",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_512.rsp": {
+      "bytes": 27571,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_16_512.rsp",
+      "sha256": "772613c5d30da675b87a4f3f932ac71c7dc3ebf8803a9bc12936e6683c3f60d1",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_192.rsp": {
+      "bytes": 7783,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_192.rsp",
+      "sha256": "cf30df53ca187aabe92d5915e4fd26a118cca1f20af1002f96b63614d04e973b",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_256.rsp": {
+      "bytes": 11191,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_256.rsp",
+      "sha256": "0632c1e3049918a208676d9d39a97b81f3296665205ad342ed0f0042c7ad848c",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_512.rsp": {
+      "bytes": 29943,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHA2_20_512.rsp",
+      "sha256": "7ae409257aaf6756ac9a804aec3df8ab98916e026f6ffa2a78da3bbc97dd48b7",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_10_192.rsp": {
+      "bytes": 5457,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_10_192.rsp",
+      "sha256": "b62a1dbc2f8920df2f5a164ed175829ed95d5b3301269b0ab2452cd46b4261d6",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_10_256.rsp": {
+      "bytes": 8145,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_10_256.rsp",
+      "sha256": "7cbb582c6723cb86a9c775151865a67f3f9fa30140beab8f115cd4a7dc15eb2d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_16_192.rsp": {
+      "bytes": 6851,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_16_192.rsp",
+      "sha256": "935570c4bc7c61e4cdc0517182766dcee53ceec71f91b8dd969568a7f8b76db1",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_16_256.rsp": {
+      "bytes": 9971,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_16_256.rsp",
+      "sha256": "ccc819bc17f78cdb4f2733b97350b7ef351e07d1456564a4185247db1a682fe3",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_20_192.rsp": {
+      "bytes": 7783,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_20_192.rsp",
+      "sha256": "18067167a1eeee294bf1f0e3087e468b512f7c0c4cfad9c449dc425aab45336b",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_20_256.rsp": {
+      "bytes": 11191,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE256_20_256.rsp",
+      "sha256": "01ace5400a407030b0cb43ed0982c5f378a1d0c4108fdca2b70bc4ba78067c7f",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_10_256.rsp": {
+      "bytes": 8145,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_10_256.rsp",
+      "sha256": "f5175c88db4f0ffca54998e0e46cc15d02b5f193063cc349926e493fbe8c39f4",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_10_512.rsp": {
+      "bytes": 24017,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_10_512.rsp",
+      "sha256": "8142c58d407dab3f39f1142e253fff535c572d5adcb4fd21b51a62eef33453d8",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_16_256.rsp": {
+      "bytes": 9971,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_16_256.rsp",
+      "sha256": "519f61b7c839cf29b4a67b8fa9bfa64a37b360cb98232363a7768a5004ac8a37",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_16_512.rsp": {
+      "bytes": 27571,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_16_512.rsp",
+      "sha256": "29150754aad6d8150e86f58224f72521d76d5bfba43d5f54791c1d5def27a205",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_20_256.rsp": {
+      "bytes": 11191,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_20_256.rsp",
+      "sha256": "0b1e25ce1c89709624a3a668a4ac75ae053f1306b5f461b9424ca3ae6a153057",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSS-SHAKE_20_512.rsp": {
+      "bytes": 29943,
+      "path": "tests/KATs/sig_stfl/xmss/XMSS-SHAKE_20_512.rsp",
+      "sha256": "fbe74ab00eb150f63b9da9ddd325b667e55a65bb994434ccf2c7b670e7e22406",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_20-2_256.rsp": {
+      "bytes": 22327,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_20-2_256.rsp",
+      "sha256": "9f117294999c886ac6b69d6f32c3fc152599343add210f4464aee5d1ca0ec34d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_20-4_256.rsp": {
+      "bytes": 40783,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_20-4_256.rsp",
+      "sha256": "0c990e8ff8189140e8539b11ae3f85040544fc7d549f8db17d83392569647de9",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-2_256.rsp": {
+      "bytes": 30827,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-2_256.rsp",
+      "sha256": "91605c4b67afb4e17d57ed076e10d3c4287264deea4a46092e374199c041d489",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-4_256.rsp": {
+      "bytes": 50707,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-4_256.rsp",
+      "sha256": "78e16d2935701cda17ecf493f5ed292827c20f0bf34c1c63c25c94f028ee62c9",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-8_256.rsp": {
+      "bytes": 86388,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_40-8_256.rsp",
+      "sha256": "f0feef94797276e832634a3b55020a8791dbe14d400e3c076d4f8ecd53892dac",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-12_256.rsp": {
+      "bytes": 131996,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-12_256.rsp",
+      "sha256": "7bdbc5498d33dffcb32675df8578d8ef590f0f06cbac6685342a131cc34bc720",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-3_256.rsp": {
+      "bytes": 50471,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-3_256.rsp",
+      "sha256": "62ee9b8b9a46ed95a2e4fb3d18552fe2e87f91e530b0fb82c5edb1242c0e0258",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-6_256.rsp": {
+      "bytes": 79092,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHA2_60-6_256.rsp",
+      "sha256": "5ab099ea120729e8b4fbbd074bc7b60396c009a69725eeefefa9d89274b2ba83",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_20-2_256.rsp": {
+      "bytes": 22327,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_20-2_256.rsp",
+      "sha256": "75d79d1a8a0cc714a97acc956f12040808c9382b37e3fb2d389e5ad29a1f3b53",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_20-4_256.rsp": {
+      "bytes": 40783,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_20-4_256.rsp",
+      "sha256": "391f4d0b64d1a24f53fcc642bd679f4b6f9230abd1c4641f30e6c7d7dee451f9",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-2_256.rsp": {
+      "bytes": 30827,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-2_256.rsp",
+      "sha256": "f2601cb4acc1422852ff3dd933ed84f3ce4dcb0218db6f43793bb146e6b75a10",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-4_256.rsp": {
+      "bytes": 50707,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-4_256.rsp",
+      "sha256": "eb578e8b7d7dad45e99a177abe482fbd087c9281767b1a3bdd660c2d5e04712d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-8_256.rsp": {
+      "bytes": 86388,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_40-8_256.rsp",
+      "sha256": "1597d62ea8aebbebaf364141d1443a804fe3f6d0705165a55794096a4a3b1c71",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-12_256.rsp": {
+      "bytes": 131996,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-12_256.rsp",
+      "sha256": "79b6690809f1317fbc2466590e4fccc8a7f706b05abcb277ad1018565096ad88",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-3_256.rsp": {
+      "bytes": 50471,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-3_256.rsp",
+      "sha256": "7ca90f7c64b21d844975ef39c48405dc61922f6fd0be8cbb88b2a18a54bc754d",
+      "source": "liboqs"
+    },
+    "liboqs/tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-6_256.rsp": {
+      "bytes": 79092,
+      "path": "tests/KATs/sig_stfl/xmss/XMSSMT-SHAKE_60-6_256.rsp",
+      "sha256": "c11ca5be510f88c9c8188cb98da65e7d4b2be1cd7efc5a9769348c4fa2b33b24",
+      "source": "liboqs"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M24-H15/internalProjection.json": {
+      "bytes": 25951,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M24-H15/internalProjection.json",
+      "sha256": "399628a7d57bfce99f1b7a66cbe950b0b5012b5edc6e8f46984312ddba96c97b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M24-H20/internalProjection.json": {
+      "bytes": 3272,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M24-H20/internalProjection.json",
+      "sha256": "e5a7ae9da7089997f9eb06fdc68bc08f150cd141ca07a68b46716264c8f09423",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M24-H25/internalProjection.json": {
+      "bytes": 3272,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M24-H25/internalProjection.json",
+      "sha256": "c00bcecf2c86a0cca692f945eea5e9104ca572d7420fb5f597ceed7d68cae671",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M24-H5_H10/internalProjection.json": {
+      "bytes": 51848,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M24-H5_H10/internalProjection.json",
+      "sha256": "21f7aace7b869463fc31b7bbeac5768e24d64f2c9eb4412af355e8d118757fb7",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M32-H15/internalProjection.json": {
+      "bytes": 28511,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M32-H15/internalProjection.json",
+      "sha256": "318a21668ea016f7b510feca88ff0211376bf29c6c7742c5511b3ca9546dd1f9",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M32-H20/internalProjection.json": {
+      "bytes": 3528,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M32-H20/internalProjection.json",
+      "sha256": "38a34963b8169436635634af4bb949e2fcfcfe23d990c209663bb0ad83dd4eb6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M32-H25/internalProjection.json": {
+      "bytes": 3528,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M32-H25/internalProjection.json",
+      "sha256": "660d6cbcf31e9d14d51f3522e8b90e11fa19f617c9daea1ac38f198ed1c36f91",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHA256-M32-H5_H10/internalProjection.json": {
+      "bytes": 56968,
+      "path": "LMS/LMS-keyGen-1.0-SHA256-M32-H5_H10/internalProjection.json",
+      "sha256": "7870ce6a1a988a571ac1df42fe74cc98116c3d3e271392647edd83c572687f0b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M24-H15/internalProjection.json": {
+      "bytes": 25943,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M24-H15/internalProjection.json",
+      "sha256": "a62af669d091ed766af30f9021e4223b10a1238b0fe8274c397d7f94fc638f59",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M24-H20/internalProjection.json": {
+      "bytes": 3264,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M24-H20/internalProjection.json",
+      "sha256": "eb9ecdd32b9b292af0dcd7c7b5c09a41ce16951d2119af856da7fd23410b54c1",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M24-H25/internalProjection.json": {
+      "bytes": 3264,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M24-H25/internalProjection.json",
+      "sha256": "bc740a2f4eec95536d16298c0666b5b994d907af35bf6d6652acc07f103f8e54",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M24-H5_H10/internalProjection.json": {
+      "bytes": 51832,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M24-H5_H10/internalProjection.json",
+      "sha256": "66d1faa78e574e804c53c018b2261d83e289ffecbf6ad7257c847644443bdef2",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M32-H15/internalProjection.json": {
+      "bytes": 28503,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M32-H15/internalProjection.json",
+      "sha256": "838951ccd355023043c29f3b9fcbf1ff275aead5c68ad23140905193835a965c",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M32-H20/internalProjection.json": {
+      "bytes": 3520,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M32-H20/internalProjection.json",
+      "sha256": "7da7c9548dcc9b3fe2c1d2cde7c633b446848d1bec9d352661a8a8cb82706c2c",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M32-H5_H10/internalProjection.json": {
+      "bytes": 56952,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M32-H5_H10/internalProjection.json",
+      "sha256": "fff1df9808a9797d95705845b490cdcd9c00da0ccef528b77932d116bf215337",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-keyGen-1.0-SHAKE-M32-M25/internalProjection.json": {
+      "bytes": 3520,
+      "path": "LMS/LMS-keyGen-1.0-SHAKE-M32-M25/internalProjection.json",
+      "sha256": "1c349a6b4ae968592f7e6989b8c5ca660bfcd067dc627b7b495850636f3ab4c3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M24-H15/internalProjection.json": {
+      "bytes": 229660,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M24-H15/internalProjection.json",
+      "sha256": "483f23c7281ae18e1aa5af4d452e21baf52af47b5a5dcec2adaae9d8e4f869f4",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M24-H20/internalProjection.json": {
+      "bytes": 120505,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M24-H20/internalProjection.json",
+      "sha256": "97463ad74875871e14d115035fde712ff92ba3019f00125eb8ad17c03729015b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M24-H25/internalProjection.json": {
+      "bytes": 125331,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M24-H25/internalProjection.json",
+      "sha256": "d73736391f51cb85822de9958e97cb2f1e788aefd9620518d2469b10cafefa29",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M24-H5_H10/internalProjection.json": {
+      "bytes": 857267,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M24-H5_H10/internalProjection.json",
+      "sha256": "6402d0f9e13837d2c2c3b076203e1c66ccf4018e89a39a932a7095ddf59b9557",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M32-H15/internalProjection.json": {
+      "bytes": 377946,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M32-H15/internalProjection.json",
+      "sha256": "cfd2f06c20226d220aa434b1b2cfe330952f0e591880a7dd8403477d443f62d3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M32-H20/internalProjection.json": {
+      "bytes": 196305,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M32-H20/internalProjection.json",
+      "sha256": "6e109ccfee070f7cd87dff0a9437275199a4a9542a95197585eafdf9b3ec9876",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M32-H25/internalProjection.json": {
+      "bytes": 202743,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M32-H25/internalProjection.json",
+      "sha256": "93b9bc350143bc7106a18952ff6a1cc37cc2157096a474828b4bf99093b5b50e",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHA256-M32-H5_H10/internalProjection.json": {
+      "bytes": 1430974,
+      "path": "LMS/LMS-sigGen-1.0-SHA256-M32-H5_H10/internalProjection.json",
+      "sha256": "816081c33d85b15fea3a5e00e39e8cc59ee87c28d449f6eefe221b44c826d621",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M24-H15/internalProjection.json": {
+      "bytes": 229656,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M24-H15/internalProjection.json",
+      "sha256": "883bcdd04129236a27b5d031eda7df98365782de6629e75746461f85aef7e2cc",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M24-H20/internalProjection.json": {
+      "bytes": 120491,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M24-H20/internalProjection.json",
+      "sha256": "180769b8cfdc96abccfe525462b11a03fbe467250194385cfa6f5c7eb112de8d",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M24-H25/internalProjection.json": {
+      "bytes": 125323,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M24-H25/internalProjection.json",
+      "sha256": "3b23c660d7c3ac07ac1ae4fb0c1f2ea5d6cc0c72f52a41d47932ec05192dccab",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M24-H5_H10/internalProjection.json": {
+      "bytes": 857254,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M24-H5_H10/internalProjection.json",
+      "sha256": "4c91c3f0b7cff4ddee68fcf45f922d2d5120bb4f52b64825e8988c8768361c45",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M32-H15/internalProjection.json": {
+      "bytes": 377949,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M32-H15/internalProjection.json",
+      "sha256": "7cd5bfa4d961a302a4a312e914964c2659e0faf2eaf4f3563ba7f801d335f356",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M32-H20/internalProjection.json": {
+      "bytes": 196299,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M32-H20/internalProjection.json",
+      "sha256": "ec70622900c0232fe2d6c616e1764ace6a96b0ee9c5ac781afd5888ba7c4f465",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M32-H25/internalProjection.json": {
+      "bytes": 202734,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M32-H25/internalProjection.json",
+      "sha256": "0c6517961490996c4f28d26efc9a617d6f6434839aa035451f448b1b7da95499",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigGen-1.0-SHAKE-M32-H5_H10/internalProjection.json": {
+      "bytes": 1430955,
+      "path": "LMS/LMS-sigGen-1.0-SHAKE-M32-H5_H10/internalProjection.json",
+      "sha256": "7fb8cdb6f1e9f56b221521741b0f020f08bbccbacd75a757a7ed54fb8a901923",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M24-H15/internalProjection.json": {
+      "bytes": 93224,
+      "path": "LMS/LMS-sigVer-SHA256-M24-H15/internalProjection.json",
+      "sha256": "4426b1fe6984dd2e0c2fb7f2d8d0dafa21621b8f78936fe169f147e798c0ec15",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M24-H20/internalProjection.json": {
+      "bytes": 97064,
+      "path": "LMS/LMS-sigVer-SHA256-M24-H20/internalProjection.json",
+      "sha256": "a9c6eed364a2cc60574763c0c74cf32b85f82a4212ee99e8df5f98828d927ba3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M24-H25/internalProjection.json": {
+      "bytes": 100904,
+      "path": "LMS/LMS-sigVer-SHA256-M24-H25/internalProjection.json",
+      "sha256": "b04ede9df08e20594ba368d52c6af760153d2f22650c132c781241f9742b3e12",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M24-H5_H10/internalProjection.json": {
+      "bytes": 174812,
+      "path": "LMS/LMS-sigVer-SHA256-M24-H5_H10/internalProjection.json",
+      "sha256": "5d45a85869922dab1869c30d57d898248dc1693b635636f47d2bd28a2c961fa3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M32-H15/internalProjection.json": {
+      "bytes": 152551,
+      "path": "LMS/LMS-sigVer-SHA256-M32-H15/internalProjection.json",
+      "sha256": "a281c21bdaae63d931fc55a27efc42bb804c114caefaec6007d88c87e479dbc6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M32-H20/internalProjection.json": {
+      "bytes": 157671,
+      "path": "LMS/LMS-sigVer-SHA256-M32-H20/internalProjection.json",
+      "sha256": "fdb043f866e6c7601fda1949f7caa61fae0fe4fa53257c0c920d57f95fc48f36",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M32-H25/internalProjection.json": {
+      "bytes": 162791,
+      "path": "LMS/LMS-sigVer-SHA256-M32-H25/internalProjection.json",
+      "sha256": "2d559bdbc5c2d8af40ca47fef5d817a7afc3f00dcc08226ed3c6a3c7ac7ebdc9",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHA256-M32-H5_H10/internalProjection.json": {
+      "bytes": 289627,
+      "path": "LMS/LMS-sigVer-SHA256-M32-H5_H10/internalProjection.json",
+      "sha256": "210d0eace1d39b53f7eaa4fa1fca26868d4f0f2fdb3c4d0cf864fc7f75e63e50",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M24-H15/internalProjection.json": {
+      "bytes": 93215,
+      "path": "LMS/LMS-sigVer-SHAKE-M24-H15/internalProjection.json",
+      "sha256": "1e986d85af57c6438f40027fb3923ce255b45fba6292960331fa1b83d2a47255",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M24-H20/internalProjection.json": {
+      "bytes": 97055,
+      "path": "LMS/LMS-sigVer-SHAKE-M24-H20/internalProjection.json",
+      "sha256": "8cf05f2d9cd1ceb19e4955e55439f14ea8d8fce7c4d745f55c75b4c65e21fc6c",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M24-H25/internalProjection.json": {
+      "bytes": 100895,
+      "path": "LMS/LMS-sigVer-SHAKE-M24-H25/internalProjection.json",
+      "sha256": "bc217e0ec174609087c552052dc346d5a7828bc3e3652ff7e023cda3c3e5c82f",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M24-H5_H10/internalProjection.json": {
+      "bytes": 174795,
+      "path": "LMS/LMS-sigVer-SHAKE-M24-H5_H10/internalProjection.json",
+      "sha256": "16e5c6a4a672cb5e771599b2c4c00302f14c7e88ac38602a3ec30d3374f55b5f",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M32-H15/internalProjection.json": {
+      "bytes": 152543,
+      "path": "LMS/LMS-sigVer-SHAKE-M32-H15/internalProjection.json",
+      "sha256": "1ce7441c132644a7d60c770887da206721ae1d90fdb3b7189935a57785ccd697",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M32-H20/internalProjection.json": {
+      "bytes": 157663,
+      "path": "LMS/LMS-sigVer-SHAKE-M32-H20/internalProjection.json",
+      "sha256": "c8083dc8b0882588908d5cbc3c33182ba565a882404b89ca7de92a061dd5bc22",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M32-H25/internalProjection.json": {
+      "bytes": 162783,
+      "path": "LMS/LMS-sigVer-SHAKE-M32-H25/internalProjection.json",
+      "sha256": "0d9d6f1ab16939328cabc6ac07fe0cb7f99ba1aecdcd1e61379c3b5ad3a766b4",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/LMS/LMS-sigVer-SHAKE-M32-H5_H10/internalProjection.json": {
+      "bytes": 289611,
+      "path": "LMS/LMS-sigVer-SHAKE-M32-H5_H10/internalProjection.json",
+      "sha256": "386f281eb17fe49259ed60fa7376f3585e48e4a924a7347d4258f9433c608997",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H10/expectedResults.json": {
+      "bytes": 4309,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H10/expectedResults.json",
+      "sha256": "35db7686abbbae6ca68803329892d1ff54c1d6b3a5265a3b5bb43cdb9f38d370",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H10/prompt.json": {
+      "bytes": 2849,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H10/prompt.json",
+      "sha256": "185a2c94d2c9b92fdeb3c1c2ee443de1d8e313b226a24c7d096eb16f97bfb495",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H16/expectedResults.json": {
+      "bytes": 2248,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H16/expectedResults.json",
+      "sha256": "97a062823382fc683fed9cccbbae500b65fdd4eb87cb5f0b9e65b90a9185ebec",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H16/prompt.json": {
+      "bytes": 1558,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H16/prompt.json",
+      "sha256": "f6d1931de7f101a5e12a3dd21a0e1e8ff6c5e670aecb743013f18be12b6d5459",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H20/expectedResults.json": {
+      "bytes": 1424,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H20/expectedResults.json",
+      "sha256": "4797f15a5d2d140b65c6fb38d6d319b064bc18c7ef61cbdaf1237658b8c75f72",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N24-H20/prompt.json": {
+      "bytes": 1042,
+      "path": "XMSS/XMSS-keyGen-SHA256-N24-H20/prompt.json",
+      "sha256": "f354c6165c87242354114847bff3cd8b3359e6c819bb9af97e3d9cb384e41a81",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H10/expectedResults.json": {
+      "bytes": 5269,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H10/expectedResults.json",
+      "sha256": "6e790f51e185c16712d08da8a7b352dc63331aefda1e893a22e13b0e13331a4b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H10/prompt.json": {
+      "bytes": 3328,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H10/prompt.json",
+      "sha256": "24d2bbdf7d191e370a7464162b60709d4f065e38c1e9db4ab26a60d3db06d060",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H16/expectedResults.json": {
+      "bytes": 2728,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H16/expectedResults.json",
+      "sha256": "d2b61f46a5af3f2c698def0563cbd3f517551d87f55cafc6952c4f34b51a1db5",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H16/prompt.json": {
+      "bytes": 1797,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H16/prompt.json",
+      "sha256": "62649bdebbc3786a2bd553afe8427644ebf8defcc6dc16ba709ae9efc0571842",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H20/expectedResults.json": {
+      "bytes": 1712,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H20/expectedResults.json",
+      "sha256": "1d3d29a975d88fd661f1546a6f777f67fda2d0418dbd59f4fd2f934e4221144a",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHA256-N32-H20/prompt.json": {
+      "bytes": 1185,
+      "path": "XMSS/XMSS-keyGen-SHA256-N32-H20/prompt.json",
+      "sha256": "c7aacb7ad0b4536f4dda4cdf7e6c8b376888019de2ea7d2e6fc9196eceb25b6b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H10/expectedResults.json": {
+      "bytes": 4149,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H10/expectedResults.json",
+      "sha256": "d4463777bf24df2a6de99d80d4148b464ef3531603785bc45610de5b865d4ee8",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H10/prompt.json": {
+      "bytes": 2343,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H10/prompt.json",
+      "sha256": "7b3bd3001dcb91d515e95975b444c73761f53c52047592908e9a4ba54a18d458",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H16/expectedResults.json": {
+      "bytes": 2248,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H16/expectedResults.json",
+      "sha256": "ebb7e943926e97cbeec1fb1edb91c76f6b5b88117dc0c13ad055468f77b1d564",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H16/prompt.json": {
+      "bytes": 1562,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H16/prompt.json",
+      "sha256": "00a88a2ba185b9fb9f7fb6cab55d38ea88b75462717034759f67f2d28829e8ac",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H20/expectedResults.json": {
+      "bytes": 1424,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H20/expectedResults.json",
+      "sha256": "bb35bfcfcb38706f7a80f9bce57e7b0a17b38af297e79778ddd097e699fe35e9",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N24-H20/prompt.json": {
+      "bytes": 1046,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N24-H20/prompt.json",
+      "sha256": "c26e440f4600ec353a34f8aaf75019d4410d97fd29dc2538881afe386026fec7",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H10/expectedResults.json": {
+      "bytes": 5269,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H10/expectedResults.json",
+      "sha256": "9cd6e9cc19602fcf6a83256535edb0c44849ea6ecd0ae4b2f513ef21cffb3c03",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H10/prompt.json": {
+      "bytes": 3333,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H10/prompt.json",
+      "sha256": "3138d90fb4c36b71a881089243901db0d4e91b391c03ad06b39059b9e4a2bc9e",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H16/expectedResults.json": {
+      "bytes": 2728,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H16/expectedResults.json",
+      "sha256": "1e045b41460a757645fb8055a9a0d9e0dccf49b8dbaeb73f635969d6d8364102",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H16/prompt.json": {
+      "bytes": 1802,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H16/prompt.json",
+      "sha256": "084c710d2787307909b950bba7036911f9c2f46616963a77729977f5e83904f3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H20/expectedResults.json": {
+      "bytes": 1712,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H20/expectedResults.json",
+      "sha256": "06e75cf9c380292745d653bfd7da90e3c237a27fb04b57c10675c653644fd23b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-keyGen-SHAKE256-N32-H20/prompt.json": {
+      "bytes": 1190,
+      "path": "XMSS/XMSS-keyGen-SHAKE256-N32-H20/prompt.json",
+      "sha256": "f4ace60bdc027da925170e0a31df0a9cddd1606acd15aef1d09faefa6b947d46",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHA256-N24-H10/expectedResults.json": {
+      "bytes": 33400,
+      "path": "XMSS/XMSS-sigGen-SHA256-N24-H10/expectedResults.json",
+      "sha256": "19fe473c80724149af4b93e344f63a742fdfef6d8eaff117969ad7125360d2e3",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHA256-N24-H10/prompt.json": {
+      "bytes": 3941,
+      "path": "XMSS/XMSS-sigGen-SHA256-N24-H10/prompt.json",
+      "sha256": "8be468dae82784a2e9f8177ed5f2b5e61f759e8b634a298654899157d8e531ce",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHA256-N32-H10/expectedResults.json": {
+      "bytes": 53591,
+      "path": "XMSS/XMSS-sigGen-SHA256-N32-H10/expectedResults.json",
+      "sha256": "7f02f08606436600781dcf378f64e7a3f115a7e901a0902228613246bb6c2f6b",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHA256-N32-H10/prompt.json": {
+      "bytes": 4004,
+      "path": "XMSS/XMSS-sigGen-SHA256-N32-H10/prompt.json",
+      "sha256": "7105e7cef6a8f974a135151c0faa6c1fe310e848be131c0e83165d7e23e77432",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N24-H10/expectedResults.json": {
+      "bytes": 33400,
+      "path": "XMSS/XMSS-sigGen-SHAKE256-N24-H10/expectedResults.json",
+      "sha256": "e02259f6bb4bc7b0238d94a2a941ba614340523ac5f26a22d3d1e700fea3d971",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N24-H10/prompt.json": {
+      "bytes": 3944,
+      "path": "XMSS/XMSS-sigGen-SHAKE256-N24-H10/prompt.json",
+      "sha256": "c91e45a2d899c8387c6d43143ef8a1c7229ecd487d3e80ef4d7f3610f07aaff6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N32-H10/expectedResults.json": {
+      "bytes": 53592,
+      "path": "XMSS/XMSS-sigGen-SHAKE256-N32-H10/expectedResults.json",
+      "sha256": "6d2ea6eef946cb590b33985df37db9f0aeca77ebf260d7f756db64662dccc24a",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigGen-SHAKE256-N32-H10/prompt.json": {
+      "bytes": 4008,
+      "path": "XMSS/XMSS-sigGen-SHAKE256-N32-H10/prompt.json",
+      "sha256": "b0e36154d8bb57a44ce7b53b93d50decef6bcfee7293cc080b58d483382de275",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H10/expectedResults.json": {
+      "bytes": 1295,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H10/expectedResults.json",
+      "sha256": "3ed2da179c79aed53d9d2a4db53bca79fbf998f7b03a05262842aee8d631c892",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H10/prompt.json": {
+      "bytes": 37396,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H10/prompt.json",
+      "sha256": "8de67c0273d81328264bd1a6697e8e8f3924bb271ba73d5252ae779f24421b86",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H16/expectedResults.json": {
+      "bytes": 754,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H16/expectedResults.json",
+      "sha256": "2882c595b32a6cb751c6869eca5942c2037d48a3851e0913314032a6201a49ea",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H16/prompt.json": {
+      "bytes": 20348,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H16/prompt.json",
+      "sha256": "7996e23be6a71ce00f602d00eb25cd27b890ef85d453bc71f39efbc4a4f89da9",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H20/expectedResults.json": {
+      "bytes": 538,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H20/expectedResults.json",
+      "sha256": "27f0314ff30df662a1718c84fb60fbfe033d5f23de307f563f774d4ea1a9b95f",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N24-H20/prompt.json": {
+      "bytes": 12955,
+      "path": "XMSS/XMSS-sigVer-SHA256-N24-H20/prompt.json",
+      "sha256": "5bbc920170cd1471a33d1b3b4fc33a85d2df9f201ff178fcd682ca4455081f11",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H10/expectedResults.json": {
+      "bytes": 1295,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H10/expectedResults.json",
+      "sha256": "ab0d64d9b810e740450f0e080ddac01bbea33c53b31f8031619f08c4eaf65af2",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H10/prompt.json": {
+      "bytes": 57587,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H10/prompt.json",
+      "sha256": "dbdf528e6b5a9a7076514f0f832cbc968bed528e38a7e661e6c3cfabc39bf2f7",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H16/expectedResults.json": {
+      "bytes": 754,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H16/expectedResults.json",
+      "sha256": "20072946e894e3923b022a0cfef87d0dfc2a7e4b698268435f61f955eb72601e",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H16/prompt.json": {
+      "bytes": 30939,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H16/prompt.json",
+      "sha256": "cea56bc3b5f65aeed295052f46cef060964c2f5050b074cbcdac86f10d0699ea",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H20/expectedResults.json": {
+      "bytes": 538,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H20/expectedResults.json",
+      "sha256": "27f0314ff30df662a1718c84fb60fbfe033d5f23de307f563f774d4ea1a9b95f",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHA256-N32-H20/prompt.json": {
+      "bytes": 19512,
+      "path": "XMSS/XMSS-sigVer-SHA256-N32-H20/prompt.json",
+      "sha256": "6778b1304493acf6747df35e3d555c63d57dbfcd1b4d833144786be8eed16f27",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N24-H10/expectedResults.json": {
+      "bytes": 1295,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N24-H10/expectedResults.json",
+      "sha256": "03fdeb97335ddca9b97223c39f0a859a1a78b7412e15efde137b2e175a5e6de6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N24-H10/prompt.json": {
+      "bytes": 37399,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N24-H10/prompt.json",
+      "sha256": "f33f9cd4e8581ce648c7f742406953e37f5e6ff20d60dec40972fb67633d7cc4",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H10/expectedResults.json": {
+      "bytes": 1295,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H10/expectedResults.json",
+      "sha256": "447b6d93ac8ae9e225f45ca7dbc2451b6b52230c77b5da4a3ddd7ea6dbe5ab46",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H10/prompt.json": {
+      "bytes": 57591,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H10/prompt.json",
+      "sha256": "f11eaf737a9769f2bd4c0609693853b34045b5eebcfe2712805ac93fcd7481db",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H16/expectedResults.json": {
+      "bytes": 754,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H16/expectedResults.json",
+      "sha256": "20072946e894e3923b022a0cfef87d0dfc2a7e4b698268435f61f955eb72601e",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H16/prompt.json": {
+      "bytes": 30942,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H16/prompt.json",
+      "sha256": "c7fcc98f623ce2974376377541438b2fad5214c6804755967ac82fe74cd640c6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H20/expectedResults.json": {
+      "bytes": 538,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H20/expectedResults.json",
+      "sha256": "6ab4f05b3718bdd88718b8f9b257ef9bd1ffde9e5f0838fe3b09308a31b54fb6",
+      "source": "pqc-kat"
+    },
+    "pqc-kat/XMSS/XMSS-sigVer-SHAKE256-N32-H20/prompt.json": {
+      "bytes": 19519,
+      "path": "XMSS/XMSS-sigVer-SHAKE256-N32-H20/prompt.json",
+      "sha256": "56ba6b2ffe41ac545f12fba9617536c84ef07b9c9b671d968ce1c31e7c66155c",
+      "source": "pqc-kat"
+    }
+  },
+  "sources": {
+    "hash-sigs": {
+      "commit": "44e6c7de934c05942bf17cc819a81e765cfe67d7",
+      "date": "2026-09-04",
+      "raw": "https://raw.githubusercontent.com/cisco/hash-sigs",
+      "repo": "https://github.com/cisco/hash-sigs"
+    },
+    "liboqs": {
+      "commit": "e6b9e783747536f34700aab4bd10718c2fecab3f",
+      "date": "2026-09-29",
+      "raw": "https://raw.githubusercontent.com/open-quantum-safe/liboqs",
+      "repo": "https://github.com/open-quantum-safe/liboqs"
+    },
+    "pqc-kat": {
+      "commit": "f238e347b1323344208eb316df9993c923334817",
+      "date": "2025-04-05",
+      "raw": "https://raw.githubusercontent.com/post-quantum-cryptography/KAT",
+      "repo": "https://github.com/post-quantum-cryptography/KAT"
+    }
+  }
+}

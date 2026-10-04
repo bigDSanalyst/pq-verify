@@ -7,6 +7,27 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **LMS/HSS and XMSS/XMSS^MT** (RFC 8554, RFC 8391, SP 800-208), the
+  stateful hash-based signatures CNSA 2.0 requires for firmware signing.
+  `pq_verify/hbs.py` implements both from the specifications, every
+  SP 800-208 hash family (SHA-256, SHA-256/192, SHAKE256/256, SHAKE256/192)
+  and RFC 8391's SHA-512 and SHAKE128 sets, with SP 800-208's pseudorandom
+  key generation.
+  - **NIST's 87 ACVP LMS vectors** (ACVP-Server `2972def`) are pinned with
+    the other NIST files and run in `--acvp-all` and `--lms-acvp`: 9 keyGen
+    byte-exact, 16 sigVer verdicts, and 62 sigGen signatures verified under
+    their published keys (NIST's sigGen vectors carry no private key).
+  - **`--lms-xmss`** runs every other pinned source (`hbs_vectors.json.gz`,
+    `HBS_MANIFEST.json`, `tools/pin_hbs_vectors.py`), each labelled by origin:
+    ACVP-format LMS and XMSS vectors for every family from
+    post-quantum-cryptography/KAT, liboqs's XMSS^MT and HSS KATs, and
+    RFC 8554 Appendix F's HSS test cases via cisco/hash-sigs. Every signature
+    is verified; key generation and signing are byte-exact for each tree
+    within a hash budget. The default budget takes about 10 s (1,921 checks);
+    `--lms-xmss-full` builds every height-10 tree. A case over the budget is
+    reported as not run with its cost, never as passed.
+  - The doctor checks the new bundle's digests offline, and the watcher
+    tracks NIST's five LMS directories.
 - **`--audit-dsa`: a vendor's own ML-DSA, against every NIST vector.**
   `pqverify_audit_dsa()` drives a compiled library's key generation, signing
   and verification with all of NIST's ACVP ML-DSA vectors for a parameter set
@@ -68,8 +89,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   express as not applicable. They used to be skipped without a count.
 
 - **`--acvp-all` and `pqverify_acvp_all()` include SLH-DSA keyGen and
-  sigVer: 1479 vectors (240 + 615 + 624), up from 855.** The run takes about
-  a minute. `pqverify_acvp_all(slhdsa=False)` gives the previous 855; the
+  sigVer (624) and NIST's LMS vectors (87): 1566 vectors, up from 855.** The run takes about
+  a minute. `pqverify_acvp_all(slhdsa=False, lms=False)` gives the previous 855; the
   `slh-dsa` reference was already part of `pq-verify[full]`. If it is missing,
   the SLH-DSA suite is reported as not run instead of being left out of the
   report.

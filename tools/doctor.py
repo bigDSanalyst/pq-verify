@@ -56,13 +56,14 @@ from pq_verify.core import _VECTOR_BUNDLES, _bundle_name      # noqa: E402
 
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
 PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
-               "edge:manifest", "references:edge")
+               "edge:manifest", "references:edge", "hbs:manifest")
 STABLE_DAYS = 14          # NIST has reverted files within a day; wait this long
 REFERENCES = ("kyber-py", "dilithium-py", "slh-dsa")
 SUITES = {                # the runner for each vector directory prefix
     "ML-KEM": "pqverify_acvp",
     "ML-DSA": "pqverify_mldsa_acvp",
     "SLH-DSA": "pqverify_slhdsa_acvp",
+    "LMS": "pqverify_lms_acvp",
 }
 SUITE_SIGGEN = {"SLH-DSA": "SLH-DSA-sigGen-"}   # opt-in groups a re-pin must run
 
@@ -285,6 +286,25 @@ def check_edge_manifest(repo=REPO):
     src = ", ".join(f"{k} {s['commit'][:7]}" for k, s in sorted(m["sources"].items()))
     return Check("edge:manifest", OK, f"edge-case vectors: {len(m['files'])} files match "
                  f"EDGE_MANIFEST.json ({src})")
+
+
+def check_hbs_manifest(repo=REPO):
+    """The non-NIST LMS/XMSS bundle matches HBS_MANIFEST.json, offline."""
+    import pin_hbs_vectors as P
+    v = Path(repo) / "pq_verify" / "vectors"
+    bundle, manifest = v / "hbs_vectors.json.gz", v / "HBS_MANIFEST.json"
+    if not bundle.exists() or not manifest.exists():
+        return Check("hbs:manifest", BLOCK, "the LMS/XMSS bundle or its manifest is missing",
+                     fix="python3 tools/pin_hbs_vectors.py")
+    problems = P.verify(bundle, manifest)
+    if problems:
+        return Check("hbs:manifest", BLOCK,
+                     f"{len(problems)} LMS/XMSS file(s) do not match HBS_MANIFEST.json",
+                     "\n".join(problems[:10]), "python3 tools/pin_hbs_vectors.py")
+    m = json.loads(manifest.read_text())
+    src = ", ".join(f"{k} {s['commit'][:7]}" for k, s in sorted(m["sources"].items()))
+    return Check("hbs:manifest", OK, f"LMS/XMSS vectors: {len(m['files'])} files match "
+                 f"HBS_MANIFEST.json ({src})")
 
 
 def check_reference_edges():
@@ -622,6 +642,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
     ref_check, refs = check_references(repo)
     checks.append(ref_check)
     checks.append(check_edge_manifest(repo))
+    checks.append(check_hbs_manifest(repo))
     if not skip_edge:
         checks.append(check_reference_edges())
     up, moved = check_upstream_state(manifest, baseline, history)

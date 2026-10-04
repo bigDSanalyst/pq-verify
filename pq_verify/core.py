@@ -26,7 +26,7 @@ Colab:
           !pip install -q "pq-verify[full]"
   Cell 2: from pq_verify import main, pqverify_acvp_all
   Cell 3: main()                # 160/160
-          pqverify_acvp_all()   # 1479/1479
+          pqverify_acvp_all()   # 1566/1566
 
 Author: Nicholas Maino (iamweare)
 License: MIT
@@ -5574,7 +5574,7 @@ import hashlib as _hashlib
 # ----------------------------------------------------------------
 # Companion to pqverify_acvp (ML-KEM / FIPS 203).
 # Together: 240 (ML-KEM) + 615 (ML-DSA) + 624 (SLH-DSA keyGen 120 + sigVer 504)
-# = 1479/1479 NIST ACVP vectors; SLH-DSA sigGen (624) is opt-in.
+# + 87 (LMS) = 1566/1566 NIST ACVP vectors; SLH-DSA sigGen (624) is opt-in.
 # Requires: pip install "pq-verify[full]"  (dilithium-py)
 # ================================================================
 _MLDSA_ACVP_BASE = ("https://raw.githubusercontent.com/usnistgov/ACVP-Server/"
@@ -6328,13 +6328,15 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
 
 
 def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None,
-                      slhdsa=True, slhdsa_siggen=False):
-    """Run the three ACVP suites: ML-KEM (FIPS 203), ML-DSA (FIPS 204) and
-    SLH-DSA (FIPS 205) key generation and signature verification.
+                      slhdsa=True, slhdsa_siggen=False, lms=True):
+    """Run the ACVP suites: ML-KEM (FIPS 203), ML-DSA (FIPS 204), SLH-DSA
+    (FIPS 205) key generation and signature verification, and LMS
+    (SP 800-208).
 
     By default runs against the FROZEN vectors bundled in this package, so the
-    result is deterministic and offline: 240 + 615 + 624 = 1479 vectors.
-    slhdsa=False leaves FIPS 205 out (855 vectors, ML-KEM + ML-DSA only);
+    result is deterministic and offline: 240 + 615 + 624 + 87 = 1566 vectors.
+    slhdsa=False leaves FIPS 205 out, lms=False leaves SP 800-208 out
+    (855 vectors with both off: ML-KEM + ML-DSA only);
     slhdsa_siggen=True adds SLH-DSA signature generation, 624 byte-exact
     signatures that take about half an hour. Pass live=True to verify against
     NIST's current upstream vectors instead.
@@ -6343,7 +6345,7 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
     if verbose:
         print("#" * 64)
         print("  NIST ACVP — FULL COVERAGE (FIPS 203 + FIPS 204"
-              + (" + FIPS 205)" if slhdsa else ")"))
+              + (" + FIPS 205" if slhdsa else "") + (" + SP 800-208" if lms else "") + ")")
         print("#" * 64)
     kem = pqverify_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
     dsa = pqverify_mldsa_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live, vector_dir=vector_dir)
@@ -6352,13 +6354,21 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
         slh = pqverify_slhdsa_acvp(prompt_dir=prompt_dir, verbose=verbose,
                                    live=live, vector_dir=vector_dir,
                                    siggen=slhdsa_siggen)
+    lms_r = None
+    if lms:
+        from .hbs_suite import pqverify_lms_acvp
+        lms_r = pqverify_lms_acvp(prompt_dir=prompt_dir, verbose=verbose, live=live,
+                                  vector_dir=vector_dir)
     kem_p = kem['passed'] if kem else 0
     kem_t = kem['total'] if kem else 0
     dsa_p = dsa['passed'] if dsa else 0
     dsa_t = dsa['total'] if dsa else 0
     slh_p = slh['passed'] if slh else 0
     slh_t = slh['total'] if slh else 0
-    total_p, total_t = kem_p + dsa_p + slh_p, kem_t + dsa_t + slh_t
+    lms_p = lms_r['passed'] if lms_r else 0
+    lms_t = lms_r['total'] if lms_r else 0
+    total_p = kem_p + dsa_p + slh_p + lms_p
+    total_t = kem_t + dsa_t + slh_t + lms_t
     if verbose:
         print("#" * 64)
         print(f"  COMBINED ACVP: {total_p}/{total_t} NIST vectors")
@@ -6368,9 +6378,12 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
         if slhdsa or slhdsa_siggen:
             scope = ", ".join(slh['modes']) if slh else "did not run"
             print(f"    SLH-DSA (FIPS 205, {scope}): {slh_p}/{slh_t}")
+        if lms:
+            print(f"    LMS (SP 800-208): {lms_p}/{lms_t}")
         print("#" * 64)
     return {'verified': (total_p == total_t and total_t > 0),
             'slh_dsa': slh, 'slh_dsa_requested': bool(slhdsa or slhdsa_siggen),
+            'lms': lms_r, 'lms_requested': bool(lms),
             'passed': total_p, 'total': total_t,
             'ml_kem': kem, 'ml_dsa': dsa}
 
