@@ -50,6 +50,10 @@ from .hybrid import (
     verify_hybrid,
 )
 
+# Third-party ML-DSA audit: a vendor's own keygen/sign/verify against every
+# NIST ACVP vector and Wycheproof's edge cases. See pq_verify.dsa_audit.
+from .dsa_audit import pqverify_audit_dsa
+
 # FIPS 203 input-validation oracles (used by ACVP KeyCheck groups)
 try:
     from .core import check_encapsulation_key, check_decapsulation_key
@@ -65,6 +69,7 @@ __all__ = [
     "pqverify_mldsa_acvp",
     "pqverify_slhdsa_acvp",
     "pqverify_acvp_all",
+    "pqverify_audit_dsa",
     "pqverify_params",
     "pqverify_leakage",
     "pqverify_load_so",

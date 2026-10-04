@@ -77,7 +77,8 @@ inside the package, so air-gapped environments work out of the box.
 Edge cases, offline: C2SP's [Wycheproof](https://github.com/C2SP/wycheproof)
 and [CCTV](https://github.com/C2SP/CCTV) vectors (`strcmp` traps, unlucky
 sampling, every out-of-range ek coefficient, malformed ML-DSA hints) are pinned
-to exact commits and run by `--audit-kem` against a vendor library, and by
+to exact commits and run by `--audit-kem` and `--audit-dsa` against a vendor
+library, and by
 `pq-verify --edge-cases` against pq-verify's own references. The latter
 currently reports one finding, a known defect in the pinned dilithium-py
 1.4.0 (a repeated hint index is accepted; fixed upstream, not yet released).
@@ -86,6 +87,8 @@ To audit a compiled library:
 
 ```bash
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
+pq-verify --audit-kem build/libmlkem768.so ML-KEM-768     # the whole KEM
+pq-verify --audit-dsa build/libmldsa65.so ML-DSA-65       # the whole signature scheme
 ```
 
 For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
@@ -201,7 +204,7 @@ runs rather than in a terminal someone has to read.
 
 ## Independent audits
 
-pq-verify has been run against four upstream projects — all verify clean, with
+pq-verify has been run against six upstream projects — all verify clean, with
 negative controls that correctly fail. Exact commits, build commands and
 per-check output are in [AUDITS.md](AUDITS.md).
 
@@ -211,17 +214,28 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 80/80 each; edge cases 4,320/4,320 |
 | PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 10 NIST and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
+| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; 3 mutants | 1,503/1,503; every mutant caught |
+| pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,335/1,335; every mutant caught |
+| PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,065/1,065; the mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 
-Most rows are **NTT-level**: the transform is checked against an independently
-computed FIPS reference. Full-scheme auditing of a third party's
-keygen/encaps/decaps is available for ML-KEM (`--audit-kem`); the equivalent
-for ML-DSA signing is not, because most libraries do not export the
-derandomised entry points NIST's seeded vectors require.
+The **full scheme** rows drive the library's own code with every NIST ACVP
+vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
+`--audit-dsa` for ML-DSA. The NTT-level rows check the transform against an
+independently computed FIPS reference.
 
-Where no entry point can be loaded at all — ML-DSA signing, an HSM, a sealed
-binary — `--emit-prompt` / `--verify-response` asks the questions instead and
+`--audit-dsa` sends each FIPS 204 interface through the library's own entry
+point for it, and reports any interface the API lacks as not applicable, never
+as a pass. Linked with pq-verify's randomness harness
+(`pq_verify/harness/pqv_randombytes.c`), the randomised `keypair()` and
+`signature()` users actually call are audited byte-exactly too. Each pinned
+library also carries **mutants**, one planted bug each, which CI requires the
+audit to fail. Two of them, a verifier that accepts a repeated hint index and
+one that skips the ‖z‖ bound, pass every NIST vector; only the Wycheproof
+stage catches them.
+
+Where no entry point can be loaded at all — an HSM, a sealed binary — `--emit-prompt` / `--verify-response` asks the questions instead and
 checks the answers byte-exact. That result is not artifact-bound, and the
 report says so rather than implying otherwise; see
 [What a result is bound to](#what-a-result-is-bound-to).
@@ -284,6 +298,8 @@ exercised in the self-suite (CFL 6/6, DQBF 7/7).
 | `pqverify_kat(ntt, k=4)` | Non-circular KAT vs FIPS definition |
 | `pqverify_load_so(path, sym)` | Load NTT from a compiled .so |
 | `pqverify_scan(target)` | Auto-discover + audit NTT functions |
+| `pqverify_audit_kem(path, set)` | A vendor's own ML-KEM keygen/encaps/decaps vs NIST + Wycheproof/CCTV |
+| `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface |
 | `pqverify_leakage()` | Per-layer protection-allocation table |
 | `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |
 | `verify_response(file)` | Check a response byte-exact against the pinned answers |
@@ -350,7 +366,7 @@ Every report states its binding as a field, not as prose:
 
 | Path | `artifact` |
 |------|-----------|
-| `--audit-so`, `--audit-kem` | `sha256 <hash>` — that file performed the computation |
+| `--audit-so`, `--audit-kem`, `--audit-dsa` | `sha256 <hash>` — that file performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
 | `--verify-hybrid` | `none — vendor-supplied transcript` |
 | `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |

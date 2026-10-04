@@ -262,6 +262,88 @@ pq-verify --audit-kem ./libpqclean768.so ML-KEM-768
 
 ---
 
+## Full-scheme ML-DSA audit, with mutants
+
+`--audit-dsa` drives a library's own ML-DSA key generation, signing and
+verification with every NIST ACVP ML-DSA vector for a parameter set (NIST
+ACVP-Server `2972def`, `a7f283c`: 25 keyGen, 120 sigGen, 60 sigVer), and
+with Wycheproof's ML-DSA verify and sign vectors (`3fa63dd`), which add
+malleated hint encodings, out-of-range norms, wrong lengths and contexts
+over 255 bytes.
+
+Every FIPS 204 interface is a separate stage: **internal** (Algorithms 7/8),
+**pure** (2/3), **pre-hash** HashML-DSA over all twelve approved hashes (4/5)
+and **external μ**. Each NIST case goes through the most public entry point
+the library has for it (the one its users call), and the report names that
+symbol per stage. A case no entry point can express (no external-μ API, a
+fixed-size signature argument given a wrong-length signature) is counted as
+**not applicable**, with the reason, and never as a pass.
+
+NIST's vectors are seeded, so an API that draws its own randomness can only
+be checked byte-exactly if pq-verify controls that randomness. The libraries
+below are linked with `pq_verify/harness/pqv_randombytes.c`, which serves
+NIST's seed and `rnd` to `randombytes()` and records any call that draws
+more or less than FIPS 204 calls for. That is how the randomised
+`keypair()` and `signature()` the libraries' users call are audited, not
+only the seed-taking internal functions.
+
+<!-- vendor-audits-dsa:begin -->
+| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 30 | 3/3 | 1,503/1,503 **VERIFIED** |
+| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 198 | 6/6 | 1,335/1,335 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 468 | 1/1 | 1,065/1,065 **VERIFIED** |
+<!-- vendor-audits-dsa:end -->
+
+All three are byte-exact on every interface they expose. They differ in
+what they expose: mldsa-native implements every interface, including
+external μ and a native HashML-DSA API; pq-crystals ref has no external-μ
+API; PQClean has pure ML-DSA only. The "not applicable" column counts
+what each one's API cannot be asked.
+
+**Mutants.** An audit that passes correct libraries has shown half of what
+it must. Each row also carries mutants: a one-line change to the pinned
+source that plants a known bug class. CI builds every one and requires the
+audit to fail it in the listed stages (`tools/vendor_audits.json`). All ten
+are caught:
+
+| Library | Planted bug | Caught by |
+|---|---|---|
+| pq-crystals ref | verify skips the challenge comparison | sigVer (all interfaces), Wycheproof verify |
+| pq-crystals ref | hint decoder accepts a repeated index | Wycheproof verify only |
+| pq-crystals ref | verify skips the ‖z‖ bound | Wycheproof verify only |
+| pq-crystals ref | signing ignores `rnd` | sigGen, randomised half |
+| pq-crystals ref | signing omits the context length | sigGen pure |
+| pq-crystals ref | keypair draws 16 extra random bytes | keyGen, randomness finding |
+| mldsa-native | hint decoder accepts a repeated index | Wycheproof verify only |
+| mldsa-native | verify skips the ‖z‖ bound | Wycheproof verify only |
+| mldsa-native | HashML-DSA encoded as pure ML-DSA | sigGen and sigVer pre-hash |
+| PQClean | verify skips the challenge comparison | sigVer pure, Wycheproof verify |
+
+Two of these bug classes are invisible to NIST's vectors: a verifier that
+accepts a repeated hint index (the defect dilithium-py 1.4.0 ships, which
+makes signatures malleable) and one that skips the ‖z‖∞ < γ₁ − β check both
+pass every NIST sigVer vector. Only Wycheproof's verify vectors catch them,
+which is why `--audit-dsa` runs both.
+
+Reproduce every row and mutant: `python3 tools/vendor_audit.py --only ML-DSA`
+(about 30 s). One library by hand (ML-DSA-65):
+
+```bash
+git clone https://github.com/pq-code-package/mldsa-native.git   # 159509d
+H=$(python3 -c "import pq_verify, os; print(os.path.join(os.path.dirname(pq_verify.__file__), 'harness', 'pqv_randombytes.c'))")
+gcc -O2 -fPIC -shared -DMLD_CONFIG_PARAMETER_SET=65 -Imldsa-native/mldsa \
+    -o libmldsanative65.so mldsa-native/mldsa/mldsa_native.c "$H"
+pq-verify --audit-dsa ./libmldsanative65.so ML-DSA-65
+```
+
+Without the harness, randomised APIs are reported not applicable and the
+seed-taking ones (`keypair_internal`, `signature_internal`) are audited.
+Never link the harness into a production build: it is deterministic by
+design.
+
+---
+
 ## Which implementations can be audited by symbol
 
 | Linkage | Examples | Symbol audit |
@@ -280,13 +362,11 @@ produce output — which is every one of them.
 
 ## Scope
 
-These audits verify the **number-theoretic transform** against the FIPS 203/204
-definitions. They do not:
+The symbol audits verify the **number-theoretic transform** against the FIPS
+203/204 definitions; `--audit-kem` and `--audit-dsa` verify a library's whole
+scheme against NIST's and Wycheproof's vectors. None of them:
 
 - verify constant-time behaviour or side-channel resistance
-- verify the full KEM/signature scheme end-to-end (that is what the ACVP
-  suites do: 1479/1479 with FIPS 205 keyGen and sigVer, 2103/2103 with
-  SLH-DSA sigGen)
 - constitute a security review of the surrounding implementation
 
 A passing NTT audit says the transform is arithmetically correct. It does not

@@ -3719,3 +3719,216 @@ def test_slhdsa_counts_match_the_docs():
     assert "1479/1479" in readme and "2103/2103" in readme
     assert 855 + n["keyGen"] + n["sigVer"] == 1479
     assert 1479 + n["sigGen"] == 2103
+
+
+# ----------------------------------------------------------------------
+# --audit-dsa: a vendor's own ML-DSA keygen/sign/verify
+#
+# The pinned libraries (mldsa-native, pq-crystals ref, PQClean) and their
+# mutants run in CI (tools/vendor_audit.py). Here a C shim with the
+# pq-crystals ABI, linked with the randomness harness and backed by
+# dilithium-py, exercises the same ctypes path offline, and plants faults.
+# ----------------------------------------------------------------------
+
+def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0):
+    """Build the shim, register dilithium-py-backed callbacks (each
+    overridable), return (path, keepalive)."""
+    import ctypes as C, pathlib, shutil, subprocess
+    pytest.importorskip("dilithium_py")
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    from dilithium_py.ml_dsa import ML_DSA_65 as D
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libpqvtest_dilithium3_{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
+                    str(root / "tests" / "data" / "mldsa_shim.c"),
+                    str(root / "pq_verify" / "harness" / "pqv_randombytes.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    U8 = C.POINTER(C.c_uint8)
+    KP = C.CFUNCTYPE(C.c_int, U8, U8, U8)
+    SG = C.CFUNCTYPE(C.c_int, U8, C.POINTER(C.c_size_t), U8, C.c_size_t, U8,
+                     C.c_size_t, U8, U8)
+    VF = C.CFUNCTYPE(C.c_int, U8, C.c_size_t, U8, C.c_size_t, U8, C.c_size_t, U8)
+    at = lambda p, n: C.string_at(p, n) if n else b""
+
+    def kp(pk, sk, seed):
+        a, b = (keypair or D.key_derive)(at(seed, 32))
+        C.memmove(pk, a, len(a)); C.memmove(sk, b, len(b))
+        return 0
+
+    def sg(sig, siglen, m, mlen, pre, prelen, rnd, sk):
+        s = (sign or D._sign_internal)(at(sk, 4032), at(pre, prelen) + at(m, mlen),
+                                       at(rnd, 32))
+        C.memmove(sig, s, len(s)); siglen[0] = len(s)
+        return 0
+
+    def vf(sig, siglen, m, mlen, pre, prelen, pk):
+        if siglen != 3309:
+            return -1
+        try:
+            ok = (verify or D._verify_internal)(at(pk, 1952), at(pre, prelen) + at(m, mlen),
+                                                at(sig, siglen))
+        except Exception:
+            ok = False
+        return 0 if ok else -1
+
+    keep = (KP(kp), SG(sg), VF(vf))
+    lib.pqvtest_register(*keep, extra_rng)
+    return str(so), (lib, keep)
+
+
+def _audit_shim(path, **kw):
+    from pq_verify.dsa_audit import pqverify_audit_dsa
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_dsa(path, "ML-DSA-65", **kw)
+
+
+def test_dsa_audit_resolves_the_pqcrystals_abi_and_routes_each_interface(tmp_path):
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path, edge=False)
+    assert r["abi"] == "pqcrystals" and r["harness"] is True
+    d = r["detail"]
+    assert d["keyGen"] == (25, 25)
+    for s in ("sigGenInternal", "sigGenPure", "sigGenPreHash"):
+        assert d[s] == (30, 30), s
+    for s in ("sigVerInternal", "sigVerPure", "sigVerPreHash"):
+        assert d[s] == (15, 15), s
+    # the public, randomness-drawing APIs are the ones exercised where present
+    assert r["via"]["keyGen"].endswith("_keypair")
+    assert r["via"]["sigGenPure"].endswith("_signature")
+    assert r["via"]["sigVerPure"].endswith("_verify")
+    assert r["via"]["sigGenPreHash"].endswith("_signature_internal")
+    # no external-mu API: counted, with the reason, and never as a pass
+    assert "sigGenMu" not in d and r["not_applicable"]["sigGenMu"][0] == 30
+    assert "external-mu" in r["not_applicable"]["sigGenMu"][1]
+    assert r["verified"] and r["rng"] == []
+
+
+def test_dsa_audit_catches_a_verifier_that_accepts_everything(tmp_path):
+    path, keep = _dsa_shim(tmp_path, verify=lambda pk, m, sig: True)
+    r = _audit_shim(path, edge=False)
+    assert not r["verified"]
+    for s in ("sigVerInternal", "sigVerPure", "sigVerPreHash"):
+        p, t = r["detail"][s]
+        assert p < t, s
+    assert r["detail"]["sigGenPure"] == (30, 30)        # signing is untouched
+
+
+def test_dsa_audit_catches_a_signer_that_ignores_rnd(tmp_path):
+    from dilithium_py.ml_dsa import ML_DSA_65 as D
+    path, keep = _dsa_shim(tmp_path, sign=lambda sk, m, rnd: D._sign_internal(sk, m, bytes(32)))
+    r = _audit_shim(path, edge=False)
+    # the deterministic half (rnd = 0^32) still matches; the randomised half not
+    for s in ("sigGenInternal", "sigGenPure", "sigGenPreHash"):
+        assert r["detail"][s] == (15, 30), s
+
+
+def test_dsa_audit_catches_extra_randomness(tmp_path):
+    path, keep = _dsa_shim(tmp_path, extra_rng=1)
+    r = _audit_shim(path, edge=False)
+    assert r["detail"]["keyGen"] == (0, 25)
+    assert r["rng"] and "FIPS 204 calls for 32" in r["rng"][0]
+    assert not r["verified"]
+
+
+def test_dsa_audit_sees_the_reference_hint_defect_through_c(tmp_path):
+    """dilithium-py 1.4.0 accepts a repeated hint index (KNOWN_REFERENCE_DEFECTS).
+    Behind the C ABI it is exactly the bug class Wycheproof's verify vectors
+    exist for, and the edge stage must report it."""
+    from pq_verify import edge as EG
+    if (("dilithium-py", EG._reference_version("dilithium-py"))
+            not in EG.KNOWN_REFERENCE_DEFECTS):
+        pytest.skip("installed dilithium-py does not carry the hint defect")
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path)
+    p, t = r["detail"]["edge:sigVerify"]
+    assert t - p == 1
+    assert any("InvalidHintsEncoding" in f["flags"] for f in r["edge"]["failures"])
+
+
+def test_dsa_symbol_resolution_never_guesses():
+    from pq_verify.dsa_audit import resolve_symbols, detect_abi
+    pqclean = ["PQCLEAN_MLDSA65_CLEAN_crypto_sign_keypair",
+               "PQCLEAN_MLDSA65_CLEAN_crypto_sign_signature",
+               "PQCLEAN_MLDSA65_CLEAN_crypto_sign_signature_ctx",
+               "PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify",
+               "PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify_ctx"]
+    found, amb = resolve_symbols(pqclean, "ML-DSA-65")
+    assert not amb
+    assert found["sign_ctx"].endswith("signature_ctx") and found["sign"] is None
+    assert detect_abi(pqclean) == "pqcrystals"
+    # several parameter sets in one library: narrowed by level
+    multi = [f"pqcrystals_dilithium{m}_ref_signature_internal" for m in (2, 3, 5)]
+    found, amb = resolve_symbols(multi, "ML-DSA-87")
+    assert found["sign_internal"] == "pqcrystals_dilithium5_ref_signature_internal"
+    # two candidates at the same level: refused, not guessed
+    found, amb = resolve_symbols(["a_65_signature_internal", "b_65_signature_internal"],
+                                 "ML-DSA-65")
+    assert found["sign_internal"] is None and "sign_internal" in amb
+    native = ["PQCP_MLDSA_NATIVE_MLDSA65_signature_extmu",
+              "PQCP_MLDSA_NATIVE_MLDSA65_keypair_internal"]
+    assert detect_abi(native) == "mldsa-native"
+
+
+def test_dsa_report_names_not_applicable_stages_and_first_failures():
+    from pq_verify.report import to_json_dsa
+    doc = to_json_dsa({
+        "verified": False, "passed": 10, "total": 11, "abi": "pqcrystals",
+        "harness": True, "detail": {"sigVerPure": (14, 15)},
+        "not_applicable": {"sigGenMu": [30, "no external-mu signing entry point"]},
+        "not_applicable_total": 30, "via": {"sigVerPure": "x_verify"},
+        "failures": [{"stage": "sigVerPure", "tcId": 7,
+                      "detail": "accepted a signature NIST marks invalid"}],
+        "rng": [], "edge": None}, param_set="ML-DSA-65", library="x.so")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert doc["not_applicable"]["sigGenMu"]["count"] == 30
+    assert doc["stages"]["sigVerPure"]["via"] == "x_verify"
+    assert "NIST tcId 7" in doc["findings"][0]
+    assert doc["findings"][0].startswith("ML-DSA:")
+    from pq_verify.report import _rule_for
+    assert _rule_for(doc["findings"][0]) == "PQV008"
+    none = to_json_dsa(None, param_set="ML-DSA-65", library="x.so")
+    assert none["status"] == "CANNOT VERIFY" and not none["verified"]
+
+
+def test_audit_dsa_cli_gates_and_rejects_bad_arguments(tmp_path):
+    path, keep = _dsa_shim(tmp_path, verify=lambda pk, m, sig: True)
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--fail-on-finding",
+                     "--json", str(tmp_path / "r.json"))
+    assert code == 1 and "FAILING: ML-DSA audit FINDINGS PRESENT" in out
+    import json
+    doc = json.loads((tmp_path / "r.json").read_text())
+    assert doc["schema"] == "pq-verify/dsa-audit-result"
+    assert doc["artifact"]["bound"] is True
+    code, out = _cli("--audit-dsa", path, "ML-DSA-99")
+    assert code == 2
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--dsa-symbol", "bogus=x")
+    assert code == 2
+
+
+def test_dsa_vendor_rows_and_mutants_are_well_formed():
+    import re
+    mod, _ = _vendor_audit()
+    rows = mod.load_dsa_table()
+    assert {r["build"] for r in rows} == set(mod.DSA_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert set(row["results"]) == set(row["sets"]) == set(row["not_applicable"])
+        for ps in row["sets"]:
+            assert set(row["results"][ps]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES)
+            assert row["results"][ps]["keyGen"] == [25, 25]
+        assert row["mutants"], row["library"]
+        for m in row["mutants"]:
+            assert m["find"] != m["replace"] and m["fails"]
+            assert set(m["fails"]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES + ("rng",))
+
+
+def test_audits_md_matches_the_pinned_dsa_vendor_table():
+    mod, root = _vendor_audit()
+    text = (root / "AUDITS.md").read_text()
+    assert mod.DSA_BEGIN in text and mod.DSA_END in text
+    published = text.split(mod.DSA_BEGIN, 1)[1].split(mod.DSA_END, 1)[0].strip()
+    assert published == mod.dsa_markdown(mod.load_dsa_table()).strip(), (
+        "AUDITS.md is out of date: paste the ML-DSA table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-dsa markers")

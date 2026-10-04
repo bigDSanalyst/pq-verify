@@ -400,6 +400,7 @@ class ReferenceDSA:
 def run_dsa(backend, param_set, max_failures=20):
     stages = {s: [0, 0] for s in DSA_STAGES}
     failures = []
+    na = 0
     for stage, cid, flags, kind, args, expected in dsa_cases(param_set):
         try:
             if kind == "verify":
@@ -416,7 +417,10 @@ def run_dsa(backend, param_set, max_failures=20):
                     ok, why = False, "public key from seed differs"
                 else:
                     ok, why = (sig == expected), ("" if sig == expected else "signature differs")
-        except NotImplementedError as e:
+        except NotImplementedError:
+            # The backend cannot express this case (a fixed-size argument, a
+            # mode it lacks). Counted, never scored as a pass.
+            na += 1
             continue
         except Exception as e:
             if kind == "verify":
@@ -430,7 +434,7 @@ def run_dsa(backend, param_set, max_failures=20):
             failures.append({"stage": stage, "case": cid, "flags": list(flags),
                              "detail": why})
     stages = {k: v for k, v in stages.items() if v[1]}
-    return {"stages": stages, "failures": failures, "not_applicable": 0}
+    return {"stages": stages, "failures": failures, "not_applicable": na}
 
 
 # ─────────────────────────────── entry point ───────────────────────────────

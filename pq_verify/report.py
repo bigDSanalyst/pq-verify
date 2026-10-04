@@ -92,6 +92,19 @@ RULES = {
                  "sees the concatenation."),
         "level": "error",
     },
+    "PQV008": {
+        "name": "SignatureConformanceFailure",
+        "short": "ML-DSA library output or verdict differs from NIST or Wycheproof",
+        "full": ("Driven with NIST's ACVP ML-DSA vectors and Wycheproof's edge "
+                 "cases, the library produced a key or signature that differs "
+                 "from the published one byte for byte, accepted a signature "
+                 "that must be rejected (a forgery or a malleated encoding), "
+                 "rejected a valid one, or drew randomness FIPS 204 does not "
+                 "call for. A verifier that accepts a malleated signature "
+                 "breaks strong unforgeability; one that rejects a valid one "
+                 "breaks interoperability."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -106,6 +119,7 @@ _FINDING_MAP = (
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
     ("hybrid:",     "PQV007"),
+    ("ML-DSA:",     "PQV008"),
     ("NTT:",        "PQV001"),
     ("Freivalds",   "PQV002"),
     ("Primitiv",    "PQV003"),
@@ -326,6 +340,68 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                 f"stage {k}: rejected {m['rejected_valid']} key(s) NIST marks valid")
     doc["findings"] = findings
     doc["summary"]["findings"] = len(findings)
+    return doc
+
+
+def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None):
+    """Native schema for pqverify_audit_dsa.
+
+    Stages the library has no entry point for are reported under
+    `not_applicable` with the reason, and are never counted as passed: a
+    library that exposes only pure ML-DSA is VERIFIED for what it exposes,
+    and the report says what that leaves out.
+    """
+    doc = _envelope("pq-verify/dsa-audit-result", artifact)
+    doc["parameter_set"] = param_set
+    doc["library"] = library or (result or {}).get("library")
+    if result is None:
+        doc.update(status="CANNOT VERIFY", verified=False, stages={}, symbols={},
+                   not_applicable={},
+                   summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
+                   findings=["cannot verify: " + (
+                       reason or "no ML-DSA entry point could be bound unambiguously")])
+        return doc
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["calling_convention"] = result.get("abi")
+    doc["randomness_harness"] = bool(result.get("harness"))
+    doc["symbols"] = result.get("symbols", {})
+    doc["stages"] = {k: {"passed": v[0], "total": v[1],
+                         "via": (result.get("via") or {}).get(k)}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
+                             for k, v in (result.get("not_applicable") or {}).items()}
+    edge = result.get("edge") or {}
+    if edge:
+        doc["edge"] = {"vectors": edge.get("vectors"),
+                       "not_applicable": edge.get("not_applicable", 0),
+                       "failures": edge.get("failures", [])}
+    findings = []
+    acvp_fail = result.get("failures") or []
+    edge_fail = edge.get("failures") or []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            what = ("Wycheproof edge cases handled as specified" if k.startswith("edge:")
+                    else "verdicts match NIST" if k.startswith("sigVer")
+                    else "outputs match NIST byte-for-byte")
+            if k.startswith("edge:"):
+                first = next((f for f in edge_fail if f["stage"] == k[5:]), None)
+                where = (f"; first: {first['case']} {first['flags']}: {first['detail']}"
+                         if first else "")
+            else:
+                first = next((f for f in acvp_fail if f["stage"] == k), None)
+                where = (f"; first: NIST tcId {first['tcId']}: {first['detail']}"
+                         if first else "")
+            findings.append(f"ML-DSA: stage {k}: {v[0]}/{v[1]} {what}{where}")
+    for r in result.get("rng") or []:
+        findings.append(f"ML-DSA: randomness: {r}")
+    doc["failures"] = result.get("failures", [])
+    doc["findings"] = findings
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "not_applicable": result.get("not_applicable_total", 0),
+                      "findings": len(findings)}
     return doc
 
 

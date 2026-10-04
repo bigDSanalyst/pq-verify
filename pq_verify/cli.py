@@ -10,6 +10,7 @@ pq-verify command-line interface.
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
     pq-verify --leakage            per-layer algebraic protection allocation
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
+    pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --emit-prompt SET    write the ACVP questions for SET
     pq-verify --verify-response F  check a response against the pinned answers
     pq-verify --emit-hybrid-prompt G   write what to supply for hybrid group G
@@ -85,6 +86,20 @@ def build_parser():
                         "in PATH against NIST vectors, e.g. "
                         "--audit-kem lib.so ML-KEM-768. Includes NIST's invalid "
                         "keys, which the library must refuse")
+    p.add_argument("--audit-dsa", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="audit a full ML-DSA implementation (keygen/sign/verify) in "
+                        "PATH against every NIST ACVP vector and Wycheproof's edge "
+                        "cases, e.g. --audit-dsa lib.so ML-DSA-65. Each interface "
+                        "(internal, pure, pre-hash, external mu) goes through the "
+                        "library's own entry point for it")
+    p.add_argument("--dsa-abi", choices=("pqcrystals", "mldsa-native"),
+                   help="with --audit-dsa: the calling convention, when "
+                        "auto-detection from the symbol names is wrong")
+    p.add_argument("--dsa-symbol", action="append", default=[], metavar="ROLE=SYM",
+                   help="with --audit-dsa: bind ROLE (keypair, keypair_seed, "
+                        "sign_internal, verify_internal, sign_ctx, verify_ctx, sign, "
+                        "verify, sign_mu, verify_mu, sign_prehash, verify_prehash) "
+                        "to SYM; repeatable")
     for _role, _ex in (("keypair", "keypair_derand"), ("encaps", "enc_derand"),
                        ("decaps", "dec")):
         p.add_argument(f"--kem-{_role}", metavar="SYM",
@@ -254,6 +269,36 @@ def main(argv=None):
             kem_result = None
             kem_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {kem_reason}")
+    dsa_result = dsa_ran = dsa_reason = dsa_artifact = None
+    if getattr(args, "audit_dsa", None):
+        from .dsa_audit import pqverify_audit_dsa, DSA_SIZES, _ROLES
+        _p, _ps = args.audit_dsa
+        if _ps not in DSA_SIZES:
+            print(f"  unknown parameter set {_ps!r} for --audit-dsa — known: "
+                  f"{', '.join(sorted(DSA_SIZES))}")
+            return 2
+        _syms = {}
+        for item in args.dsa_symbol:
+            role, _, sym = item.partition("=")
+            if role not in _ROLES or not sym:
+                print(f"  bad --dsa-symbol {item!r}: use ROLE=SYMBOL with ROLE one "
+                      f"of {', '.join(_ROLES)}")
+                return 2
+            _syms[role] = sym
+        dsa_ran = _ps
+        ran_task = True
+        try:
+            dsa_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {dsa_artifact['summary']}")
+        try:
+            dsa_result = pqverify_audit_dsa(_p, _ps, abi=args.dsa_abi, symbols=_syms,
+                                            **_vsrc)
+        except OSError as exc:
+            dsa_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {dsa_reason}")
     if args.audit_so:
         path, sym = args.audit_so
         # Compile the engines first. Without them pqverify_scan silently omits
@@ -285,7 +330,8 @@ def main(argv=None):
     # tasks in one command cannot silently overwrite each other's file. The
     # exit code still reflects EVERY task that ran, not just the reported one.
     from .report import (to_json, to_json_acvp, to_json_hybrid, to_json_kem,
-                         to_json_response, to_sarif, artifact_unbound, write)
+                         to_json_dsa, to_json_response, to_sarif, artifact_unbound,
+                         write)
     from .core import VERSION
 
     exit_code = 0
@@ -322,6 +368,22 @@ def main(argv=None):
         # not exit 0 under a CI gate. The old code set a variable nothing read.
         if args.fail_on_finding and not doc["verified"]:
             print(f"  FAILING: KEM audit {doc['status']}")
+            exit_code = 1
+
+    if dsa_ran is not None:
+        doc = to_json_dsa(dsa_result, artifact=dsa_artifact, param_set=dsa_ran,
+                          library=args.audit_dsa[0], reason=dsa_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-dsa"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_dsa[0]}:{dsa_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=dsa_artifact)
+        if args.fail_on_finding and not doc["verified"]:
+            print(f"  FAILING: ML-DSA audit {doc['status']}")
             exit_code = 1
 
     if response_result is not None:
