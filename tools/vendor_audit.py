@@ -204,7 +204,10 @@ def audit_hbs(so):
     with contextlib.redirect_stdout(io.StringIO()):
         r = pqverify_audit_hbs(so, verbose=False)
     return {"results": {k: list(v) for k, v in r["detail"].items()},
-            "not_applicable": r["not_applicable_total"], "not_run": r["not_run_total"]}
+            "not_applicable": r["not_applicable_total"], "not_run": r["not_run_total"],
+            # Which checks fail, by name: pinned for a library with known
+            # defects, so a mutant is judged on what it ADDS (below).
+            "failing": sorted(f"{f['stage']}: {f['case']}" for f in r["failures"])}
 
 
 def audit(so, param_set):
@@ -351,13 +354,21 @@ def _check_mutants(row, src, workdir, build_fn, audit_fn):
             return None
         got = audit_fn(so)
         missed = []
+        known = set(row.get("failing", []))
         for stage in m["fails"]:
             if stage == "rng":
                 if not got.get("rng"):
                     missed.append("rng")
                 continue
             p, t = got["results"].get(stage, (0, 0))
-            if not (t and p < t):
+            if "failing" in got:
+                # The library itself may already fail checks in this stage (an
+                # upstream defect, pinned in the row): only a check that fails
+                # for the mutant and NOT for the library shows the planted bug.
+                if not any(x.startswith(stage + ": ") and x not in known
+                           for x in got["failing"]):
+                    missed.append(f"{stage} {p}/{t} (no check beyond the library's own)")
+            elif not (t and p < t):
                 missed.append(f"{stage} {p}/{t}")
         if not missed:
             bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
@@ -386,7 +397,7 @@ def check_hbs(rows, workdir):
             return 2
         got = audit_hbs(so)
         want = {"results": row["results"], "not_applicable": row["not_applicable"],
-                "not_run": row["not_run"]}
+                "not_run": row["not_run"], "failing": row.get("failing", [])}
         if got == want:
             p, t = total(got["results"])
             print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, "
@@ -401,6 +412,8 @@ def check_hbs(rows, workdir):
             for k in ("not_applicable", "not_run"):
                 if got[k] != want[k]:
                     print(f"         {k} recorded {want[k]}  now {got[k]}")
+            for x in sorted(set(got["failing"]) ^ set(want["failing"])):
+                print(f"         {'now fails' if x in got['failing'] else 'now passes'}: {x}")
         missed = _check_mutants(
             row, src, workdir,
             lambda msrc, i, r=row: build_hbs(r["build"], msrc, workdir, tag=f"-mut{i}"),
@@ -474,8 +487,8 @@ def dsa_markdown(rows):
 
 def hbs_markdown(rows):
     lines = ["| Library | Commit | Schemes | Verify | keyGen | sigGen | Malformed rejected "
-             "| Not applicable | Not run | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| Key state | Not applicable | Not run | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         r = row["results"]
 
@@ -490,7 +503,8 @@ def hbs_markdown(rows):
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             row["schemes"], cell("verify"), cell("keyGen"), cell("sigGen"),
-            cell("malformed"), f"{row['not_applicable']:,}", f"{row['not_run']:,}",
+            cell("malformed"), cell("state"), f"{row['not_applicable']:,}",
+            f"{row['not_run']:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
     return "\n".join(lines)

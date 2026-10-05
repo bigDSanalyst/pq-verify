@@ -34,3 +34,24 @@ int pqv_hbs_sign(uint32_t s, uint32_t t, uint32_t o, const uint8_t *seed, size_t
                  uint64_t idx, const uint8_t *m, size_t ml, uint8_t *sig, size_t *sigl) {
     return SG(s, t, o, seed, sl, idx, m, ml, sig, sigl);
 }
+
+/* Optional state functions, backed by Python too; unregistered they refuse. */
+typedef int (*skg_cb)(uint32_t, uint32_t, uint32_t, const uint8_t *, size_t,
+                      const char *, uint8_t *, size_t *);
+typedef int (*ssg_cb)(uint32_t, const char *, const uint8_t *, size_t, uint8_t *,
+                      size_t *);
+typedef int (*ssk_cb)(uint32_t, const char *, uint64_t);
+static skg_cb SKG; static ssg_cb SSG; static ssk_cb SSK;
+
+void pqvtest_hbs_register_state(skg_cb a, ssg_cb b, ssk_cb c) { SKG = a; SSG = b; SSK = c; }
+int pqv_hbs_state_keygen(uint32_t s, uint32_t t, uint32_t o, const uint8_t *seed,
+                         size_t sl, const char *st, uint8_t *pk, size_t *pkl) {
+    return SKG ? SKG(s, t, o, seed, sl, st, pk, pkl) : -1;
+}
+int pqv_hbs_state_sign(uint32_t s, const char *st, const uint8_t *m, size_t ml,
+                       uint8_t *sig, size_t *sigl) {
+    return SSG ? SSG(s, st, m, ml, sig, sigl) : -1;
+}
+int pqv_hbs_state_skip(uint32_t s, const char *st, uint64_t next) {
+    return SSK ? SSK(s, st, next) : -1;
+}

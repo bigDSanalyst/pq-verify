@@ -4151,7 +4151,11 @@ def test_lms_xmss_report_and_gate():
 # pq_verify.hbs exercises the ctypes path offline, with faults planted.
 # ----------------------------------------------------------------------
 
-def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=False):
+def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=False,
+              state=False):
+    """state: False (no state support), True (a correct stateful LMS key on
+    LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1), or a planted state bug:
+    'no_advance', 'memory_only', 'no_refuse'."""
     import ctypes as C, pathlib, shutil, subprocess, struct
     from pq_verify import hbs as H
     if not shutil.which("gcc"):
@@ -4174,7 +4178,10 @@ def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=Fals
     def sup(s, t, o):
         if s != 1 and lms_only:
             return 0
-        return 1 if no_keygen else 7
+        caps = 1 if no_keygen else 7
+        if state and s == 1 and (t, o) == (5, 1):
+            caps |= 8
+        return caps
 
     def ver(s, pk, pkl, m, ml, sig, sl):
         args = (at(pk, pkl), at(m, ml), at(sig, sl))
@@ -4210,6 +4217,73 @@ def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=Fals
 
     keep = (SUP(sup), VER(ver), KG(kg), SG(sg))
     lib.pqvtest_hbs_register(*keep)
+    if state:
+        import json as _json, os as _os
+        P = C.c_char_p
+        SKG = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, U8, SZ, P, U8, PSZ)
+        SSG = C.CFUNCTYPE(C.c_int, C.c_uint32, P, U8, SZ, U8, PSZ)
+        SSK = C.CFUNCTYPE(C.c_int, C.c_uint32, P, C.c_uint64)
+        memory, trees = {}, {}
+
+        def load(path):
+            with open(path) as fh:
+                d = _json.load(fh)
+            if state == "memory_only" and path in memory:
+                d["next"] = memory[path]
+            return d
+
+        def save(path, d):
+            if state == "memory_only":
+                memory[path] = d["next"]      # never reaches the file
+                return
+            with open(path, "w") as fh:
+                _json.dump(d, fh)
+
+        def skg(s, t, o, seed, sl, st, pk, pkl):
+            path = st.decode()
+            if _os.path.exists(path):
+                return -1
+            sd = at(seed, sl)
+            with open(path, "w") as fh:
+                _json.dump({"t": t, "o": o, "seed": sd.hex(), "next": 0}, fh)
+            return kg(s, t, o, seed, sl, pk, pkl)
+
+        def ssg(s, st, m, ml, sig, sigl):
+            path = st.decode()
+            d = load(path)
+            q, h = d["next"], H.LMS[d["t"]][3]
+            if q >= 1 << h:
+                if state != "no_refuse":
+                    return -1
+                q %= 1 << h                   # wraps: leaf 0 again
+            if state != "no_advance":
+                d["next"] = d["next"] + 1
+            save(path, d)
+            sd = bytes.fromhex(d["seed"])
+            key = (d["t"], d["o"], sd)
+            if key not in trees:
+                trees[key] = tree(1, d["t"], d["o"], sd)
+            tr, o = trees[key], d["o"]
+            Cr = H.LMOTS[o][1](tr.I + H.u32(q) + H.u16(0xFFFD) + b"\xff" + tr.seed)
+            out = H.u32(0) + tr.sign(at(m, ml), q, Cr)
+            C.memmove(sig, out, len(out)); sigl[0] = len(out)
+            return 0
+
+        def ssk(s, st, nxt):
+            path = st.decode()
+            d = load(path)
+            if nxt < d["next"]:
+                return -1
+            d["next"] = nxt
+            if state == "memory_only":
+                memory[path] = nxt
+            with open(path, "w") as fh:     # skip is the audit's, not the bug's
+                _json.dump(dict(d, next=nxt), fh)
+            return 0
+
+        skeep = (SKG(skg), SSG(ssg), SSK(ssk))
+        lib.pqvtest_hbs_register_state(*skeep)
+        keep = keep + skeep
     _IN_PROCESS_SHIMS.add(str(so))
     return str(so), (lib, keep)
 
@@ -4628,3 +4702,64 @@ def test_symbol_discovery_sees_ifunc_and_weak_exports(tmp_path):
     so = tmp_path / "libf.so"
     subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(so), str(src)], check=True)
     assert {"lib_sign", "lib_verify"} <= set(exported_symbols(str(so)))
+
+
+# ----------------------------------------------------------------------
+# LMS/XMSS key state: a one-time key used twice is broken
+# ----------------------------------------------------------------------
+
+def _state_audit(tmp_path, state):
+    path, keep = _hbs_shim(tmp_path, lms_only=True, state=state)
+    return _audit_hbs(path, per_group=1)
+
+
+def test_hbs_state_correct_library_passes_every_state_check(tmp_path):
+    r = _state_audit(tmp_path, True)
+    p, t = r["detail"]["LMS state"]
+    assert t == 5 and p == t, r["failures"]
+    assert r["verified"]
+
+
+@pytest.mark.parametrize("bug,check,words", [
+    ("no_advance", "no leaf issued twice", "issued"),
+    ("memory_only", "state durable before release", "restart"),
+    ("no_refuse", "refuses once exhausted", "signed again after leaf 2^h-1"),
+])
+def test_hbs_state_catches_each_planted_state_bug(tmp_path, bug, check, words):
+    r = _state_audit(tmp_path, bug)
+    assert not r["verified"]
+    hit = [f for f in r["failures"] if f["stage"] == "LMS state" and check in f["case"]]
+    assert hit and words in hit[0]["detail"], r["failures"]
+
+
+def test_hbs_state_without_state_support_is_not_applicable(tmp_path):
+    path, keep = _hbs_shim(tmp_path, lms_only=True)
+    r = _audit_hbs(path, per_group=1)
+    assert "LMS state" not in r["detail"]
+    assert "leaf reuse cannot be checked" in r["not_applicable"]["LMS state"][1]
+    from pq_verify.report import to_json_hbs_audit
+    assert to_json_hbs_audit(r)["scope"]["complete"] is False
+
+
+def test_a_mutant_must_add_a_failure_the_library_does_not_already_have(tmp_path,
+                                                                       monkeypatch):
+    """xmss-reference already fails two key-state checks upstream. A mutant
+    used to count as caught whenever its stage failed at all -- on that row,
+    every mutant 'caught' itself for free."""
+    va, _root = _vendor_audit()
+    monkeypatch.setattr(va, "mutate", lambda src, m, dest: dest)
+    row = {"library": "lib", "build": "b",
+           "failing": ["XMSS state: S: every issued signature verifies"],
+           "mutants": [{"name": "m", "fails": ["XMSS state"]}]}
+    known = {"results": {"XMSS state": [8, 10]},
+             "failing": ["XMSS state: S: every issued signature verifies"]}
+    new = {"results": {"XMSS state": [7, 10]},
+           "failing": ["XMSS state: S: every issued signature verifies",
+                       "XMSS state: S: no leaf issued twice"]}
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert va._check_mutants(row, tmp_path, tmp_path, lambda s, i: "x",
+                                 lambda so: known) == 1
+    assert "MISSED" in out.getvalue()
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert va._check_mutants(row, tmp_path, tmp_path, lambda s, i: "x",
+                                 lambda so: new) == 0

@@ -6,6 +6,9 @@
  */
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "pqv_hbs.h"
 #include "params.h"
 #include "xmss.h"
@@ -34,7 +37,7 @@ int pqv_hbs_supports(uint32_t scheme, uint32_t type, uint32_t ots) {
     xmss_params p;
     (void)ots;
     if (params_for(scheme, type, &p)) return 0;
-    return PQV_HBS_CAN_VERIFY | PQV_HBS_CAN_KEYGEN | PQV_HBS_CAN_SIGN;
+    return PQV_HBS_CAN_VERIFY | PQV_HBS_CAN_KEYGEN | PQV_HBS_CAN_SIGN | PQV_HBS_CAN_STATE;
 }
 
 int pqv_hbs_verify(uint32_t scheme, const uint8_t *pk, size_t pklen,
@@ -103,5 +106,101 @@ int pqv_hbs_sign(uint32_t scheme, uint32_t type, uint32_t ots,
         }
     }
     free(pk); free(sk); free(sm);
+    return rc;
+}
+
+/* ---- stateful: xmss-reference advances the index inside sk; the key file
+ * is sk itself (OID || idx || ...), rewritten before a signature leaves. ---- */
+
+static long read_file(const char *path, unsigned char *buf, size_t cap) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t n = fread(buf, 1, cap, f);
+    int more = fgetc(f) != EOF;
+    fclose(f);
+    return more ? -1 : (long)n;
+}
+
+static int write_file(const char *path, const unsigned char *buf, size_t len) {
+    char tmp[4096];
+    if (snprintf(tmp, sizeof tmp, "%s.pqv-tmp", path) >= (int)sizeof tmp) return -1;
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return -1;
+    if (write(fd, buf, len) != (ssize_t)len || fsync(fd)) { close(fd); unlink(tmp); return -1; }
+    close(fd);
+    return rename(tmp, path);
+}
+
+static int load_sk(uint32_t scheme, const char *state, uint8_t **sk, xmss_params *p) {
+    uint8_t head[4];
+    FILE *f = fopen(state, "rb");
+    if (!f) return -1;
+    size_t got = fread(head, 1, 4, f);
+    fclose(f);
+    if (got != 4) return -1;
+    uint32_t oid = ((uint32_t)head[0] << 24) | (head[1] << 16) | (head[2] << 8) | head[3];
+    if (params_for(scheme, oid, p)) return -1;
+    *sk = malloc(p->sk_bytes + 4);
+    if (!*sk) return -1;
+    if (read_file(state, *sk, p->sk_bytes + 4) != (long)(p->sk_bytes + 4)) {
+        free(*sk); *sk = NULL; return -1;
+    }
+    return 0;
+}
+
+int pqv_hbs_state_keygen(uint32_t scheme, uint32_t type, uint32_t ots,
+                         const uint8_t *seed, size_t seedlen, const char *state,
+                         uint8_t *pk, size_t *pklen) {
+    xmss_params p;
+    (void)ots;
+    if (access(state, F_OK) == 0) return -1;
+    if (params_for(scheme, type, &p) || *pklen < p.pk_bytes + 4) return -1;
+    uint8_t *sk = malloc(p.sk_bytes + 4);
+    if (!sk) return -1;
+    int rc = keypair(scheme, type, seed, seedlen, pk, sk, &p);
+    if (rc == 0) rc = write_file(state, sk, p.sk_bytes + 4);
+    free(sk);
+    if (rc) return -1;
+    *pklen = p.pk_bytes + 4;
+    return 0;
+}
+
+int pqv_hbs_state_sign(uint32_t scheme, const char *state,
+                       const uint8_t *m, size_t mlen, uint8_t *sig, size_t *siglen) {
+    xmss_params p;
+    uint8_t *sk = NULL;
+    if (load_sk(scheme, state, &sk, &p)) return -1;
+    if (*siglen < p.sig_bytes) { free(sk); return -1; }
+    unsigned long long smlen = 0;
+    uint8_t *sm = malloc(p.sig_bytes + mlen);
+    int rc = -1;
+    if (sm) {
+        int s = scheme == PQV_HBS_XMSS ? xmss_sign(sk, sm, &smlen, m, mlen)
+                                       : xmssmt_sign(sk, sm, &smlen, m, mlen);
+        /* the advanced (or, after the last leaf, wiped) key is stored first */
+        if (write_file(state, sk, p.sk_bytes + 4) == 0 && s == 0
+            && smlen == p.sig_bytes + mlen) {
+            memcpy(sig, sm, p.sig_bytes);
+            *siglen = p.sig_bytes;
+            rc = 0;
+        }
+    }
+    free(sk); free(sm);
+    return rc;
+}
+
+int pqv_hbs_state_skip(uint32_t scheme, const char *state, uint64_t next) {
+    xmss_params p;
+    uint8_t *sk = NULL;
+    if (load_sk(scheme, state, &sk, &p)) return -1;
+    uint64_t now = 0;
+    for (unsigned i = 0; i < p.index_bytes; i++) now = (now << 8) | sk[4 + i];
+    int rc = -1;
+    if (next >= now) {                      /* forward only */
+        for (unsigned i = 0; i < p.index_bytes; i++)
+            sk[4 + p.index_bytes - 1 - i] = (uint8_t)(next >> (8 * i));
+        rc = write_file(state, sk, p.sk_bytes + 4);
+    }
+    free(sk);
     return rc;
 }

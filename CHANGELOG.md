@@ -25,6 +25,37 @@ versioning](https://semver.org/spec/v2.0.0.html).
   questions are NIST's; so are the answers. The old claim that a matching
   response "proves the responder computes the standard" is withdrawn.
 
+### Added — LMS/XMSS key state
+
+- **LMS/XMSS key-state audit: a one-time key used twice is broken, and no
+  vector can show it.** `pqv_hbs.h` gains three optional functions
+  (`pqv_hbs_state_keygen`, `pqv_hbs_state_sign`, `pqv_hbs_state_skip`,
+  capability `PQV_HBS_CAN_STATE`) through which the library manages its own
+  key in a file. `--audit-hbs` adds a `<scheme> state` stage per sampled key:
+  the key matches `pqv_hbs_keygen`; every issued signature verifies; no leaf
+  is issued twice; after each signature a restart from the stored key never
+  reissues a released leaf (state durable before release); and the key signs
+  its last leaf, then refuses — reached by skipping ahead, so 2^40-leaf keys
+  are checked. Sampling takes the cheapest key of each distinct tree height
+  first. An adapter without the functions reports the stage not applicable,
+  so the scope is partial. Both shipped adapters implement them.
+- **Two defects found in xmss-reference** (upstream `master`, 171ccbd): the
+  last leaf of every key returns success with an invalid signature (the key
+  is wiped before signing), and XMSS^MT h = 40 keys never refuse once
+  exhausted (the all-ones marker equals the last valid index; the index then
+  wraps to 0). Pinned as known failing checks; hash-sigs passes every state
+  check. Three new mutants (count never written back; index not advanced;
+  exhaustion check removed) are caught by the state stage alone.
+
+### Changed — vendor audit tooling
+
+- `tools/vendor_audit.py` pins each LMS/XMSS row's failing checks by name
+  (`failing`), and a mutant counts as caught only when it fails a check the
+  library itself passes — a stage the library already fails no longer
+  catches every mutant vacuously.
+- A not-run count with several reasons (sampled, over budget) lists each,
+  rather than the last one seen.
+
 ### Added
 
 - **Fresh, unpublished ACVP questions** (`pq_verify/fresh.py`):
@@ -79,8 +110,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
     are not run (`--audit-hbs-full`). Neither counts as a pass.
   - JSON (`pq-verify/hbs-audit-result`) and SARIF (new rule PQV009).
 - **LMS/XMSS vendor audits in CI, with mutants.** cisco/hash-sigs
-  `44e6c7d` (676/676) and xmss-reference `171ccbd` (564/564) are pinned in
-  `tools/vendor_audits.json`, with four mutants each, all caught. A verifier
+  `44e6c7d` and xmss-reference `171ccbd` are pinned in
+  `tools/vendor_audits.json` with their mutants, all caught (final counts,
+  with the key-state stage, are under "LMS/XMSS key state" above). A verifier
   that ignores the LM-OTS typecode in the signature passes every published
   vector and is caught only by the malformed stage. Two candidate mutants
   were discarded as equivalent (no verdict changes), and AUDITS.md says

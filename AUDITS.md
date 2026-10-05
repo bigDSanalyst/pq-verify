@@ -368,6 +368,21 @@ The audit drives the library with:
   values, the first and last authentication nodes, one byte short or long,
   another message, another key. pq-verify's own verifier confirms each is
   invalid; the library must reject it.
+- **key state** — what no vector can show, because every vector names its
+  leaf. Through the adapter's optional state functions the library manages
+  its own key, and for each sampled parameter set (the cheapest key of each
+  distinct tree height first):
+  - the key it creates is the one `pqv_hbs_keygen` makes;
+  - every signature it issues verifies (pq-verify's verifier);
+  - no leaf index is issued twice;
+  - after each signature, a restart from the stored key never reissues a
+    released leaf — the state was advanced on disk before the signature left;
+  - it signs its last leaf and then refuses. The audit skips ahead to the
+    end of the key, so a 2^40-leaf XMSS^MT key is checked too.
+
+  Restoring an old copy of a key file (a backup, a VM snapshot) makes any
+  file-backed implementation reissue leaves; that is a deployment property,
+  and the report says so.
 
 Parameter sets the library does not implement are **not applicable**, with
 the reason. Key generation and signing build whole trees, so by default they
@@ -376,19 +391,47 @@ run within a hash budget and for two cases per parameter set; the rest are
 ever counted as a pass.
 
 <!-- vendor-audits-hbs:begin -->
-| Library | Commit | Schemes | Verify | keyGen | sigGen | Malformed rejected | Not applicable | Not run | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| cisco/hash-sigs | [`44e6c7d`](https://github.com/cisco/hash-sigs/commit/44e6c7de934c05942bf17cc819a81e765cfe67d7) (2026-09-04) | LMS/HSS | 340/340 | 18/18 | 18/18 | 300/300 | 2,788 | 460 | 4/4 | 676/676 **VERIFIED** |
-| XMSS/xmss-reference | [`171ccbd`](https://github.com/XMSS/xmss-reference/commit/171ccbd26f098542a67eb5d2b128281c80bd71a6) (2021-03-16) | XMSS, XMSS^MT | 141/141 | 8/8 | 8/8 | 407/407 | 3,371 | 96 | 4/4 | 564/564 **VERIFIED** |
+| Library | Commit | Schemes | Verify | keyGen | sigGen | Malformed rejected | Key state | Not applicable | Not run | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| cisco/hash-sigs | [`44e6c7d`](https://github.com/cisco/hash-sigs/commit/44e6c7de934c05942bf17cc819a81e765cfe67d7) (2026-09-04) | LMS/HSS | 340/340 | 18/18 | 18/18 | 300/300 | 10/10 | 2,788 | 478 | 5/5 | 686/686 **VERIFIED** |
+| XMSS/xmss-reference | [`171ccbd`](https://github.com/XMSS/xmss-reference/commit/171ccbd26f098542a67eb5d2b128281c80bd71a6) (2021-03-16) | XMSS, XMSS^MT | 141/141 | 8/8 | 8/8 | 407/407 | 15/20 | 3,371 | 169 | 6/6 | 579/584 findings |
 <!-- vendor-audits-hbs:end -->
 
-Both are correct on everything they implement. hash-sigs implements
-RFC 8554's SHA-256 sets only, so SP 800-208's 192-bit and SHAKE LMS sets are
-not applicable to it; built in its ACVP mode (`SECRET_METHOD 2`), its key
-generation and signatures are byte-exact. xmss-reference implements every
-RFC 8391 and SP 800-208 XMSS and XMSS^MT set with SP 800-208's
-`PRF_keygen`; its reference signer rebuilds the tree for every signature, so
-its signing is sampled.
+hash-sigs is correct on everything it implements, key state included: it
+writes the advanced count through its `update_private_key` callback before it
+signs, and on its last signature overwrites the stored key so it cannot load
+again. It implements RFC 8554's SHA-256 sets only, so SP 800-208's 192-bit
+and SHAKE LMS sets are not applicable to it; built in its ACVP mode
+(`SECRET_METHOD 2`), its key generation and signatures are byte-exact.
+
+xmss-reference implements every RFC 8391 and SP 800-208 XMSS and XMSS^MT set
+with SP 800-208's `PRF_keygen`, and every vector passes. Its key-state
+handling has **two defects**, both in `xmssmt_core_sign` at the pinned commit,
+which is upstream `master`:
+
+1. **The last leaf of every key yields an invalid signature, reported as
+   success.** At `idx == 2^h - 1` the function wipes the secret key *before*
+   signing: the index field is set to all-ones and the seeds to zero, then the
+   signature is computed from the zeroed seeds and returns 0. The caller gets
+   a signature that does not verify, carrying index `0xFF…`. Nothing leaks —
+   a zero seed protects nothing — but the last one-time key of every key pair
+   is lost, and the API says it succeeded.
+2. **XMSS^MT keys whose index field is exactly full (h = 40, 5-byte index)
+   never refuse.** The exhausted marker (all-ones) equals the last valid
+   index, so the `idx > max` test never fires; the next index overflows to 0,
+   and the key keeps returning success with invalid signatures from the
+   wiped seeds. A deployment that rotates keys on the library's refusal never
+   rotates. The same fail-open was reported in RustCrypto's XMSS port
+   ([RustCrypto/signatures#1453](https://github.com/RustCrypto/signatures/issues/1453)).
+
+Neither reissues a leaf with live key material: indices stay unique.
+xmss-reference itself advances the index only in memory (its source says
+production code must persist it); the adapter writes the key to disk before
+returning each signature, which is what a deployment must do, and the
+durable-state check confirms that holds. The defects are pinned in
+`tools/vendor_audits.json` (`failing`), so CI holds the row to exactly these
+five failing checks. The reference signer rebuilds the tree for every
+signature, so its signing is sampled.
 
 **Mutants** (CI requires the audit to fail each):
 
@@ -402,6 +445,12 @@ its signing is sampled.
 | xmss-reference | WOTS+ checksum not shifted | verify, sigGen |
 | xmss-reference | randomizer r from the wrong leaf index | sigGen |
 | xmss-reference | `PRF_keygen` uses PRF's domain separator | keyGen, sigGen |
+| hash-sigs | the advanced count is never written back | **key state only** (no leaf twice, durable state) |
+| xmss-reference | the index in the secret key is not advanced | **key state only** (no leaf twice, durable state) |
+| xmss-reference | no check that the key is exhausted | **key state only** (refuses once exhausted) |
+
+A mutant on a library with pinned defects counts as caught only when it fails
+a check the library itself passes.
 
 A verifier that ignores the LM-OTS typecode in the signature passes every
 published vector; only the malformed stage catches it. Two further candidate
@@ -410,10 +459,13 @@ vector can see them): removing hash-sigs' HSS level check, which an earlier
 line repeats, and removing its leaf-index range check, after which an
 out-of-range index is still rejected by the root comparison (the defect is
 a one-node out-of-bounds read, which needs a memory sanitizer, not a
-conformance audit).
+conformance audit). A third, removing hash-sigs' expiry test in
+`hss_advance_count`, is equivalent too: its last signature also overwrites
+the stored key, and loading refuses a count past the end, so the key still
+refuses. Defence in depth, verified.
 
 Reproduce every row and mutant: `python3 tools/vendor_audit.py --only LMS/XMSS`
-(about 12 minutes, most of it xmss-reference signing). By hand:
+(about 20 minutes, most of it xmss-reference signing). By hand:
 
 ```bash
 git clone https://github.com/cisco/hash-sigs.git                 # 44e6c7d

@@ -4,8 +4,9 @@
  *
  * LMS and XMSS libraries have no common C API: each has its own key
  * formats, state handling and callbacks. An adapter is a small C file that
- * maps one library onto the five functions below; `pq-verify --audit-hbs`
- * loads the library built with it and drives it with every pinned vector.
+ * maps one library onto the six functions below (and, optionally, the three
+ * state functions at the end); `pq-verify --audit-hbs` loads the library
+ * built with it and drives it with every pinned vector.
  * Adapters for cisco/hash-sigs and xmss-reference ship in this directory.
  *
  * Encodings, so that every adapter means the same bytes:
@@ -38,6 +39,7 @@
 #define PQV_HBS_CAN_VERIFY 1
 #define PQV_HBS_CAN_KEYGEN 2
 #define PQV_HBS_CAN_SIGN   4
+#define PQV_HBS_CAN_STATE  8   /* the optional stateful functions below */
 
 int pqv_hbs_abi(void);
 const char *pqv_hbs_name(void);
@@ -51,5 +53,33 @@ int pqv_hbs_keygen(uint32_t scheme, uint32_t type, uint32_t ots,
 int pqv_hbs_sign(uint32_t scheme, uint32_t type, uint32_t ots,
                  const uint8_t *seed, size_t seedlen, uint64_t index,
                  const uint8_t *m, size_t mlen, uint8_t *sig, size_t *siglen);
+
+/*
+ * OPTIONAL: the library's own key-state management. pqv_hbs_sign above signs
+ * at whatever leaf it is handed, which is what byte-exact vectors need and
+ * exactly what a deployment must never do. These three let the audit check
+ * the part no vector can: that the library itself never issues a leaf twice.
+ *
+ * A key lives in the file `state`, in the library's own private-key format.
+ *   pqv_hbs_state_keygen  create the key (seed as for pqv_hbs_keygen) and
+ *                         write it to `state`, which must not exist yet.
+ *   pqv_hbs_state_sign    load the key from `state`, sign with the leaf the
+ *                         LIBRARY chooses, and make the advanced state durable
+ *                         in `state` BEFORE returning the signature. Nonzero
+ *                         when the library refuses (the key is exhausted).
+ *                         Nothing may be cached between calls: a restart is
+ *                         a call with the file moved to another path.
+ *   pqv_hbs_state_skip    rewrite the stored key so the next signature uses
+ *                         leaf `next` (only forward), as if the earlier leaves
+ *                         had been issued -- how the audit reaches the end of
+ *                         a 2^20-leaf key without signing a million times.
+ * An adapter providing them reports PQV_HBS_CAN_STATE from pqv_hbs_supports.
+ */
+int pqv_hbs_state_keygen(uint32_t scheme, uint32_t type, uint32_t ots,
+                         const uint8_t *seed, size_t seedlen, const char *state,
+                         uint8_t *pk, size_t *pklen);
+int pqv_hbs_state_sign(uint32_t scheme, const char *state,
+                       const uint8_t *m, size_t mlen, uint8_t *sig, size_t *siglen);
+int pqv_hbs_state_skip(uint32_t scheme, const char *state, uint64_t next);
 
 #endif
