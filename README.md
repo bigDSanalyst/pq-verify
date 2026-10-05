@@ -1,4 +1,4 @@
-# pq-verify v2.9.0 — PQC Implementation Verification
+# pq-verify v2.10.0 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -11,7 +11,13 @@
 
 **Independent verification for ML-KEM (Kyber), ML-DSA (Dilithium), SLH-DSA (SPHINCS+), LMS/HSS and XMSS/XMSS^MT implementations.**
 
-You deploy post-quantum cryptography. pq-verify checks that an implementation computes the FIPS 203/204 standard correctly — the transform verified in the native finite field, the full ML-KEM scheme byte-exact against NIST's own test vectors, with machine-checkable certificates for the algebraic identities. Plus FIPS 205 SLH-DSA against every NIST ACVP vector: key generation, signature verification and byte-exact signature generation across all 12 parameter sets.
+You deploy post-quantum cryptography. pq-verify checks that **your** implementation computes the standard correctly, three ways:
+
+- **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
+- **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
+- **pq-verify itself**: its reference chain passes all 1566 pinned NIST ACVP vectors (ML-KEM, ML-DSA, SLH-DSA, LMS), and the NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
+
+Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: only an accredited lab issues those.
 
 It does not compute PQC. It verifies the implementations that do: liboqs, BoringSSL, OpenSSL+OQS, HSM firmware, or your own code.
 
@@ -19,12 +25,12 @@ It does not compute PQC. It verifies the implementations that do: liboqs, Boring
 
 ## What you get
 
-A three-layer audit of any ML-KEM/ML-DSA implementation:
+Layers of an audit:
 
 | Layer | Question answered | How |
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
-| **Compliance** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
+| **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
 | **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
 
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
@@ -155,32 +161,46 @@ See `vendor_audit_template.py` for the complete "give us your .so → get a JSON
 
 ## Use it in CI
 
-Three lines in any repository that builds an ML-KEM or ML-DSA implementation.
-Findings appear as annotations on the pull request, and the build fails if the
-transform diverges from the FIPS 203/204 reference.
+A few lines in any repository that builds a post-quantum library. Findings
+appear as annotations on the pull request, and the build fails on any result
+that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v1
+- uses: bigDSanalyst/pq-verify@v2.10.0
   with:
-    library: build/libmlkem768.so
-    symbol: PQCLEAN_MLKEM768_CLEAN_ntt
+    audit: dsa                       # kem | dsa | hbs | ntt
+    library: build/libmldsa65.so
+    param-set: ML-DSA-65
 ```
 
-With no library at all, it runs the NIST ACVP suites:
+With no library at all, it runs the NIST ACVP suites against pq-verify's own
+reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v1
+- uses: bigDSanalyst/pq-verify@v2.10.0
 ```
 
 | Input | Default | Purpose |
 |---|---|---|
-| `library` | — | compiled `.so` containing the NTT to audit |
-| `symbol` | — | exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
+| `audit` | — | `kem`, `dsa`, `hbs` (pqv_hbs adapter) or `ntt` |
+| `library` | — | the compiled `.so` to audit |
+| `param-set` | — | with `kem`/`dsa`: e.g. `ML-KEM-768`, `ML-DSA-65` |
+| `symbol` | — | with `ntt`: the exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
 | `acvp` | `true` | run ACVP suites; `live` fetches NIST's current vectors |
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
-| `fail-on-finding` | `true` | fail the step if anything is reported |
+| `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 
-Outputs: `verified`, `findings`, `sarif-file`. A complete workflow is in
+Outputs: `verified` (true only if every task that ran verified), `findings`,
+`sarif-file`. Every input reaches the shell through the environment, never by
+template substitution, and every action the Action uses is pinned to a commit.
+Pin the Action itself to a release tag: `@v1` is the first upload and is not
+maintained.
+
+**Exit status** of the CLI, since 2.10.0: `0` verified, `1` a task found
+problems or could not verify, `2` bad input. Gating is the default;
+`--no-fail` reports without gating. Before 2.10.0 every task exited 0 unless
+`--fail-on-finding` was passed, which the Action did not pass for its ACVP
+step. A complete workflow is in
 [`example-workflow.yml`](example-workflow.yml).
 
 ---
@@ -359,7 +379,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.9.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.10.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
@@ -392,9 +412,58 @@ vector was ever driven through it). In SARIF the hash is emitted as the run's
 `artifacts[].hashes.sha-256`, which is where a security platform already looks
 for "this exact file was analysed".
 
-A passing response proves that whoever produced it computes FIPS 203/204/205
-correctly for those inputs. It does not prove **which binary did it**: there is
-no signature over the computation and no binding to code. So the report says
+**Isolation and what actually ran.** Each `--audit-*` runs in a child process
+(`--audit-timeout`, default one hour). A library that crashes on a test vector
+or hangs is reported — `CANNOT VERIFY`, with the signal or the limit — instead
+of taking pq-verify and its report down with it, and the code under audit does
+not share memory with the code that decides its verdict. The child records
+every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
+sha256), so the binding covers the vendor library *and* what it pulled in — a
+libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
+`LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). If
+the audited file changes during the run, the verdict is `CANNOT VERIFY`.
+
+The audit assumes the library is not adversarial toward the audit itself: a
+binary built to recognise pq-verify could behave differently under test. That
+is the limit of any black-box test; the prompt/response path and a build you
+control are the answers to it.
+
+**Scope is part of the verdict.** `--audit-dsa` and `--audit-hbs` reports carry
+`scope`: how many cases ran, how many were not applicable (the library exports
+no entry point, or its adapter declares a parameter set unsupported) and how
+many were not run (sampled or over budget). `VERIFIED` with
+`scope.complete: false` means every check that ran passed, not that every
+check ran; `--require-full-coverage` fails it.
+
+**Never ship a test build.** The randomness harness and the pqv_hbs adapters
+make a library deterministic and stateless on purpose. `pq-verify
+--check-no-harness lib.so` exits 1 if either is present; put it in the release
+job of anything audited this way.
+
+NIST's published questions have published answers: NIST ships
+`expectedResults.json` beside every prompt, and so does this package. A response
+to them that matches shows only that the answers were obtained. For an audit,
+pose **fresh** questions:
+
+```bash
+pq-verify --emit-prompt ML-DSA-65 --fresh-key audit.key      # send the prompt, keep the key
+pq-verify --verify-response response.json --fresh-key audit.key
+```
+
+The seed (256 bits from the OS) goes only to `audit.key`, created `0600` and
+never overwritten. Every input is derived from it with SHAKE256; the prompt is
+in NIST's ACVP layout — same suites, groups and field names, every interface
+(pure, pre-hash, external mu, internal; deterministic and hedged), boundary
+context lengths, implicit-rejection ciphertexts, invalid keys and invalid
+signatures — so an ACVP harness answers it unchanged. Verification re-derives
+the questions, confirms their `promptId` matches the one issued, and computes
+every expected answer at that moment. ML-KEM, ML-DSA and all twelve SLH-DSA
+sets are supported.
+
+A passing fresh response proves the responder computed the standard correctly
+on inputs nobody had seen. Neither kind proves **which binary did it**: there
+is no signature over the computation and no binding to code — the responder
+could run a reference implementation instead of the product. So the report says
 `artifact: none` rather than implying otherwise, and a reader can tell the two
 kinds of result apart without reading a footnote.
 
@@ -535,8 +604,8 @@ pq_verify/
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 pyproject.toml             Build config + console-script entry point
 dist/
-  pq_verify-2.9.0-py3-none-any.whl    Installable wheel
-  pq_verify-2.9.0.tar.gz              Source distribution
+  pq_verify-2.10.0-py3-none-any.whl    Installable wheel
+  pq_verify-2.10.0.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)

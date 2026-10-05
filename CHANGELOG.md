@@ -5,7 +5,63 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — read before upgrading
+
+- **Failing results now fail the exit status by default.** `0` verified, `1` a
+  task found problems or could not verify, `2` bad input. Before, every task
+  exited 0 unless `--fail-on-finding` was passed; the GitHub Action did not
+  pass it to `--acvp-all`, so a failed ACVP run published `verified=true`.
+  `--no-fail` restores report-only behaviour; `--fail-on-finding` is accepted
+  and changes nothing. A failed self-suite check now fails the exit status too
+  (it never did, even with the flag).
+- **`pqverify_acvp_all()` is not `verified` when a requested suite did not
+  run.** A missing kyber-py dropped ML-KEM from both sides of the ratio and
+  the API reported `verified: True`; the result now lists `not_run`. The
+  per-suite functions are not verified at 0/0.
+- **A modifier without its task is an input error** (exit 2):
+  `--audit-hbs-full`, `--dsa-abi`, `--dsa-symbol`, `--kem-*`, `--fresh-*` and
+  `--audit-timeout` used to be ignored silently.
+- **`--emit-prompt` without `--fresh-key` says its answers are public.** Its
+  questions are NIST's; so are the answers. The old claim that a matching
+  response "proves the responder computes the standard" is withdrawn.
+
 ### Added
+
+- **Fresh, unpublished ACVP questions** (`pq_verify/fresh.py`):
+  `--emit-prompt SET --fresh-key K` derives every input from a 256-bit seed
+  written only to `K` (0600, never overwritten) and writes the questions in
+  NIST's ACVP layout, so an ACVP harness answers them unchanged;
+  `--verify-response R --fresh-key K` re-derives them, checks the promptId and
+  computes the answers then. ML-KEM (keyGen, encapsulation, decapsulation with
+  implicit-rejection ciphertexts, both key checks), ML-DSA (keyGen; sigGen and
+  sigVer over every interface, deterministic and hedged, boundary context
+  lengths) and all twelve SLH-DSA sets (keyGen, sigGen, sigVer).
+  `--fresh-count` sets tests per group. Replaying NIST's public answers scores
+  nothing. The pinned prompt path gains SLH-DSA sigGen and sigVer.
+- **Every vendor audit runs in a child process** (`pq_verify/isolate.py`,
+  `--audit-timeout`). A crash or a hang is `CANNOT VERIFY` with the signal or
+  the limit, and a report is still written. The artifact binding gains
+  `loaded_objects` (every shared object the audit mapped, with sha256),
+  `loader_environment` and `isolation`; a file that changes mid-audit is
+  `CANNOT VERIFY`. `PQV_IN_PROCESS=1` runs in-process, for debugging.
+- **`scope` on `--audit-dsa` and `--audit-hbs` reports**: checked, not
+  applicable and not run, with a one-line statement. `--require-full-coverage`
+  fails a partial scope.
+- **`--check-no-harness PATH`**: exit 1 if a build carries the deterministic
+  randombytes() harness or a pqv_hbs adapter.
+- **GitHub Action**: `audit: kem | dsa | hbs | ntt` and `param-set` drive the
+  vendor audits; every input reaches the shell through `env:`, closing a
+  script-injection path through `library`, `symbol` and the file inputs; the
+  ACVP step is gated and writes a JSON report; `verified` is derived from
+  every task that ran.
+
+### Security
+
+- The release workflow and the Action pin every action to a commit SHA (the
+  release job holds `contents: write` and the OIDC identity PyPI trusts).
+  The release verify job also runs `doctor.py` and `--lms-xmss`.
+
+### Added (LMS/XMSS)
 
 - **`--audit-hbs`: a vendor's own LMS/HSS or XMSS/XMSS^MT library.**
   `pqverify_audit_hbs()` loads a library through a **pqv_hbs adapter**

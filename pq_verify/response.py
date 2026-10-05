@@ -11,9 +11,10 @@ at all.
 
 This module is the route to them:
 
-    pq-verify --emit-prompt ML-DSA-65 -o prompt.json
-        writes the QUESTIONS for that parameter set, taken from the pinned
-        ACVP bundle. No answers are included.
+    pq-verify --emit-prompt ML-DSA-65 --fresh-key audit.key
+        writes fresh QUESTIONS for that parameter set (or, without
+        --fresh-key, NIST's published ones from the pinned bundle). No
+        answers are included.
 
     (the implementer runs the questions through their own implementation,
      wherever it lives, and sends back a response file)
@@ -22,10 +23,15 @@ This module is the route to them:
         checks every answer against the pinned expected values, byte-exact,
         per test case, and reports what was answered and what was not.
 
-What a passing response proves: whoever produced it can compute FIPS
-203/204/205 correctly for those inputs.
+NIST's published questions have published answers -- NIST ships
+expectedResults.json beside every prompt, and so does this package. A response
+that matches them shows only that the answers were obtained. For an audit,
+emit FRESH questions (--emit-prompt SET --fresh-key FILE, pq_verify.fresh):
+inputs derived from a seed only the auditor holds, whose answers exist nowhere
+until --verify-response computes them. A passing fresh response shows the
+responder computed FIPS 203/204/205 correctly on inputs nobody had seen.
 
-What it does NOT prove: which binary did it. There is no signature over the
+What neither proves: which binary did it. There is no signature over the
 computation and no binding to code. So the report carries the binding as a
 field, not as prose:
 
@@ -80,6 +86,8 @@ _SUITES = (
     ("ML-DSA-sigGen-FIPS204",     "ML-DSA",  "sigGen",     "FIPS204"),
     ("ML-DSA-sigVer-FIPS204",     "ML-DSA",  "sigVer",     "FIPS204"),
     ("SLH-DSA-keyGen-FIPS205",    "SLH-DSA", "keyGen",     "FIPS205"),
+    ("SLH-DSA-sigGen-FIPS205",    "SLH-DSA", "sigGen",     "FIPS205"),
+    ("SLH-DSA-sigVer-FIPS205",    "SLH-DSA", "sigVer",     "FIPS205"),
 )
 
 _MAX_LISTED = 25          # cap on individually listed failures / unknown ids
@@ -261,10 +269,23 @@ _HOW_TO_RESPOND = [
 ]
 
 
-def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False):
-    """The question document for `param_set`. Contains no expected answers."""
+FRESH_SOURCE = ("fresh: derived from an auditor-held seed; these questions and "
+                "their answers are published nowhere")
+
+
+def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False,
+                 fresh=None):
+    """The question document for `param_set`. Contains no expected answers.
+
+    fresh=(seed, count) poses questions derived from `seed` (pq_verify.fresh)
+    instead of NIST's published ones.
+    """
     local = _source(prompt_dir, vector_dir, live)
-    questions = _questions(param_set, local)
+    if fresh is not None:
+        from .fresh import build
+        questions, _exp = build(param_set, fresh[0], fresh[1])
+    else:
+        questions = _questions(param_set, local)
     if not questions:
         known = available_parameter_sets(prompt_dir, vector_dir, live)
         raise ValueError(
@@ -279,12 +300,19 @@ def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False):
         "parameterSet": param_set,
         "promptId": pid,
         "questionCount": _count(questions),
-        "vectorSource": _source_label(local, param_set),
-        "vectorBundleSha256": _bundle_sha256() if local else None,
-        "scope": ("Answering these questions demonstrates that the responder "
-                  "computes the standard correctly for these inputs. It does "
-                  "not bind the result to any binary: pq-verify did not load "
-                  "the code that produced the answers."),
+        "fresh": fresh is not None,
+        "vectorSource": FRESH_SOURCE if fresh is not None else _source_label(local, param_set),
+        "vectorBundleSha256": (_bundle_sha256() if local and fresh is None else None),
+        "scope": (("These questions were generated for this audit and their "
+                   "answers exist nowhere yet, so a correct response shows the "
+                   "responder computed the standard on unseen inputs. "
+                   if fresh is not None else
+                   "These are NIST's published ACVP questions; their answers "
+                   "are public, so a matching response shows the answers were "
+                   "obtained, not that they were computed. Use --fresh for an "
+                   "audit. ")
+                  + "Either way the result is not bound to any binary: "
+                    "pq-verify did not load the code that produced the answers."),
         "howToRespond": _HOW_TO_RESPOND,
         "responseSchema": {
             "schema": RESPONSE_SCHEMA,
@@ -304,15 +332,32 @@ def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False):
 
 
 def emit_prompt(param_set, out_path=None, prompt_dir=None, vector_dir=None,
-                live=False, verbose=True):
-    """Write the question set for `param_set` to `out_path` (.gz honoured)."""
+                live=False, verbose=True, fresh_key=None, fresh_count=None):
+    """Write the question set for `param_set` to `out_path` (.gz honoured).
+
+    With fresh_key, the questions are fresh (pq_verify.fresh): a new seed is
+    drawn, and written to `fresh_key` -- which must not already exist -- for
+    --verify-response to recompute the answers from.
+    """
+    fresh = None
+    if fresh_key is not None:
+        from .fresh import new_seed
+        if os.path.exists(fresh_key):
+            raise ValueError(f"{fresh_key} already exists; a fresh key is never "
+                             f"overwritten (it may be the only copy of a seed)")
+        fresh = (new_seed(), fresh_count)
     doc = build_prompt(param_set, prompt_dir=prompt_dir, vector_dir=vector_dir,
-                       live=live)
+                       live=live, fresh=fresh)
     if out_path is None:
-        out_path = f"pq-verify-prompt-{param_set}.json"
+        out_path = (f"pq-verify-fresh-prompt-{param_set}.json" if fresh else
+                    f"pq-verify-prompt-{param_set}.json")
     d = os.path.dirname(os.path.abspath(out_path))
     if d:
         os.makedirs(d, exist_ok=True)
+    if fresh is not None:
+        from .fresh import write_key
+        write_key(fresh_key, param_set, fresh[0], fresh[1], doc["promptId"],
+                  doc["questionCount"])
     if out_path.endswith(".gz"):
         with gzip.open(out_path, "wt") as fh:
             json.dump(doc, fh, indent=2)
@@ -333,10 +378,20 @@ def emit_prompt(param_set, out_path=None, prompt_dir=None, vector_dir=None,
                   f"({len(s['testGroups'])} group(s))")
         print(f"  wrote      : {out_path}  "
               f"({os.path.getsize(out_path) / 1048576.0:.1f} MiB)")
+        if fresh is not None:
+            print(f"  fresh key  : {fresh_key}  (KEEP PRIVATE; do not send it "
+                  f"with the prompt)")
         print("=" * 68)
         print("  Answers are NOT in this file. Run the questions through the")
         print("  implementation, then check the response with:")
-        print(f"      pq-verify --verify-response <response.json>")
+        if fresh is not None:
+            print(f"      pq-verify --verify-response <response.json> "
+                  f"--fresh-key {fresh_key}")
+        else:
+            print(f"      pq-verify --verify-response <response.json>")
+            print("  These are NIST's PUBLISHED questions: their answers are")
+            print("  public, so a match proves nothing about an implementation.")
+            print("  For an audit, add --fresh-key FILE.")
         print("=" * 68)
     return out_path
 
@@ -471,7 +526,12 @@ def _compare(field, want, got):
         if len(g) != len(w):
             return "mismatch", (f"{field}: {len(g) // 2} bytes, expected "
                                 f"{len(w) // 2}")
-        return "mismatch", (f"{field}: {g[:_PREFIX]}… expected {w[:_PREFIX]}…")
+        # Show where they part: two signatures that share a long prefix
+        # print identically if only the first bytes are shown.
+        i = next(k for k in range(len(w)) if g[k] != w[k]) // 2 * 2
+        lo = max(0, i - 8)
+        return "mismatch", (f"{field}: first differs at byte {i // 2}: "
+                            f"…{g[lo:lo + _PREFIX]}… expected …{w[lo:lo + _PREFIX]}…")
     # A pinned answer of a type this comparator does not model must not be
     # silently treated as a pass.
     return "malformed", f"{field}: unsupported expected type {type(want).__name__}"
@@ -499,7 +559,7 @@ def _artifact_field(meta):
 
 
 def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
-                    param_set=None, verbose=True):
+                    param_set=None, verbose=True, fresh_key=None):
     """Check a response file against the pinned expected answers, byte-exact.
 
     Returns a result dict; `verified` is True only when every question in the
@@ -522,6 +582,8 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         "artifact": {"bound": False, "sha256": None,
                      "summary": "none — vendor-supplied response"},
         "status": "CANNOT VERIFY", "verified": False,
+        "fresh": fresh_key is not None,
+        "answers_public": fresh_key is None,
     }
 
     def _stop(msg):
@@ -531,6 +593,17 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
             _print(res)
         return res
 
+    key = None
+    if fresh_key is not None:
+        from .fresh import read_key, FreshError
+        try:
+            key = read_key(fresh_key)
+        except FreshError as exc:
+            return _stop(str(exc))
+        res["vector_source"] = FRESH_SOURCE
+        if param_set and param_set != key["param_set"]:
+            return _stop(f"the fresh key is for {key['param_set']}, not {param_set}")
+        param_set = key["param_set"]
     if not os.path.exists(response_path):
         return _stop(f"no such response file: {response_path}")
     res["response_sha256"] = _file_sha256(response_path)
@@ -557,6 +630,8 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
                      "response document with algorithm/mode/revision and "
                      "testGroups")
 
+    if key is not None and ps and ps != param_set:
+        return _stop(f"the response answers {ps}; the fresh key is for {param_set}")
     param_set = param_set or ps
     if not param_set:
         guess = _infer_param_set(answers, local)
@@ -570,12 +645,24 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
                          f"({', '.join(guess)}); emit and answer one prompt "
                          "per parameter set")
     res["parameter_set"] = param_set
-    res["vector_source"] = _source_label(local, param_set)
-
-    try:
-        questions = _questions(param_set, local)
-    except (FileNotFoundError, OSError) as exc:
-        return _stop(f"vectors unavailable ({exc})")
+    fresh_expected = None
+    if key is not None:
+        from .fresh import build, FreshError
+        try:
+            questions, fresh_expected = build(param_set, key["seed"], key["count"])
+        except FreshError as exc:
+            return _stop(str(exc))
+        if key["prompt_id"] and _prompt_id(questions) != key["prompt_id"]:
+            return _stop(
+                "the questions re-derived from the fresh key differ from the ones "
+                f"issued (key written by pq-verify {key['tool_version']}, this is "
+                f"{VERSION}); verify with the version that emitted the prompt")
+    else:
+        res["vector_source"] = _source_label(local, param_set)
+        try:
+            questions = _questions(param_set, local)
+        except (FileNotFoundError, OSError) as exc:
+            return _stop(f"vectors unavailable ({exc})")
     if not questions:
         return _stop(f"no pinned questions for parameter set {param_set!r}")
     res["prompt_id"] = _prompt_id(questions)
@@ -595,11 +682,14 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
     remaining = {s: dict(a) for s, a in answers.items()}
     for suite_q in questions:
         suite = suite_q["suite"]
-        try:
-            E = _load(local, suite, "expectedResults.json")
-        except (FileNotFoundError, OSError) as exc:
-            return _stop(f"expected results unavailable for {suite} ({exc})")
-        exp = {t["tcId"]: t for g in E["testGroups"] for t in g["tests"]}
+        if fresh_expected is not None:
+            exp = fresh_expected[suite]
+        else:
+            try:
+                E = _load(local, suite, "expectedResults.json")
+            except (FileNotFoundError, OSError) as exc:
+                return _stop(f"expected results unavailable for {suite} ({exc})")
+            exp = {t["tcId"]: t for g in E["testGroups"] for t in g["tests"]}
         got_suite = remaining.setdefault(suite, {})
         for g in suite_q["testGroups"]:
             label = _group_label(suite, g)
@@ -723,7 +813,9 @@ def _print(res):
     print(f"  answered  : {res['answered']} of {res['questions']} asked"
           + (f"   ({res['unanswered']} unanswered)" if res["unanswered"] else ""))
     print(f"  matched   : {res['passed']} of {res['answered']} answered "
-          f"byte-exact vs pinned NIST values"
+          f"byte-exact vs "
+          + ("answers computed now from the fresh key" if res.get("fresh")
+             else "pinned NIST values")
           + (f"   ({res['passed']} of {res['questions']} asked)"
              if res["unanswered"] else ""))
     if res["malformed"]:
@@ -736,7 +828,13 @@ def _print(res):
             print(f"    … and {len(res['findings']) - _MAX_LISTED} more")
     print("=" * 68)
     print(f"  RESULT: {res['status']}")
-    print("  SCOPE: this checks that the responder computes the standard")
-    print("  correctly for these inputs. No binary was loaded, so the result")
-    print("  is not bound to any artifact — see the artifact field above.")
+    if res.get("fresh"):
+        print("  SCOPE: fresh questions, answered nowhere before this audit: the")
+        print("  responder computed the standard correctly on unseen inputs.")
+    else:
+        print("  SCOPE: NIST's PUBLISHED questions. Their answers are public, so")
+        print("  a match shows the answers were obtained, not computed. Use")
+        print("  --emit-prompt SET --fresh-key FILE for an audit.")
+    print("  No binary was loaded, so the result is not bound to any artifact")
+    print("  — see the artifact field above.")
     print("=" * 68)

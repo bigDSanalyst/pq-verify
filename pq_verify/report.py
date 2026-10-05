@@ -275,6 +275,30 @@ def to_json_response(result):
     return doc
 
 
+def _scope(checked, not_applicable=0, not_run=0, na_why=None):
+    """What a verdict covers, as data.
+
+    VERIFIED says every check that ran passed. It does not say how many did
+    not run: a library can declare a parameter set unsupported (its adapter
+    decides that), and signing is sampled within a budget by default. Without
+    this field a VERIFIED over one parameter set and a VERIFIED over all of
+    them read the same. --require-full-coverage fails on a partial scope.
+    """
+    complete = checked > 0 and not not_applicable and not not_run
+    bits = []
+    if not_applicable:
+        bits.append(f"{not_applicable} not applicable"
+                    + (f" ({na_why})" if na_why else ""))
+    if not_run:
+        bits.append(f"{not_run} not run (sampled or over budget)")
+    return {"complete": complete, "checked": checked,
+            "not_applicable": not_applicable, "not_run": not_run,
+            "statement": ("full: every case pq-verify has for this target ran"
+                          if complete else
+                          f"partial: {checked} checked; " + "; ".join(bits)
+                          if bits else "nothing checked")}
+
+
 def _envelope(schema, artifact, reason="no binary was loaded"):
     """Common head of every native report: what it is, when, and what it binds to."""
     return {
@@ -416,6 +440,8 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "not_applicable": result.get("not_applicable_total", 0),
                       "findings": len(findings)}
+    doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
+                          na_why="the library exports no entry point for them")
     return doc
 
 
@@ -482,6 +508,9 @@ def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
                       "not_applicable": result.get("not_applicable_total", 0),
                       "not_run": result.get("not_run_total", 0),
                       "findings": len(findings)}
+    doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
+                          result.get("not_run_total", 0),
+                          na_why="declared unsupported by the library's adapter")
     return doc
 
 

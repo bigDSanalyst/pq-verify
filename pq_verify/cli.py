@@ -13,11 +13,16 @@ pq-verify command-line interface.
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
+    pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
+                                   (--fresh-key K: fresh, unpublished ones)
     pq-verify --verify-response F  check a response against the pinned answers
     pq-verify --emit-hybrid-prompt G   write what to supply for hybrid group G
     pq-verify --verify-hybrid F    check a hybrid transcript against RFC 10024
     pq-verify --version
+
+Exit status: 0 verified, 1 a task found problems or could not verify,
+2 bad input. Pass --no-fail to report without gating.
 """
 import argparse
 import sys
@@ -36,6 +41,82 @@ from .core import (
     pqverify_scan,
     pqverify_audit_kem,
 )
+
+
+def _audit_so_task(path, sym):
+    """--audit-so, as one call so it can run in the isolated child: build the
+    engines, load the symbol, scan it. An input error comes back as
+    ('input', message) rather than an exception."""
+    from .core import compile_all, bind_all, integrity_report
+    # Compile the engines first. Without them pqverify_scan silently omits
+    # the Freivalds check and reports 2/2 instead of 3/3 -- a skip that looks
+    # like a pass, which is the failure mode this tool exists to prevent in
+    # other people's code.
+    eng = compile_all()
+    bind_all(eng)
+    try:
+        ntt = pqverify_load_so(path, sym)
+    except (OSError, ValueError) as exc:
+        return ("input", str(exc))
+    results = pqverify_scan(ntt, ns={"engines": eng})
+    full, gaps = integrity_report(verbose=False)
+    return ("ok", results, full, gaps)
+
+
+# Symbols only pq-verify's audit harnesses define. A shipped binary carrying
+# either is a test build: pqv_rng_* replaces randombytes() with a queue of
+# caller-chosen bytes (every key and nonce predictable), and a pqv_hbs adapter
+# signs at whatever leaf index it is handed, with no one-time-use state.
+_RNG_HARNESS = ("deterministic randombytes() harness (pq_verify/harness/"
+                "pqv_randombytes.c): every key and nonce comes from the caller")
+_HBS_ADAPTER = ("pqv_hbs audit adapter: signs at a caller-chosen leaf index, "
+                "bypassing one-time-signature state")
+_HARNESS_MARKERS = {b"pqv_rng_set": _RNG_HARNESS, b"pqv_rng_overrun": _RNG_HARNESS,
+                    b"pqv_hbs_abi": _HBS_ADAPTER, b"pqv_hbs_sign": _HBS_ADAPTER}
+
+
+def check_no_harness(path):
+    """(clean, [what was found]). Scans the file's bytes, so it works on a
+    static archive or a stripped object as well as a shared library."""
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    found = sorted({why for sym, why in _HARNESS_MARKERS.items()
+                    if sym + b"\0" in blob})
+    return not found, found
+
+
+def _isolated(args, module, func, *a, **kw):
+    """Run an audit through pq_verify.isolate; (result, loaded, failure)."""
+    from .isolate import run, IsolatedFailure
+    timeout = args.audit_timeout
+    if timeout is None:
+        timeout = 6 * 3600 if getattr(args, "audit_hbs_full", False) else 3600
+    try:
+        res, loaded = run(module, func, a, kw, timeout=timeout or None)
+        return res, loaded, None
+    except IsolatedFailure as exc:
+        return None, None, str(exc)
+
+
+def _bind_loaded(artifact, loaded):
+    """Add what the audit actually mapped to the artifact binding. Returns a
+    reason string if the audited file is not the file that was hashed."""
+    from .isolate import environment, in_process
+    import os as _os
+    artifact["isolation"] = ("in-process (PQV_IN_PROCESS=1)" if in_process()
+                             else "child process")
+    env = environment()
+    if env:
+        artifact["loader_environment"] = env
+    if loaded is None:
+        return None
+    artifact["loaded_objects"] = loaded
+    me = _os.path.realpath(artifact["path"])
+    for obj in loaded:
+        if _os.path.realpath(obj["path"]) == me and obj["sha256"] != artifact["sha256"]:
+            return ("the library file changed while it was being audited (sha256 "
+                    f"{obj['sha256']} after, {artifact['sha256']} before)")
+    return None
 
 
 def build_parser():
@@ -112,6 +193,15 @@ def build_parser():
     p.add_argument("--audit-hbs-full", action="store_true",
                    help="with --audit-hbs: every key generation and signing case up to "
                         "height 16, not a sample")
+    p.add_argument("--check-no-harness", metavar="PATH",
+                   help="release gate: exit 1 if PATH contains pq-verify's "
+                        "deterministic randombytes() harness or a pqv_hbs adapter "
+                        "-- test scaffolding that must never ship")
+    p.add_argument("--audit-timeout", metavar="SECONDS", type=int,
+                   help="with --audit-*: give up on the library after SECONDS "
+                        "(default 3600; 6 h with --audit-hbs-full; 0 = never). "
+                        "Each audit runs in a child process, so a hang or a crash "
+                        "is reported instead of taking pq-verify down with it")
     p.add_argument("--dsa-abi", choices=("pqcrystals", "mldsa-native"),
                    help="with --audit-dsa: the calling convention, when "
                         "auto-detection from the symbol names is wrong")
@@ -131,6 +221,15 @@ def build_parser():
                         "be dlopen'd \u2014 HSMs, sealed vendor binaries. No "
                         "answers are included. Pass 'list' for the available "
                         "parameter sets")
+    p.add_argument("--fresh-key", metavar="FILE",
+                   help="with --emit-prompt: pose FRESH questions, derived from a "
+                        "new random seed written to FILE (kept by the auditor, "
+                        "never sent). Their answers are published nowhere, so a "
+                        "correct response had to be computed. With "
+                        "--verify-response: the key to recompute the answers from")
+    p.add_argument("--fresh-count", metavar="N", type=int,
+                   help="with --emit-prompt --fresh-key: tests per group "
+                        "(default 8 ML-KEM, 4 ML-DSA, 1 SLH-DSA)")
     p.add_argument("--prompt-out", metavar="FILE",
                    help="where --emit-prompt writes (default "
                         "pq-verify-prompt-<PARAM_SET>.json; .gz is honoured)")
@@ -156,12 +255,43 @@ def build_parser():
                    help="exit non-zero if any engine or dependency was missing "
                         "(prevents a degraded run from reporting green in CI)")
     p.add_argument("--fail-on-finding", action="store_true",
-                   help="exit non-zero if any finding is reported (CI gating)")
+                   help="exit 1 if any task did not verify. This is the default "
+                        "since 2.10.0; the flag is kept so existing pipelines "
+                        "keep working")
+    p.add_argument("--no-fail", action="store_true",
+                   help="report only: exit 0 even when a task found problems or "
+                        "could not verify (input errors still exit 2)")
     return p
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+
+    # A modifier without the task it modifies used to be ignored, so a typo'd
+    # pipeline ran something other than what it asked for and said nothing.
+    for _flag, _set, _needs in (
+            ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
+            ("--dsa-abi", args.dsa_abi, args.audit_dsa),
+            ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
+            ("--kem-keypair", args.kem_keypair, args.audit_kem),
+            ("--kem-encaps", args.kem_encaps, args.audit_kem),
+            ("--kem-decaps", args.kem_decaps, args.audit_kem),
+            ("--fresh-key", args.fresh_key,
+             args.emit_prompt or args.verify_response),
+            ("--fresh-count", args.fresh_count, args.fresh_key),
+            ("--audit-timeout", args.audit_timeout is not None,
+             args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so)):
+        if _set and not _needs:
+            _parent = {"--audit-hbs-full": "--audit-hbs",
+                       "--fresh-key": "--emit-prompt or --verify-response",
+                       "--fresh-count": "--fresh-key",
+                       "--audit-timeout": "an --audit-* task"}.get(
+                _flag, "--audit-dsa" if _flag.startswith("--dsa") else "--audit-kem")
+            print(f"  {_flag} does nothing without {_parent}")
+            return 2
+    if args.no_fail and args.fail_on_finding:
+        print("  --no-fail and --fail-on-finding contradict each other")
+        return 2
 
     # If a specific task is requested, run just that task.
     ran_task = False
@@ -192,6 +322,26 @@ def main(argv=None):
         from .hbs_suite import pqverify_lms_acvp
         acvp_results["LMS (SP 800-208)"] = pqverify_lms_acvp(**_vsrc)
         ran_task = True
+    if getattr(args, "check_no_harness", None):
+        try:
+            clean, found = check_no_harness(args.check_no_harness)
+        except OSError as exc:
+            print(f"  cannot check {args.check_no_harness}: {exc}")
+            return 2
+        if clean:
+            print(f"  OK: {args.check_no_harness} carries no pq-verify audit harness")
+        else:
+            for f in found:
+                print(f"  HARNESS PRESENT in {args.check_no_harness}: {f}")
+            print("  FAILING: this is a test build; never ship it")
+            return 0 if args.no_fail else 1
+        if not any(getattr(args, a, None) for a in (
+                "acvp", "mldsa_acvp", "acvp_all", "slhdsa_acvp", "slhdsa_siggen",
+                "lms_acvp", "lms_xmss", "lms_xmss_full", "proofs", "edge_cases",
+                "params", "kem", "leakage", "emit_prompt", "verify_response",
+                "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa",
+                "audit_hbs", "audit_so")):
+            return 0
     hbs_result = None
     if getattr(args, "lms_xmss", False) or getattr(args, "lms_xmss_full", False):
         from .hbs_suite import pqverify_hbs
@@ -234,13 +384,16 @@ def main(argv=None):
                 print(f"    {s_}")
             return 0
         try:
-            emit_prompt(args.emit_prompt, out_path=args.prompt_out, **_vsrc)
+            emit_prompt(args.emit_prompt, out_path=args.prompt_out,
+                        fresh_key=args.fresh_key, fresh_count=args.fresh_count,
+                        **_vsrc)
         except ValueError as exc:
             print(f"  {exc}")
             return 2
     if getattr(args, "verify_response", None):
         from .response import verify_response
-        response_result = verify_response(args.verify_response, **_vsrc)
+        response_result = verify_response(args.verify_response,
+                                          fresh_key=args.fresh_key, **_vsrc)
         ran_task = True
     hybrid_result = None
     if getattr(args, "emit_hybrid_prompt", None):
@@ -291,9 +444,15 @@ def main(argv=None):
             return 2
         print(f"  artifact: {kem_artifact['summary']}")
         try:
-            kem_result = pqverify_audit_kem(
-                _p, _ps, keypair=args.kem_keypair, encaps=args.kem_encaps,
+            kem_result, _loaded, kem_reason = _isolated(
+                args, "pq_verify.core", "pqverify_audit_kem", _p, _ps,
+                keypair=args.kem_keypair, encaps=args.kem_encaps,
                 decaps=args.kem_decaps)
+            _bound = _bind_loaded(kem_artifact, _loaded)
+            kem_reason = kem_reason or _bound
+            if kem_reason:
+                kem_result = None
+                print(f"  cannot verify: {kem_reason}")
         except OSError as exc:
             # Not loadable by the dynamic linker: cannot verify, not a failure.
             kem_result = None
@@ -324,8 +483,14 @@ def main(argv=None):
             return 2
         print(f"  artifact: {dsa_artifact['summary']}")
         try:
-            dsa_result = pqverify_audit_dsa(_p, _ps, abi=args.dsa_abi, symbols=_syms,
-                                            **_vsrc)
+            dsa_result, _loaded, dsa_reason = _isolated(
+                args, "pq_verify.dsa_audit", "pqverify_audit_dsa", _p, _ps,
+                abi=args.dsa_abi, symbols=_syms, **_vsrc)
+            _bound = _bind_loaded(dsa_artifact, _loaded)
+            dsa_reason = dsa_reason or _bound
+            if dsa_reason:
+                dsa_result = None
+                print(f"  cannot verify: {dsa_reason}")
         except OSError as exc:
             dsa_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {dsa_reason}")
@@ -341,35 +506,51 @@ def main(argv=None):
             return 2
         print(f"  artifact: {hbsa_artifact['summary']}")
         try:
-            hbsa_result = pqverify_audit_hbs(args.audit_hbs, full=args.audit_hbs_full)
+            hbsa_result, _loaded, hbsa_reason = _isolated(
+                args, "pq_verify.hbs_audit", "pqverify_audit_hbs", args.audit_hbs,
+                full=args.audit_hbs_full)
+            _bound = _bind_loaded(hbsa_artifact, _loaded)
+            hbsa_reason = hbsa_reason or _bound
+            if hbsa_reason:
+                hbsa_result = None
+                print(f"  cannot verify: {hbsa_reason}")
         except (OSError, AdapterError) as exc:
             hbsa_reason = str(exc)
             print(f"  cannot audit: {hbsa_reason}")
+    scan_coverage = None
     if args.audit_so:
         path, sym = args.audit_so
-        # Compile the engines first. Without them pqverify_scan silently omits
-        # the Freivalds check and reports 2/2 instead of 3/3 -- a skip that
-        # looks like a pass, which is the failure mode this tool exists to
-        # prevent in other people's code.
-        from .core import compile_all, bind_all
-        _eng = compile_all()
-        bind_all(_eng)
         ran_task = True
         try:
             scan_artifact = artifact_bound(path)
-            print(f"  artifact: {scan_artifact['summary']}")
-            ntt = pqverify_load_so(path, sym)
-        except (OSError, ValueError) as exc:
+        except OSError as exc:
+            print(f"  cannot audit {path}: {exc}")
+            return 2
+        print(f"  artifact: {scan_artifact['summary']}")
+        out, _loaded, why = _isolated(args, "pq_verify.cli", "_audit_so_task",
+                                      path, sym)
+        _bound = _bind_loaded(scan_artifact, _loaded)
+        why = why or _bound
+        if why:
+            # Still a report: a target that crashed or hung gets the same
+            # JSON/SARIF a failing one does, with nothing counted as passed.
+            print(f"  cannot verify {path}: {why}")
+            scan_results = [{"name": f"{path}:{sym}", "passed": 0, "total": 0,
+                             "findings": [f"cannot verify: {why}"]}]
+        elif out[0] == "input":
             # An unloadable file or a refused width/field mismatch is an input
             # error, not a verification outcome: say so and stop rather than
             # emitting a report about a target that was never audited.
-            print(f"  cannot audit {path}: {exc}")
+            print(f"  cannot audit {path}: {out[1]}")
             return 2
-        scan_results = pqverify_scan(ntt, ns={"engines": _eng})
+        else:
+            _, scan_results, _full, _gaps = out
+            scan_coverage = {"full": _full, "gaps": _gaps}
 
     # Default: run the self-suite.
+    selftest_results = None
     if not ran_task:
-        run_selftest(quick=args.quick)
+        selftest_results = run_selftest(quick=args.quick)
 
     # ---- machine-readable output --------------------------------------
     # One native report per invocation, chosen most-specific-first, so two
@@ -383,19 +564,30 @@ def main(argv=None):
     exit_code = 0
     json_doc = sarif_doc = None
     reported = None
+    # Gating is the default. A verifier whose failures exit 0 unless a flag is
+    # remembered reports green from a failed job -- the GitHub Action did
+    # exactly that for --acvp-all until 2.10.0.
+    gate = not args.no_fail
+
+    if selftest_results is not None:
+        _rows = [t for r in selftest_results for t in r.tests]
+        _failed = [t["name"] for t in _rows
+                   if not t.get("skipped") and t["passed"] is not True]
+        if gate and _failed:
+            print(f"  FAILING: self-suite, {len(_failed)} check(s) failed: "
+                  f"{', '.join(_failed[:5])}{', ...' if len(_failed) > 5 else ''}")
+            exit_code = 1
 
     if scan_results is not None:
-        from .core import integrity_report as _ir
-        _f, _g = _ir(verbose=False)
-        json_doc = to_json(scan_results,
-                           extra={"coverage": {"full": _f, "gaps": _g}},
+        json_doc = to_json(scan_results, extra={"coverage": scan_coverage},
                            artifact=scan_artifact)
         sarif_doc = to_sarif(scan_results, tool_version=VERSION,
                              artifact=scan_artifact)
         reported = "--audit-so"
         findings = sum(len(r.get("findings", [])) for r in scan_results)
-        if args.fail_on_finding and findings:
-            print(f"  FAILING: {findings} finding(s)")
+        if gate and not json_doc["summary"]["verified"]:
+            print(f"  FAILING: {findings} finding(s)" if findings else
+                  "  FAILING: the scan did not verify")
             exit_code = 1
 
     if kem_ran is not None:
@@ -412,7 +604,7 @@ def main(argv=None):
                 tool_version=VERSION, artifact=kem_artifact)
         # A KEM audit that found faults, or that could not run at all, must
         # not exit 0 under a CI gate. The old code set a variable nothing read.
-        if args.fail_on_finding and not doc["verified"]:
+        if gate and not doc["verified"]:
             print(f"  FAILING: KEM audit {doc['status']}")
             exit_code = 1
 
@@ -428,8 +620,15 @@ def main(argv=None):
                   "total": doc["summary"]["checks_total"],
                   "findings": doc["findings"]}],
                 tool_version=VERSION, artifact=dsa_artifact)
-        if args.fail_on_finding and not doc["verified"]:
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
             print(f"  FAILING: ML-DSA audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print(f"  FAILING: ML-DSA audit scope is partial and "
+                  f"--require-full-coverage was set")
             exit_code = 1
 
     if hbsa_ran:
@@ -444,8 +643,15 @@ def main(argv=None):
                   "total": doc["summary"]["checks_total"],
                   "findings": doc["findings"]}],
                 tool_version=VERSION, artifact=hbsa_artifact)
-        if args.fail_on_finding and not doc["verified"]:
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
             print(f"  FAILING: LMS/XMSS audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print(f"  FAILING: LMS/XMSS audit scope is partial and "
+                  f"--require-full-coverage was set")
             exit_code = 1
 
     if response_result is not None:
@@ -460,7 +666,7 @@ def main(argv=None):
                   "findings": response_result.get("findings", [])}],
                 tool_version=VERSION, artifact=response_result.get("artifact"))
         # INCOMPLETE and CANNOT VERIFY are both "did not verify".
-        if args.fail_on_finding and not response_result["verified"]:
+        if gate and not response_result["verified"]:
             print(f"  FAILING: {response_result['status']}")
             exit_code = 1
 
@@ -476,7 +682,7 @@ def main(argv=None):
                   "findings": hybrid_result.get("findings", [])}],
                 tool_version=VERSION, artifact=hybrid_result.get("artifact"))
         # PARTIAL and CANNOT VERIFY are both "did not verify".
-        if args.fail_on_finding and not hybrid_result["verified"]:
+        if gate and not hybrid_result["verified"]:
             print(f"  FAILING: hybrid {hybrid_result['status']}")
             exit_code = 1
 
@@ -489,7 +695,7 @@ def main(argv=None):
                "artifact": {"summary": "pq-verify's shipped Coq proofs"}}
         if json_doc is None:
             json_doc, reported = doc, "--proofs"
-        if args.fail_on_finding and not proofs_result["verified"]:
+        if gate and not proofs_result["verified"]:
             print(f"  FAILING: proofs {proofs_result['status']}")
             exit_code = 1
 
@@ -503,7 +709,7 @@ def main(argv=None):
                "artifact": {"summary": "pq-verify's reference implementations"}}
         if json_doc is None:
             json_doc, reported = doc, "--edge-cases"
-        if args.fail_on_finding and not edge_result["verified"]:
+        if gate and not edge_result["verified"]:
             print(f"  FAILING: edge cases {edge_result['status']} "
                   f"({edge_result['passed']}/{edge_result['total']})")
             exit_code = 1
@@ -513,7 +719,7 @@ def main(argv=None):
         doc = to_json_hbs(hbs_result)
         if json_doc is None:
             json_doc, reported = doc, "--lms-xmss"
-        if args.fail_on_finding and not doc["verified"]:
+        if gate and not doc["verified"]:
             print(f"  FAILING: LMS/XMSS {doc['status']} "
                   f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
             exit_code = 1
@@ -522,7 +728,7 @@ def main(argv=None):
         doc = to_json_acvp(acvp_results)
         if json_doc is None:
             json_doc, reported = doc, "ACVP"
-        if args.fail_on_finding and not doc["verified"]:
+        if gate and not doc["verified"]:
             print(f"  FAILING: ACVP {doc['status']} "
                   f"({doc['summary']['checks_passed']}/"
                   f"{doc['summary']['checks_total']})")

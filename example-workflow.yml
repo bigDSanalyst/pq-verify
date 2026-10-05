@@ -1,8 +1,8 @@
 # .github/workflows/pq-verify.yml
 #
-# Drop this into any repository that builds an ML-KEM or ML-DSA implementation.
-# Findings appear as annotations on the pull request, and the build fails if the
-# transform diverges from the FIPS 203/204 reference.
+# Drop this into any repository that builds a post-quantum library. Findings
+# appear as annotations on the pull request, and the build fails on any result
+# that did not verify -- including one that could not run.
 
 name: Post-quantum verification
 
@@ -16,22 +16,36 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # build whatever exposes your NTT symbol
-      - name: Build
+      # Build the library with the ML-DSA randomness harness linked in, so
+      # pq-verify can inject NIST's seeds (pq_verify/harness/pqv_randombytes.c).
+      - name: Build (audit build)
         run: |
-          gcc -O3 -fPIC -shared -I. -o build/libmlkem768.so src/ntt.c src/reduce.c
+          pip install pq-verify
+          HARNESS=$(python3 -c "import pathlib, pq_verify; print(pathlib.Path(pq_verify.__file__).parent / 'harness' / 'pqv_randombytes.c')")
+          mkdir -p build
+          gcc -O2 -fPIC -shared -I. -o build/libmldsa65.so src/*.c "$HARNESS"
 
-      - name: Verify against FIPS 203/204
-        uses: bigDSanalyst/pq-verify@v1
+      - name: Verify against FIPS 204
+        uses: bigDSanalyst/pq-verify@v2.10.0
         with:
-          library: build/libmlkem768.so
-          symbol: PQCLEAN_MLKEM768_CLEAN_ntt
-          fail-on-finding: 'true'
+          audit: dsa                  # kem | dsa | hbs | ntt
+          library: build/libmldsa65.so
+          param-set: ML-DSA-65
 
-  # ACVP only — no library needed
+  # The build you ship must NOT carry the harness. Gate the release on it.
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          mkdir -p build && gcc -O2 -fPIC -shared -I. -o build/libmldsa65.so src/*.c
+          pip install pq-verify
+          pq-verify --check-no-harness build/libmldsa65.so
+
+  # ACVP only -- no library needed
   acvp:
     runs-on: ubuntu-latest
     steps:
-      - uses: bigDSanalyst/pq-verify@v1
+      - uses: bigDSanalyst/pq-verify@v2.10.0

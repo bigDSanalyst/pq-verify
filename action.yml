@@ -1,8 +1,10 @@
 name: 'pq-verify — post-quantum implementation verification'
 description: >
-  Independently verify that an ML-KEM (FIPS 203) or ML-DSA (FIPS 204)
-  implementation computes the standard correctly. Runs in CI, reports findings
-  as SARIF so they appear inline on pull requests, and can fail the build.
+  Independently verify a post-quantum implementation: ML-KEM (FIPS 203),
+  ML-DSA (FIPS 204), LMS/HSS and XMSS (SP 800-208) libraries audited through
+  their own entry points, plus the NIST ACVP suites. Reports findings as SARIF
+  so they appear inline on pull requests, and fails the build on any result
+  that did not verify.
 author: 'Nicholas Maino (iamweare)'
 
 branding:
@@ -10,17 +12,28 @@ branding:
   color: 'green'
 
 inputs:
+  audit:
+    description: >
+      What to audit in `library`: 'kem' (ML-KEM keygen/encaps/decaps), 'dsa'
+      (ML-DSA keygen/sign/verify), 'hbs' (LMS/XMSS through a pqv_hbs adapter)
+      or 'ntt' (one NTT symbol, the original mode). Leave empty for 'ntt' when
+      `symbol` is set, and for no library audit otherwise.
+    required: false
+    default: ''
   library:
     description: >
-      Path to a compiled shared object containing the NTT to audit
-      (e.g. build/libmlkem768.so). Leave empty to run the ACVP suites only.
+      Path to the compiled shared object to audit (e.g. build/libmldsa65.so).
+      The audit loads and runs it in a child process.
+    required: false
+    default: ''
+  param-set:
+    description: "With audit 'kem' or 'dsa': the parameter set, e.g. ML-KEM-768 or ML-DSA-65."
     required: false
     default: ''
   symbol:
     description: >
-      Exported NTT symbol name inside `library`
-      (e.g. PQCLEAN_MLKEM768_CLEAN_ntt). Find it with:
-      nm -D <lib> | grep -i ntt
+      With audit 'ntt': the exported NTT symbol inside `library`
+      (e.g. PQCLEAN_MLKEM768_CLEAN_ntt). Find it with: nm -D <lib> | grep -i ntt
     required: false
     default: ''
   acvp:
@@ -31,215 +44,203 @@ inputs:
     default: 'true'
   slhdsa:
     description: >
-      FIPS 205 SLH-DSA keyGen and sigVer run with the ACVP suites. 'siggen'
-      adds the 624 sigGen vectors, signed byte-exact (about 30 minutes).
-      'true' and 'false' are accepted for compatibility and change nothing.
+      'siggen' adds the 624 SLH-DSA sigGen vectors to the ACVP suites, signed
+      byte-exact (about 30 minutes). Anything else changes nothing.
     required: false
     default: 'false'
   hybrid-transcript:
     description: >
       Path to a hybrid key-agreement transcript to check against RFC 10024
-      (see `pq-verify --emit-hybrid-prompt`). Verifies the composition ACVP
-      cannot see: component order, offsets, lengths, the FIPS 203 §7.2
-      encapsulation key check, and the recomputed ECDHE shared secret.
-      Leave empty to skip.
+      (see `pq-verify --emit-hybrid-prompt`). Leave empty to skip.
     required: false
     default: ''
   fail-on-finding:
-    description: 'Fail the workflow step if any finding is reported.'
+    description: "Fail the step when any task did not verify. 'false' reports only."
     required: false
     default: 'true'
   sarif-file:
-    description: 'Where to write SARIF 2.1.0 output.'
+    description: 'Where to write SARIF 2.1.0 output for the library audit.'
     required: false
     default: 'pq-verify.sarif'
   json-file:
-    description: "Where to write pq-verify's native JSON schema."
+    description: "Where to write pq-verify's native JSON for the library audit."
     required: false
     default: 'pq-verify.json'
   version:
     description: >
-      Which pq-verify to install. A bare version (e.g. '2.7.0') installs that
-      release from PyPI — the artifact users get. Prefix with 'git:' to install
-      a ref from source instead (e.g. 'git:main'). Default is the latest PyPI
-      release, so CI tests the published wheel rather than the repository.
+      Which pq-verify to install. A bare version (e.g. '2.10.0') installs that
+      release from PyPI. Prefix with 'git:' to install a ref from source (e.g.
+      'git:main'). Default is the latest PyPI release.
     required: false
     default: ''
 
 outputs:
   verified:
-    description: "'true' if every check passed with no findings."
+    description: "'true' only if every task that ran verified."
     value: ${{ steps.run.outputs.verified }}
   findings:
-    description: 'Number of findings reported.'
+    description: 'Number of findings in the library audit (0 when none ran).'
     value: ${{ steps.run.outputs.findings }}
   sarif-file:
-    description: 'Path to the SARIF file that was written.'
+    description: 'Path to the SARIF file that was written, if any.'
     value: ${{ steps.run.outputs.sarif_file }}
 
 runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: '3.12'
 
     - name: Toolchain preflight
       shell: bash
       run: |
-        # gcc/g++ build the six field-native engines at runtime. coq is only
-        # needed for certificate tests, which this Action does not run.
-        # sudo is absent on many container and self-hosted runners.
+        # gcc/g++ build the field-native engines at runtime.
         SUDO=""
         command -v sudo >/dev/null 2>&1 && SUDO="sudo"
         $SUDO apt-get update -qq || true
-        $SUDO apt-get install -y -qq gcc g++ || true
-        # Installing is not the same as working. Verify, and fail with a
-        # DISTINCT exit code: "could not run" is not "found a problem".
+        $SUDO apt-get install -y -qq gcc g++ binutils || true
+        # "could not run" is not "found a problem": a distinct exit code.
         if ! command -v gcc >/dev/null || ! command -v g++ >/dev/null; then
           echo "::error title=PQV000::No working gcc/g++. pq-verify cannot build its engines and will not report a result."
           exit 3
         fi
         gcc --version | head -1
 
+    # Every input reaches the shell through the environment, never by
+    # ${{ }} substitution into the script: a path or symbol containing shell
+    # syntax is then data, not code (GitHub's script-injection guidance).
     - name: Install pq-verify
       shell: bash
+      env:
+        PQV_VERSION: ${{ inputs.version }}
       run: |
+        set -euo pipefail
         python -m pip install --quiet --upgrade pip
-        V="${{ inputs.version }}"
-        case "$V" in
-          git:*)  # install from source at a ref
-            REF="${V#git:}"
-            python -m pip install --quiet \
-              "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${REF}" ;;
-          "")     # latest published release
-            python -m pip install --quiet "pq-verify[full]" ;;
-          *)      # a specific published version
-            python -m pip install --quiet "pq-verify[full]==${V}" ;;
+        case "$PQV_VERSION" in
+          git:*) python -m pip install --quiet \
+                   "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${PQV_VERSION#git:}" ;;
+          "")    python -m pip install --quiet "pq-verify[full]" ;;
+          *)     python -m pip install --quiet "pq-verify[full]==${PQV_VERSION}" ;;
         esac
         pq-verify --version
 
     - name: Run verification
       id: run
       shell: bash
+      env:
+        IN_AUDIT: ${{ inputs.audit }}
+        IN_LIBRARY: ${{ inputs.library }}
+        IN_PARAM_SET: ${{ inputs.param-set }}
+        IN_SYMBOL: ${{ inputs.symbol }}
+        IN_ACVP: ${{ inputs.acvp }}
+        IN_SLHDSA: ${{ inputs.slhdsa }}
+        IN_HYBRID: ${{ inputs.hybrid-transcript }}
+        IN_FAIL: ${{ inputs.fail-on-finding }}
+        IN_SARIF: ${{ inputs.sarif-file }}
+        IN_JSON: ${{ inputs.json-file }}
       run: |
         set +e
         STATUS=0
+        GATE=()
+        [ "$IN_FAIL" = "false" ] && GATE=(--no-fail)
+        summary() { echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
+        summary "### pq-verify"
+        summary ""
 
-        # --- ACVP suites (pinned vectors, no network needed) ---
-        if [ "${{ inputs.acvp }}" != "false" ]; then
-          EXTRA=""
-          [ "${{ inputs.acvp }}" = "live" ] && EXTRA="--live"
-          [ "${{ inputs.slhdsa }}" = "siggen" ] && EXTRA="$EXTRA --slhdsa-siggen"
+        # --- NIST ACVP suites (pinned vectors, offline) ---
+        if [ "$IN_ACVP" != "false" ]; then
+          ARGS=(--acvp-all "${GATE[@]}" --json pq-verify-acvp.json)
+          [ "$IN_ACVP" = "live" ] && ARGS+=(--live)
+          [ "$IN_SLHDSA" = "siggen" ] && ARGS+=(--slhdsa-siggen)
           echo "::group::NIST ACVP suites"
-          pq-verify --acvp-all $EXTRA
-          [ $? -ne 0 ] && STATUS=1
+          pq-verify "${ARGS[@]}"; RC=$?
           echo "::endgroup::"
+          [ $RC -ne 0 ] && STATUS=$RC
+          ACVP_STATUS=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['status'], '%d/%d' % (d['summary']['checks_passed'], d['summary']['checks_total']))" pq-verify-acvp.json 2>/dev/null || echo "NO REPORT")
+          summary "- **ACVP suites** (pq-verify's reference chain): $ACVP_STATUS"
         fi
 
         # --- hybrid composition (RFC 10024) ---
-        # Independent of the library audit: a transcript is bytes, not a
-        # binary, so this runs whether or not `library` is set.
-        if [ -n "${{ inputs.hybrid-transcript }}" ]; then
-          if [ ! -f "${{ inputs.hybrid-transcript }}" ]; then
-            echo "::error::hybrid-transcript not found: ${{ inputs.hybrid-transcript }}"
-            exit 1
+        if [ -n "$IN_HYBRID" ]; then
+          if [ ! -f "$IN_HYBRID" ]; then
+            echo "::error::hybrid-transcript not found: $IN_HYBRID"
+            exit 2
           fi
           echo "::group::Hybrid composition (RFC 10024)"
-          HARGS="--verify-hybrid ${{ inputs.hybrid-transcript }}"
-          [ "${{ inputs.fail-on-finding }}" = "true" ] && HARGS="$HARGS --fail-on-finding"
-          pq-verify $HARGS
-          HRC=$?
+          pq-verify --verify-hybrid "$IN_HYBRID" "${GATE[@]}"; RC=$?
           echo "::endgroup::"
-          {
-            echo "### pq-verify — hybrid composition"
-            echo ""
-            if [ $HRC -eq 0 ]; then
-              echo "**VERIFIED** — the transcript composes the way RFC 10024 pins it."
-            else
-              echo "**Did not verify** (exit $HRC). A hybrid group can pass every"
-              echo "ACVP vector and still concatenate its components wrongly;"
-              echo "see the step log for which offset is wrong."
-            fi
-          } >> $GITHUB_STEP_SUMMARY
-          [ $HRC -ne 0 ] && STATUS=$HRC
-        fi
-
-        # --- symbol audit of a compiled library ---
-        FINDINGS=0
-        if [ -n "${{ inputs.library }}" ]; then
-          if [ ! -f "${{ inputs.library }}" ]; then
-            echo "::error::library not found: ${{ inputs.library }}"
-            exit 1
-          fi
-          if [ -z "${{ inputs.symbol }}" ]; then
-            echo "::error::'symbol' is required when 'library' is set."
-            echo "::error::Find it with: nm -D ${{ inputs.library }} | grep -i ntt"
-            exit 1
-          fi
-
-          echo "::group::Auditing ${{ inputs.symbol }}"
-          ARGS="--audit-so ${{ inputs.library }} ${{ inputs.symbol }}"
-          ARGS="$ARGS --sarif ${{ inputs.sarif-file }} --json ${{ inputs.json-file }}"
-          [ "${{ inputs.fail-on-finding }}" = "true" ] && ARGS="$ARGS --fail-on-finding"
-          pq-verify $ARGS
-          RC=$?
-          echo "::endgroup::"
-
-          if [ -f "${{ inputs.json-file }}" ]; then
-            FINDINGS=$(python -c "import json;print(json.load(open('${{ inputs.json-file }}'))['summary']['findings'])")
-            VERIFIED=$(python -c "import json;print(str(json.load(open('${{ inputs.json-file }}'))['summary']['verified']).lower())")
-            echo "verified=$VERIFIED" >> $GITHUB_OUTPUT
-            echo "findings=$FINDINGS" >> $GITHUB_OUTPUT
-            echo "sarif_file=${{ inputs.sarif-file }}" >> $GITHUB_OUTPUT
-
-            # summary panel on the workflow run
-            {
-              echo "### pq-verify"
-              echo ""
-              if [ "$VERIFIED" = "true" ]; then
-                echo "**VERIFIED** — \`${{ inputs.symbol }}\` matches the FIPS reference."
-              else
-                echo "**$FINDINGS finding(s)** in \`${{ inputs.symbol }}\`."
-                echo ""
-                python -c "import json,sys; d=json.load(open(sys.argv[1])); [print('- \`%s\` — %s' % (t['name'], f)) for t in d['targets'] for f in t['findings']]" "${{ inputs.json-file }}"
-              fi
-            } >> $GITHUB_STEP_SUMMARY
-          fi
-
           [ $RC -ne 0 ] && STATUS=$RC
-        else
-          # No library given: the ACVP suites are the whole run. `verified`
-          # must reflect whether they actually passed -- asserting true here
-          # would report a green output from a failed job, which is the same
-          # false-pass class pq-verify exists to detect.
-          if [ $STATUS -eq 0 ]; then
-            echo "verified=true"  >> $GITHUB_OUTPUT
-          else
-            echo "verified=false" >> $GITHUB_OUTPUT
-          fi
-          echo "findings=$STATUS" >> $GITHUB_OUTPUT
-          echo "sarif_file="      >> $GITHUB_OUTPUT
-          {
-            echo "### pq-verify"
-            echo ""
-            if [ $STATUS -eq 0 ]; then
-              echo "**ACVP suites passed** — no library was supplied, so no"
-              echo "third-party implementation was audited."
-            else
-              echo "**ACVP suites FAILED** (exit $STATUS)."
-            fi
-          } >> $GITHUB_STEP_SUMMARY
+          summary "- **Hybrid transcript**: $([ $RC -eq 0 ] && echo VERIFIED || echo "did not verify (exit $RC)")"
         fi
 
+        # --- library audit ---
+        MODE="$IN_AUDIT"
+        [ -z "$MODE" ] && [ -n "$IN_SYMBOL" ] && MODE=ntt
+        FINDINGS=0
+        if [ -n "$MODE" ]; then
+          if [ ! -f "$IN_LIBRARY" ]; then
+            echo "::error::library not found: '$IN_LIBRARY'"
+            exit 2
+          fi
+          case "$MODE" in
+            ntt) [ -z "$IN_SYMBOL" ] && { echo "::error::audit 'ntt' needs 'symbol'"; exit 2; }
+                 ARGS=(--audit-so "$IN_LIBRARY" "$IN_SYMBOL") ;;
+            kem) [ -z "$IN_PARAM_SET" ] && { echo "::error::audit 'kem' needs 'param-set'"; exit 2; }
+                 ARGS=(--audit-kem "$IN_LIBRARY" "$IN_PARAM_SET") ;;
+            dsa) [ -z "$IN_PARAM_SET" ] && { echo "::error::audit 'dsa' needs 'param-set'"; exit 2; }
+                 ARGS=(--audit-dsa "$IN_LIBRARY" "$IN_PARAM_SET") ;;
+            hbs) ARGS=(--audit-hbs "$IN_LIBRARY") ;;
+            *)   echo "::error::audit must be kem, dsa, hbs or ntt, not '$MODE'"; exit 2 ;;
+          esac
+          ARGS+=(--sarif "$IN_SARIF" --json "$IN_JSON" "${GATE[@]}")
+          echo "::group::Auditing $IN_LIBRARY ($MODE)"
+          pq-verify "${ARGS[@]}"; RC=$?
+          echo "::endgroup::"
+          [ $RC -ne 0 ] && STATUS=$RC
+          if [ -f "$IN_JSON" ]; then
+            FINDINGS=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['summary'].get('findings', 0))" "$IN_JSON")
+            LINE=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('status') or ('VERIFIED' if d['summary'].get('verified') else 'FINDINGS PRESENT'))" "$IN_JSON")
+            summary "- **$MODE audit** of \`$IN_LIBRARY\`: $LINE, $FINDINGS finding(s)"
+            python -c "
+        import json, sys
+        d = json.load(open(sys.argv[1]))
+        fs = d.get('findings') or [f for t in d.get('targets', []) for f in t.get('findings', [])]
+        for f in fs[:20]:
+            print('  - %s' % (f if isinstance(f, str) else f.get('description', f)))
+        " "$IN_JSON" >> "$GITHUB_STEP_SUMMARY"
+            echo "sarif_file=$IN_SARIF" >> "$GITHUB_OUTPUT"
+          else
+            summary "- **$MODE audit** of \`$IN_LIBRARY\`: no report (exit $RC)"
+            echo "sarif_file=" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+        fi
+
+        # `verified` is derived from the exit status of every task, so a step
+        # that failed can never publish verified=true.
+        if [ $STATUS -eq 0 ] && [ "$IN_FAIL" != "false" ]; then
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+        else
+          # Under fail-on-finding=false the exit codes are all 0, so they say
+          # nothing; read the reports instead.
+          OK=true
+          [ $STATUS -ne 0 ] && OK=false
+          for f in pq-verify-acvp.json "$IN_JSON"; do
+            [ -f "$f" ] || continue
+            V=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('verified', d.get('summary', {}).get('verified'))).lower())" "$f")
+            [ "$V" = "true" ] || OK=false
+          done
+          echo "verified=$OK" >> "$GITHUB_OUTPUT"
+        fi
+        echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
         exit $STATUS
 
     - name: Upload SARIF to code scanning
-      # Only when a library was audited: the ACVP path produces no SARIF
-      # (it verifies pq-verify's own reference chain, not third-party code).
-      if: always() && inputs.library != '' && hashFiles(inputs.sarif-file) != ''
-      uses: github/codeql-action/upload-sarif@v4
+      if: always() && steps.run.outputs.sarif_file != '' && hashFiles(inputs.sarif-file) != ''
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
       with:
         sarif_file: ${{ inputs.sarif-file }}
       continue-on-error: true

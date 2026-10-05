@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pq-verify"
-version = "2.9.0"
-description = "Independent verification for ML-KEM / ML-DSA / SLH-DSA implementations — native field NTT verification, NIST ACVP, lattice parameter security, Coq certificates."
+version = "2.10.0"
+description = "Independent verification for ML-KEM / ML-DSA / SLH-DSA / LMS / XMSS implementations — vendor-library audits, fresh ACVP prompts, NIST ACVP, Coq proofs."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -15,7 +15,8 @@ authors = [
 ]
 keywords = [
     "post-quantum", "cryptography", "ML-KEM", "ML-DSA", "Kyber", "Dilithium",
-    "FIPS-203", "FIPS-204", "NIST", "ACVP", "NTT", "verification", "lattice",
+    "FIPS-203", "FIPS-204", "FIPS-205", "SLH-DSA", "LMS", "XMSS", "SP-800-208",
+    "NIST", "ACVP", "NTT", "verification", "lattice",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -27,6 +28,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
     "Topic :: Security :: Cryptography",
 ]
 dependencies = []
