@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.9.0 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.10.0 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -35,7 +35,7 @@ import os, sys, ctypes, time, random, json, math, hashlib, struct
 import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 
 # Status glyphs as names rather than escapes inlined into f-string expressions.
 # A backslash inside an f-string expression is PEP 701 syntax (Python 3.12+);
@@ -611,7 +611,12 @@ def integrity_report(verbose=True):
         lines.append(f"checks skipped: {', '.join(sorted(set(DEGRADED['skipped_checks'])))}")
     ok = not lines
     if verbose:
-        if ok:
+        if ok and not _ENGINES_ATTEMPTED:
+            # Nothing here compiled an engine, so "every engine built" would
+            # report a check that never happened.
+            print("  INTEGRITY: nothing this run needed was missing "
+                  "(no field engines were required).")
+        elif ok:
             print("  INTEGRITY: full coverage — every engine built, every "
                   "dependency present.")
         else:
@@ -624,7 +629,12 @@ def integrity_report(verbose=True):
     return ok, lines
 
 
+_ENGINES_ATTEMPTED = False
+
+
 def compile_all():
+    global _ENGINES_ATTEMPTED
+    _ENGINES_ATTEMPTED = True
     engines = {}
     DEGRADED['engines'].clear()
     for name, src, flags in [
@@ -5557,7 +5567,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
             print("  Levels 1, 3, 5")
         print("=" * 64)
 
-    return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
+    return {'verified': g_ok == g_total and g_total > 0, 'passed': g_ok, 'total': g_total,
             'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()},
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'reference': _reference('kyber-py')}
@@ -5745,7 +5755,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
     if verbose:
         print("=" * 64)
         print("  NIST ACVP END-TO-END ML-DSA VERIFICATION (FIPS 204)")
-        print(f"  Source: {'local: ' + prompt_dir if prompt_dir else 'NIST ACVP-Server (GitHub)'}")
+        print(f"  Source: {_vector_label(_local, *_MLDSA_DIRS.values())}")
         print("=" * 64)
         for lab in sorted(detail):
             ok, tot = detail[lab]
@@ -5754,7 +5764,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
         print(f"  ACVP RESULT: {g_ok}/{g_total} NIST ML-DSA vectors verified")
         print("  keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5")
         print("=" * 64)
-    return {'verified': g_ok == g_total, 'passed': g_ok, 'total': g_total,
+    return {'verified': g_ok == g_total and g_total > 0, 'passed': g_ok, 'total': g_total,
             'detail': {k: tuple(v) for k, v in detail.items()},
             'vectors': _vector_label(_local, *_MLDSA_DIRS.values()),
             'reference': _reference('dilithium-py')}
@@ -6142,7 +6152,9 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     try:
         syms = _sp.run(['nm', '-D', '--defined-only', so_path],
                        capture_output=True, text=True).stdout
-        exported = [l.split()[-1] for l in syms.splitlines() if ' T ' in l]
+        # T function, i GNU IFUNC (CPU-dispatched), W weak definition
+        exported = [p[2] for p in (l.split() for l in syms.splitlines())
+                    if len(p) == 3 and p[1] in ('T', 'i', 'W')]
     except Exception:
         exported = []
 
@@ -6381,7 +6393,17 @@ def pqverify_acvp_all(prompt_dir=None, verbose=True, live=False, vector_dir=None
         if lms:
             print(f"    LMS (SP 800-208): {lms_p}/{lms_t}")
         print("#" * 64)
-    return {'verified': (total_p == total_t and total_t > 0),
+    # Every requested suite must have run AND verified. Summing only what ran
+    # let a missing kyber-py drop ML-KEM from both sides of the ratio, so the
+    # API said verified=True for a run that never touched FIPS 203.
+    requested = [kem, dsa] + ([slh] if (slhdsa or slhdsa_siggen) else []) \
+        + ([lms_r] if lms else [])
+    not_run = [n for n, r in (('ML-KEM', kem), ('ML-DSA', dsa),
+                              ('SLH-DSA', slh if (slhdsa or slhdsa_siggen) else 0),
+                              ('LMS', lms_r if lms else 0)) if r is None]
+    return {'verified': (total_p == total_t and total_t > 0 and not not_run
+                         and all(r['verified'] for r in requested if r)),
+            'not_run': not_run,
             'slh_dsa': slh, 'slh_dsa_requested': bool(slhdsa or slhdsa_siggen),
             'lms': lms_r, 'lms_requested': bool(lms),
             'passed': total_p, 'total': total_t,

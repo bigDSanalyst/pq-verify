@@ -93,7 +93,10 @@ def exported_symbols(so_path):
                       capture_output=True, text=True).stdout
     except Exception:
         return []
-    return [l.split()[-1] for l in out.splitlines() if ' T ' in l]
+    # T: ordinary function; i: GNU IFUNC (CPU-dispatched, common in optimised
+    # crypto libraries); W: weak definition. Seeing only T missed the other two.
+    return [p[2] for p in (l.split() for l in out.splitlines())
+            if len(p) == 3 and p[1] in ('T', 'i', 'W')]
 
 
 def resolve_symbols(exported, param_set, explicit=None):

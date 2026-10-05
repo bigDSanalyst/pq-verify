@@ -9,6 +9,7 @@ when those are unavailable.
 import io
 import math
 import contextlib
+import pathlib
 
 import pytest
 
@@ -25,7 +26,13 @@ from pq_verify import (
 # ----------------------------------------------------------------------
 
 def test_version():
-    assert pq_verify.__version__ == "2.9.0"
+    """One version, everywhere a report or a wheel states it."""
+    import re
+    from pq_verify.core import VERSION
+    assert pq_verify.__version__ == VERSION == "2.10.0"
+    toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
+    if toml.exists():
+        assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
 
 
 def test_public_api_present():
@@ -746,10 +753,28 @@ def test_acvp_report_is_not_verified_when_one_requested_suite_did_not_run():
 # CLI exit codes — a run that did not verify must not pass a CI gate
 # ----------------------------------------------------------------------
 
+# Libraries whose behaviour is a Python callback registered in THIS process.
+# The CLI audits in a child process (pq_verify.isolate), which would load the
+# same .so with nothing registered, so CLI calls on these run in-process.
+_IN_PROCESS_SHIMS = set()
+
+
 def _cli(*argv):
+    import os
     from pq_verify.cli import main
-    with contextlib.redirect_stdout(io.StringIO()) as out:
-        code = main(list(argv))
+    inproc = any(a in _IN_PROCESS_SHIMS for a in argv)
+    old = os.environ.get("PQV_IN_PROCESS")
+    if inproc:
+        os.environ["PQV_IN_PROCESS"] = "1"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = main(list(argv))
+    finally:
+        if inproc:
+            if old is None:
+                os.environ.pop("PQV_IN_PROCESS", None)
+            else:
+                os.environ["PQV_IN_PROCESS"] = old
     return code, out.getvalue()
 
 
@@ -3776,6 +3801,7 @@ def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0):
 
     keep = (KP(kp), SG(sg), VF(vf))
     lib.pqvtest_register(*keep, extra_rng)
+    _IN_PROCESS_SHIMS.add(str(so))
     return str(so), (lib, keep)
 
 
@@ -4184,6 +4210,7 @@ def _hbs_shim(tmp_path, verify=None, sign_c=None, lms_only=False, no_keygen=Fals
 
     keep = (SUP(sup), VER(ver), KG(kg), SG(sg))
     lib.pqvtest_hbs_register(*keep)
+    _IN_PROCESS_SHIMS.add(str(so))
     return str(so), (lib, keep)
 
 
@@ -4298,3 +4325,306 @@ def test_hbs_audit_report_and_rule():
     assert doc["schema"] == "pq-verify/hbs-audit-result"
     assert doc["status"] == "FINDINGS PRESENT"
     assert "q = 2^h" in doc["findings"][0] and _rule_for(doc["findings"][0]) == "PQV009"
+
+
+# ----------------------------------------------------------------------
+# 2.10.0: a verdict that cannot be faked, and a gate that cannot be forgotten
+# ----------------------------------------------------------------------
+
+def _answer_fresh(prompt, tamper=None):
+    """Answer a fresh prompt the way an implementation would: by computing."""
+    from pq_verify import fresh as F
+    from pq_verify.core import check_encapsulation_key, check_decapsulation_key
+    ps = prompt["parameterSet"]
+    H, B = (lambda b: b.hex()), bytes.fromhex
+    if ps.startswith("ML-KEM"):
+        import kyber_py.ml_kem as m
+        K = getattr(m, ps.replace("-", "_"))
+    else:
+        import dilithium_py.ml_dsa as m
+        O = getattr(m, ps.replace("-", "_"))
+    suites = []
+    for s in prompt["suites"]:
+        groups = []
+        for g in s["testGroups"]:
+            tests = []
+            for t in g["tests"]:
+                a, fn, mode = {"tcId": t["tcId"]}, g.get("function"), s["mode"]
+                if s["algorithm"] == "ML-KEM":
+                    if mode == "keyGen":
+                        ek, dk = K._keygen_internal(B(t["d"]), B(t["z"]))
+                        a.update(ek=H(ek), dk=H(dk))
+                    elif fn == "encapsulation":
+                        k, c = K._encaps_internal(B(t["ek"]), B(t["m"]))
+                        a.update(c=H(c), k=H(k))
+                    elif fn == "decapsulation":
+                        a["k"] = H(K._decaps_internal(B(t["dk"]), B(t["c"])))
+                    elif fn == "encapsulationKeyCheck":
+                        a["testPassed"] = check_encapsulation_key(B(t["ek"]), ps)
+                    else:
+                        a["testPassed"] = check_decapsulation_key(B(t["dk"]), ps)
+                elif mode == "keyGen":
+                    pk, sk = O._keygen_internal(B(t["seed"]))
+                    a.update(pk=H(pk), sk=H(sk))
+                elif mode == "sigGen":
+                    rnd = B(t["rnd"]) if "rnd" in t else bytes(32)
+                    a["signature"] = H(F._dsa_sign(O, B(t["sk"]), g, t, rnd))
+                else:
+                    a["testPassed"] = F._dsa_verify(O, B(t["pk"]), g, t,
+                                                    B(t["signature"]))
+                tests.append(a)
+            groups.append({"tgId": g["tgId"], "tests": tests})
+        suites.append({"suite": s["suite"], "testGroups": groups})
+    doc = {"promptId": prompt["promptId"], "parameterSet": ps, "suites": suites}
+    if tamper:
+        tamper(doc)
+    return doc
+
+
+def _fresh_round(tmp_path, ps, count=2):
+    import json as _json
+    key, prompt = tmp_path / f"{ps}.key", tmp_path / f"{ps}.prompt.json"
+    code, out = _cli("--emit-prompt", ps, "--fresh-key", str(key),
+                     "--fresh-count", str(count), "--prompt-out", str(prompt))
+    assert code == 0, out
+    return key, _json.loads(prompt.read_text())
+
+
+@pytest.mark.parametrize("ps", ["ML-KEM-512", "ML-DSA-44"])
+def test_fresh_prompt_round_trip_verifies_a_computing_responder(tmp_path, ps):
+    """Questions derived from an auditor-held seed, answered by computation,
+    re-derived and scored at verification: VERIFIED, exit 0."""
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    import json as _json, stat
+    key, prompt = _fresh_round(tmp_path, ps)
+    seed = _json.loads(key.read_text())["seed"]
+    assert prompt["fresh"] is True and seed.lower() not in _json.dumps(prompt).lower()
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
+    resp = tmp_path / "r.json"
+    resp.write_text(_json.dumps(_answer_fresh(prompt)))
+    code, out = _cli("--verify-response", str(resp), "--fresh-key", str(key))
+    assert code == 0 and "RESULT: VERIFIED" in out, out
+    assert "fresh questions" in out
+
+
+def test_fresh_prompt_carries_no_answer(tmp_path):
+    """No expected value appears anywhere in the prompt file."""
+    pytest.importorskip("kyber_py")
+    from pq_verify.fresh import read_key, build
+    key, prompt = _fresh_round(tmp_path, "ML-KEM-768", count=4)
+    k = read_key(str(key))
+    _q, expected = build(k["param_set"], k["seed"], k["count"])
+    text = (tmp_path / "ML-KEM-768.prompt.json").read_text().upper()
+    for suite in expected.values():
+        for ans in suite.values():
+            for v in ans.values():
+                if isinstance(v, str):
+                    assert v.upper() not in text
+
+
+def test_fresh_response_one_wrong_byte_is_a_finding(tmp_path):
+    pytest.importorskip("dilithium_py")
+    import json as _json
+    key, prompt = _fresh_round(tmp_path, "ML-DSA-44")
+
+    def tamper(doc):
+        t = doc["suites"][1]["testGroups"][0]["tests"][0]
+        t["signature"] = t["signature"][:-2] + ("00" if t["signature"][-2:] != "00" else "01")
+    resp = tmp_path / "r.json"
+    resp.write_text(_json.dumps(_answer_fresh(prompt, tamper)))
+    code, out = _cli("--verify-response", str(resp), "--fresh-key", str(key))
+    assert code == 1 and "FINDINGS PRESENT" in out and "first differs at byte" in out
+
+
+def test_published_answers_do_not_pass_a_fresh_prompt(tmp_path):
+    """Replaying NIST's public answers -- the attack on the pinned prompt --
+    scores nothing against fresh questions."""
+    pytest.importorskip("kyber_py")
+    import json as _json
+    from pq_verify.response import _load, _source
+    key, prompt = _fresh_round(tmp_path, "ML-KEM-512")
+    local = _source()
+    suites = []
+    for s in prompt["suites"]:
+        E = _load(local, s["suite"], "expectedResults.json")
+        suites.append({"suite": s["suite"], "testGroups": E["testGroups"]})
+    resp = tmp_path / "replay.json"
+    resp.write_text(_json.dumps({"promptId": prompt["promptId"],
+                                 "parameterSet": "ML-KEM-512", "suites": suites}))
+    code, out = _cli("--verify-response", str(resp), "--fresh-key", str(key))
+    assert code == 1 and "RESULT: VERIFIED" not in out
+
+
+def test_fresh_key_is_never_overwritten_and_must_match(tmp_path):
+    pytest.importorskip("kyber_py")
+    key, _p = _fresh_round(tmp_path, "ML-KEM-512")
+    before = key.read_bytes()
+    code, out = _cli("--emit-prompt", "ML-KEM-512", "--fresh-key", str(key),
+                     "--prompt-out", str(tmp_path / "again.json"))
+    assert code == 2 and "never overwritten" in out and key.read_bytes() == before
+    code, _o = _cli("--verify-response", str(tmp_path / "missing.json"),
+                    "--fresh-key", str(tmp_path / "nope.key"))
+    assert code == 1
+
+
+def test_fresh_derivation_is_deterministic_and_seed_dependent():
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("slhdsa")
+    from pq_verify.fresh import build
+    from pq_verify.response import _prompt_id
+    for ps in ("ML-KEM-512", "SLH-DSA-SHA2-128f"):
+        a = build(ps, b"\x01" * 32, 1)
+        assert a == build(ps, b"\x01" * 32, 1)
+        assert _prompt_id(a[0]) != _prompt_id(build(ps, b"\x02" * 32, 1)[0])
+
+
+def test_published_prompt_says_its_answers_are_public(tmp_path):
+    code, out = _cli("--emit-prompt", "ML-KEM-512", "--prompt-out",
+                     str(tmp_path / "p.json"))
+    assert code == 0 and "PUBLISHED" in out
+
+
+def test_gating_is_the_default(monkeypatch):
+    """--acvp-all that failed used to exit 0 without --fail-on-finding, and
+    the GitHub Action never passed it: a failed run published verified=true."""
+    import pq_verify.cli as cli
+    bad = {"verified": False, "passed": 1, "total": 2, "detail": {}}
+    good = {"verified": True, "passed": 2, "total": 2, "detail": {}, "modes": []}
+    monkeypatch.setattr(cli, "pqverify_acvp_all", lambda **k: {
+        "ml_kem": bad, "ml_dsa": good, "slh_dsa": good, "lms": good})
+    assert _cli("--acvp-all")[0] == 1
+    assert _cli("--acvp-all", "--fail-on-finding")[0] == 1
+    assert _cli("--acvp-all", "--no-fail")[0] == 0
+    assert _cli("--acvp-all", "--no-fail", "--fail-on-finding")[0] == 2
+
+
+def test_failed_self_suite_fails_the_exit_status(monkeypatch):
+    import pq_verify.cli as cli
+    from pq_verify.core import AuditResult
+    r = AuditResult("x")
+    r.add_test("broken", False)
+    monkeypatch.setattr(cli, "run_selftest", lambda quick=False: [r])
+    code, out = _cli("--quick")
+    assert code == 1 and "self-suite" in out
+    assert _cli("--quick", "--no-fail")[0] == 0
+
+
+def test_api_acvp_all_is_not_verified_when_a_suite_did_not_run(monkeypatch):
+    import pq_verify.core as core, pq_verify.hbs_suite as hs
+    ok = {"verified": True, "passed": 2, "total": 2, "detail": {}, "modes": []}
+    monkeypatch.setattr(core, "pqverify_acvp", lambda **k: None)
+    monkeypatch.setattr(core, "pqverify_mldsa_acvp", lambda **k: ok)
+    monkeypatch.setattr(core, "pqverify_slhdsa_acvp", lambda **k: ok)
+    monkeypatch.setattr(hs, "pqverify_lms_acvp", lambda **k: ok)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.pqverify_acvp_all(verbose=False)
+    assert r["verified"] is False and r["not_run"] == ["ML-KEM"]
+
+
+@pytest.mark.parametrize("argv", [["--audit-hbs-full"], ["--dsa-abi", "pqcrystals"],
+                                  ["--fresh-count", "3"], ["--audit-timeout", "5"],
+                                  ["--kem-keypair", "x"]])
+def test_a_modifier_without_its_task_is_an_input_error(argv):
+    code, out = _cli(*argv)
+    assert code == 2 and "does nothing without" in out
+
+
+_CRASH_KEM = r"""
+#include <unistd.h>
+int k768_keypair_derand(unsigned char *pk, unsigned char *sk, const unsigned char *c) {
+#ifdef HANG
+    for (;;) sleep(1);
+#else
+    volatile int *p = 0; *p = 1;
+#endif
+    return 0;
+}
+int k768_enc_derand(unsigned char *ct, unsigned char *ss, const unsigned char *pk,
+                    const unsigned char *c) { return 0; }
+int k768_dec(unsigned char *ss, const unsigned char *ct, const unsigned char *sk) { return 0; }
+"""
+
+
+def _crash_kem(tmp_path, hang=False):
+    import shutil, subprocess
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    src = tmp_path / "crash.c"
+    src.write_text(_CRASH_KEM)
+    so = tmp_path / ("libhang768.so" if hang else "libcrash768.so")
+    subprocess.run(["gcc", "-shared", "-fPIC", *(["-DHANG"] if hang else []),
+                    "-o", str(so), str(src)], check=True)
+    return str(so)
+
+
+def test_a_crashing_library_is_reported_not_fatal(tmp_path):
+    """A SIGSEGV inside the vendor library used to take pq-verify down with
+    it: no report, a bare signal in CI. The audit now runs in a child."""
+    import json as _json
+    so = _crash_kem(tmp_path)
+    rpt = tmp_path / "r.json"
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    assert code == 1 and "SIGSEGV" in out
+    d = _json.loads(rpt.read_text())
+    assert d["status"] == "CANNOT VERIFY" and "SIGSEGV" in d["findings"][0]
+    assert d["artifact"]["isolation"] == "child process"
+
+
+def test_a_hanging_library_times_out(tmp_path):
+    so = _crash_kem(tmp_path, hang=True)
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--audit-timeout", "3")
+    assert code == 1 and "did not finish within 3 s" in out
+
+
+def test_the_artifact_binds_every_object_the_audit_loaded(tmp_path):
+    import json as _json, os
+    so = _stub_kem(tmp_path, None)
+    rpt = tmp_path / "r.json"
+    _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    a = _json.loads(rpt.read_text())["artifact"]
+    if a.get("loaded_objects") is None:
+        pytest.skip("no /proc/self/maps on this platform")
+    mine = [o for o in a["loaded_objects"]
+            if os.path.realpath(o["path"]) == os.path.realpath(so)]
+    assert mine and mine[0]["sha256"] == a["sha256"]
+
+
+def test_check_no_harness(tmp_path):
+    import pathlib, shutil, subprocess
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    test_build = tmp_path / "libtest.so"
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(test_build),
+                    str(root / "pq_verify" / "harness" / "pqv_randombytes.c")], check=True)
+    code, out = _cli("--check-no-harness", str(test_build))
+    assert code == 1 and "randombytes() harness" in out
+    clean = _stub_kem(tmp_path, None)
+    assert _cli("--check-no-harness", clean)[0] == 0
+
+
+def test_hbs_verdict_states_a_partial_scope(tmp_path):
+    from pq_verify.report import to_json_hbs_audit
+    path, keep = _hbs_shim(tmp_path, lms_only=True)
+    doc = to_json_hbs_audit(_audit_hbs(path))
+    assert doc["status"] == "VERIFIED"
+    assert doc["scope"]["complete"] is False
+    assert "not applicable" in doc["scope"]["statement"]
+
+
+def test_symbol_discovery_sees_ifunc_and_weak_exports(tmp_path):
+    """CPU-dispatching libraries export their entry points as GNU IFUNCs
+    (nm type 'i'); only 'T' used to be read, so they had no symbols at all."""
+    import shutil, subprocess
+    if not (shutil.which("gcc") and shutil.which("nm")):
+        pytest.skip("gcc/nm not available")
+    from pq_verify.dsa_audit import exported_symbols
+    src = tmp_path / "f.c"
+    src.write_text("static int real(void){return 1;}\n"
+                   "static void *resolve(void){return (void*)real;}\n"
+                   "int lib_sign(void) __attribute__((ifunc(\"resolve\")));\n"
+                   "__attribute__((weak)) int lib_verify(void){return 0;}\n")
+    so = tmp_path / "libf.so"
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(so), str(src)], check=True)
+    assert {"lib_sign", "lib_verify"} <= set(exported_symbols(str(so)))

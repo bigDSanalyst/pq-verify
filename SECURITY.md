@@ -14,23 +14,43 @@ report and have not had a reply — no details.
 
 | Version | Supported |
 |---------|-----------|
-| 2.8.x   | yes |
-| < 2.8   | no — upgrade |
+| 2.10.x  | yes |
+| 2.9.x   | security fixes only — upgrade: its failing results exit 0 unless `--fail-on-finding` is passed |
+| < 2.9   | no — upgrade |
 
 ## What pq-verify does on purpose
 
-**Auditing an untrusted library executes it.** `--audit-so` and `--audit-kem`
-call `dlopen` on the path you give them, and loading a shared object runs its
-initialisers before pq-verify calls anything. That is not a flaw — driving the
-vendor's own code with NIST's vectors is the entire point — but it means:
+**Auditing an untrusted library executes it.** `--audit-so`, `--audit-kem`,
+`--audit-dsa` and `--audit-hbs` call `dlopen` on the path you give them, and
+loading a shared object runs its initialisers before pq-verify calls anything.
+That is not a flaw — driving the vendor's own code with NIST's vectors is the
+entire point — but it means:
 
-> **Treat `--audit-so` / `--audit-kem` as running the vendor's code, because
-> that is what it does.** Audit unfamiliar binaries inside a container, a VM, or
-> a throwaway user account, not on a build host with credentials on it.
+> **Treat every `--audit-*` as running the vendor's code, because that is what
+> it does.** Audit unfamiliar binaries inside a container, a VM, or a throwaway
+> user account, not on a build host with credentials on it.
+
+Since 2.10.0 each audit runs in a separate child process with a timeout. That
+contains crashes and hangs and keeps the library out of the memory where its
+verdict is decided. It is **not a sandbox**: the child has your user's
+privileges, your filesystem and your network. Isolation from a hostile binary
+is the container's job.
+
+**Audit builds must never ship.** The randomness harness
+(`pq_verify/harness/pqv_randombytes.c`) replaces `randombytes()` with a queue
+of caller-chosen bytes, and a pqv_hbs adapter signs at any leaf index it is
+given with no one-time-use state. Both are correct for an audit and
+catastrophic in production. `pq-verify --check-no-harness lib.so` exits 1 if
+either is present; run it on release artifacts.
 
 The prompt/response path (`--emit-prompt` / `--verify-response`) exists partly
 for this reason: it never loads anything, so it carries none of this risk. The
 report says which applies to each run, in the `artifact` field.
+
+Pose **fresh** questions on that path (`--emit-prompt SET --fresh-key K`).
+Without `--fresh-key` the questions are NIST's published ones, whose answers
+are public — a matching response then shows only that the answers were
+obtained. Keep `K` private: it is the seed the questions were derived from.
 
 Other things that are deliberate, not bugs:
 
