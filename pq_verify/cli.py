@@ -188,8 +188,11 @@ def build_parser():
     p.add_argument("--audit-hbs", metavar="PATH",
                    help="audit an LMS/HSS or XMSS/XMSS^MT library built with a pqv_hbs "
                         "adapter (pq_verify/harness/hbs): every pinned verification "
-                        "vector, byte-exact key generation and signing, and signatures "
-                        "malformed in one field")
+                        "vector, byte-exact key generation and signing, signatures "
+                        "malformed in one field, and -- where the adapter has the "
+                        "optional state functions -- the library's own key state: "
+                        "no leaf issued twice, state durable before a signature "
+                        "leaves, refusal once the key is exhausted")
     p.add_argument("--audit-hbs-full", action="store_true",
                    help="with --audit-hbs: every key generation and signing case up to "
                         "height 16, not a sample")

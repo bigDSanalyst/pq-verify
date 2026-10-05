@@ -731,10 +731,14 @@
         "LMS verify [RFC 8554]": [
           2,
           2
+        ],
+        "LMS state": [
+          10,
+          10
         ]
       },
       "not_applicable": 2788,
-      "not_run": 460,
+      "not_run": 478,
       "mutants": [
         {
           "name": "LMS verify skips the root comparison",
@@ -773,6 +777,15 @@
           "replace": "    put_bigendian( &Q[n], 0, 2 );",
           "fails": [
             "LMS sigGen [pqc-kat]"
+          ]
+        },
+        {
+          "name": "the advanced count is never written back",
+          "file": "hss_reserve.c",
+          "find": "            if (!update_private_key(w->private_key, PRIVATE_KEY_INDEX_LEN,\n                                   context)) {",
+          "replace": "            if (0) {",
+          "fails": [
+            "LMS state"
           ]
         }
       ]
@@ -813,10 +826,18 @@
         "XMSS^MT malformed": [
           176,
           176
+        ],
+        "XMSS state": [
+          8,
+          10
+        ],
+        "XMSS^MT state": [
+          7,
+          10
         ]
       },
       "not_applicable": 3371,
-      "not_run": 96,
+      "not_run": 169,
       "mutants": [
         {
           "name": "verify skips the root comparison",
@@ -859,7 +880,34 @@
             "XMSS keyGen [pqc-kat]",
             "XMSS sigGen [pqc-kat]"
           ]
+        },
+        {
+          "name": "the index in the secret key is not advanced",
+          "file": "xmss_core.c",
+          "find": "    ull_to_bytes(sk, params->index_bytes, idx + 1);",
+          "replace": "    ull_to_bytes(sk, params->index_bytes, idx);",
+          "fails": [
+            "XMSS state",
+            "XMSS^MT state"
+          ]
+        },
+        {
+          "name": "no check that the key is exhausted",
+          "file": "xmss_core.c",
+          "find": "    if (idx >= ((1ULL << params->full_height) - 1)) {",
+          "replace": "    if (0) {",
+          "fails": [
+            "XMSS state",
+            "XMSS^MT state"
+          ]
         }
+      ],
+      "failing": [
+        "XMSS state: XMSS-SHA2_10_192: every issued signature verifies",
+        "XMSS state: XMSS-SHAKE256_10_192: every issued signature verifies",
+        "XMSS^MT state: XMSSMT-SHA2_20/4_192: every issued signature verifies",
+        "XMSS^MT state: XMSSMT-SHA2_40/8_192: every issued signature verifies",
+        "XMSS^MT state: XMSSMT-SHA2_40/8_192: refuses once exhausted"
       ]
     }
   ]
