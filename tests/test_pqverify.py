@@ -4639,9 +4639,11 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
     so = _crash_kem(tmp_path)
     rpt = tmp_path / "r.json"
     code, out = _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
-    assert code == 1 and "SIGSEGV" in out
+    # a null write is SIGSEGV on Linux; macOS may deliver SIGBUS
+    sig = "SIGSEGV" if "SIGSEGV" in out else "SIGBUS"
+    assert code == 1 and sig in out
     d = _json.loads(rpt.read_text())
-    assert d["status"] == "CANNOT VERIFY" and "SIGSEGV" in d["findings"][0]
+    assert d["status"] == "CANNOT VERIFY" and sig in d["findings"][0]
     assert d["artifact"]["isolation"] == "child process"
 
 
@@ -4691,8 +4693,11 @@ def test_symbol_discovery_sees_ifunc_and_weak_exports(tmp_path):
     """CPU-dispatching libraries export their entry points as GNU IFUNCs
     (nm type 'i'); only 'T' used to be read, so they had no symbols at all."""
     import shutil, subprocess
+    import sys
     if not (shutil.which("gcc") and shutil.which("nm")):
         pytest.skip("gcc/nm not available")
+    if not sys.platform.startswith("linux"):
+        pytest.skip("GNU IFUNC is an ELF feature")
     from pq_verify.dsa_audit import exported_symbols
     src = tmp_path / "f.c"
     src.write_text("static int real(void){return 1;}\n"
@@ -4869,3 +4874,34 @@ def test_pinned_lms_prompt_is_offered():
     assert any(g.get("groupAnswerFields") == ["publicKey"]
                for s in doc["suites"] if s["mode"] == "sigGen" for g in s["testGroups"]) \
         or all(s["mode"] != "sigGen" for s in doc["suites"])
+
+
+def test_symbol_listing_strips_the_mach_o_underscore(monkeypatch):
+    """Mach-O prefixes every C symbol with '_'; ctypes looks it up without."""
+    import pq_verify.symbols as S
+    monkeypatch.setattr(S.sys, "platform", "darwin")
+    monkeypatch.setattr(S, "_nm", lambda args: "0000000000003f50 T _k768_keypair_derand\n"
+                                               "0000000000003f60 T _k768_dec\n"
+                                               "                 U _memcpy\n")
+    assert S.exported_functions("lib.dylib") == ["k768_keypair_derand", "k768_dec"]
+
+
+def test_engine_flags_that_do_not_travel_are_dropped(monkeypatch, tmp_path):
+    """-lrt does not exist on macOS and Apple clang rejects -march=native; an
+    engine that cannot build is a skipped check, so the flags must yield."""
+    import pq_verify.core as core
+    calls = []
+
+    class P:
+        def __init__(self, rc):
+            self.returncode, self.stdout, self.stderr = rc, "", ""
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return P(1 if "-march=native" in argv else 0)
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    monkeypatch.setattr(core.sys, "platform", "darwin")
+    proc = core._cc("gcc", "-O3 -march=native -shared -fPIC -lm -lrt", "o.so", "s.c")
+    assert proc.returncode == 0
+    assert all("-lrt" not in a for a in calls)
+    assert "-march=native" not in calls[-1]

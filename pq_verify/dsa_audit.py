@@ -37,7 +37,6 @@ Two calling conventions are recognised, by symbol name:
 import ctypes as _ct
 import os as _os
 import re as _re
-import subprocess as _sp
 
 # (pk, sk, sig) bytes per FIPS 204 Table 2
 DSA_SIZES = {
@@ -88,15 +87,8 @@ class VendorError(Exception):
 
 
 def exported_symbols(so_path):
-    try:
-        out = _sp.run(['nm', '-D', '--defined-only', so_path],
-                      capture_output=True, text=True).stdout
-    except Exception:
-        return []
-    # T: ordinary function; i: GNU IFUNC (CPU-dispatched, common in optimised
-    # crypto libraries); W: weak definition. Seeing only T missed the other two.
-    return [p[2] for p in (l.split() for l in out.splitlines())
-            if len(p) == 3 and p[1] in ('T', 'i', 'W')]
+    from .symbols import exported_functions
+    return exported_functions(so_path)
 
 
 def resolve_symbols(exported, param_set, explicit=None):

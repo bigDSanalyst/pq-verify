@@ -184,6 +184,33 @@ jobs:
           sys.exit(1 if problems else 0)
           PY
 
+  # macOS: Mach-O symbols (nm -gU, leading underscore), dyld instead of
+  # /proc for the loaded-object binding, Apple clang for the engines. Until
+  # this job passes, the package declares Linux only.
+  macos:
+    name: macOS (Apple silicon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints-reference.txt ".[dev]" pytest
+      - name: Test suite (not slow)
+        run: python -m pytest tests/ -q -m "not slow"
+      - name: NIST ACVP — 1566 pinned vectors
+        run: |
+          python -m pq_verify.cli --acvp-all --json "$RUNNER_TEMP/acvp.json"
+          python -c "import json,os; d = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'acvp.json'))); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 4, s; print(d['summary'])"
+      - name: LMS/HSS + XMSS/XMSS^MT, default budget
+        run: python -m pq_verify.cli --lms-xmss
+      - name: Self-suite (quick, gated)
+        run: python -m pq_verify.cli --quick
+
   wheel:
     name: wheel installs and runs at the floor
     runs-on: ubuntu-24.04

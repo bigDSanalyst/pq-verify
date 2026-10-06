@@ -632,6 +632,23 @@ def integrity_report(verbose=True):
 _ENGINES_ATTEMPTED = False
 
 
+def _cc(compiler, flags, out, src):
+    """Compile one engine. The flags are written for gcc on Linux; two do not
+    travel: -lrt (clock_gettime lives in libc on macOS, and there is no
+    librt) and -march=native (Apple clang on arm64 rejects it). An engine is
+    exact integer arithmetic, so tuning flags change its speed, never its
+    answers -- dropping one is safe, and failing to build is not."""
+    flags = flags.split()
+    if sys.platform == "darwin":
+        flags = [f for f in flags if f != "-lrt"]
+    proc = subprocess.run([compiler, *flags, '-o', out, src],
+                          capture_output=True, text=True)
+    if proc.returncode != 0 and "-march=native" in flags:
+        proc = subprocess.run([compiler, *[f for f in flags if f != "-march=native"],
+                               '-o', out, src], capture_output=True, text=True)
+    return proc
+
+
 def compile_all():
     global _ENGINES_ATTEMPTED
     _ENGINES_ATTEMPTED = True
@@ -652,8 +669,7 @@ def compile_all():
         # A list argv rather than os.system: no shell to quote for, and the
         # compiler's diagnostics are captured instead of thrown at /dev/null,
         # where a build failure looked identical to a missing compiler.
-        proc = subprocess.run(['gcc', *flags.split(), '-o', so_path, c_path],
-                              capture_output=True, text=True)
+        proc = _cc('gcc', flags, so_path, c_path)
         if proc.returncode == 0:
             engines[name] = ctypes.CDLL(so_path)
             print(f"  {_OK} {name}")
@@ -3822,8 +3838,7 @@ def compile_engine6():
                 os.remove(p)
         with open(c_path, 'w') as f:
             f.write(_decode(blob))
-        proc = subprocess.run([cc, *flags.split(), '-o', so_path, c_path],
-                              capture_output=True, text=True)
+        proc = _cc(cc, flags, so_path, c_path)
         if proc.returncode != 0 or not os.path.exists(so_path):
             print(f'  {_BAD} engine6/{name} — compilation failed')
             _why = (proc.stderr or proc.stdout or '').strip()
@@ -6149,14 +6164,8 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     lib = _ct.CDLL(so_path)
 
     # ---- locate the three entry points ----
-    try:
-        syms = _sp.run(['nm', '-D', '--defined-only', so_path],
-                       capture_output=True, text=True).stdout
-        # T function, i GNU IFUNC (CPU-dispatched), W weak definition
-        exported = [p[2] for p in (l.split() for l in syms.splitlines())
-                    if len(p) == 3 and p[1] in ('T', 'i', 'W')]
-    except Exception:
-        exported = []
+    from .symbols import exported_functions
+    exported = exported_functions(so_path)
 
     found, ambiguous = _resolve_kem_symbols(
         exported, param_set,
@@ -6664,11 +6673,9 @@ def pqverify_load_so(so_path, func_name='ntt', q=None, n=256, in_place=True,
 
     if fn is None:
         # Show available NTT-related symbols
-        try:
-            out = subprocess.check_output(['nm', '-D', so_path], stderr=subprocess.DEVNULL).decode()
-            ntt_syms = [l.strip() for l in out.splitlines() if 'ntt' in l.lower() or 'NTT' in l]
-            hint = '\n'.join(ntt_syms[:20]) if ntt_syms else '(none found)'
-        except: hint = '(nm not available)'
+        from .symbols import exported_functions
+        ntt_syms = [s for s in exported_functions(so_path) if 'ntt' in s.lower()]
+        hint = '\n'.join(ntt_syms[:20]) if ntt_syms else '(none found, or nm not available)'
         raise AttributeError(
             f"Symbol '{func_name}' not found in {so_path}\n"
             f"Tried: {list(dict.fromkeys(candidates))}\n"
