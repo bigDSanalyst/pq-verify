@@ -4777,3 +4777,95 @@ def test_workflows_pin_their_runner_image():
                 for m in re.findall(r"runs-on:\s*(\S+)", f.read_text())
                 if m.endswith("-latest")]
     assert not floating, floating
+
+
+# ----------------------------------------------------------------------
+# LMS in the prompt/response path: an HSM signs with its own key
+# ----------------------------------------------------------------------
+
+_LMS_SET = "LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1"
+
+
+def _answer_lms(prompt, reuse=False, own_seed=b"\x07" * 32):
+    """A responder: computes keyGen and sigVer, and signs sigGen messages with
+    its OWN key at sequential leaves (or, with reuse, leaf 0 twice)."""
+    from pq_verify import hbs as H
+    suites = []
+    for s in prompt["suites"]:
+        groups = []
+        for g in s["testGroups"]:
+            t_, o_ = H.LMS_BY_NAME[g["lmsMode"]], H.LMOTS_BY_NAME[g["lmOtsMode"]]
+            out = {"tgId": g["tgId"], "tests": []}
+            if s["mode"] == "sigGen":
+                tree = H.LMSTree(t_, o_, own_seed, b"\x01" * 16)
+                out["publicKey"] = tree.public_key.hex()
+            for i, t in enumerate(g["tests"]):
+                a = {"tcId": t["tcId"]}
+                if s["mode"] == "keyGen":
+                    a["publicKey"] = H.LMSTree(t_, o_, bytes.fromhex(t["seed"]),
+                                               bytes.fromhex(t["i"])).public_key.hex()
+                elif s["mode"] == "sigGen":
+                    q = 0 if reuse and i < 2 else i
+                    a["signature"] = tree.sign(bytes.fromhex(t["message"]), q,
+                                               bytes(H.LMOTS[o_][2])).hex()
+                else:
+                    a["testPassed"] = H.lms_verify(bytes.fromhex(g["publicKey"]),
+                                                   bytes.fromhex(t["message"]),
+                                                   bytes.fromhex(t["signature"]))
+                out["tests"].append(a)
+            groups.append(out)
+        suites.append({"suite": s["suite"], "testGroups": groups})
+    return {"promptId": prompt["promptId"], "parameterSet": prompt["parameterSet"],
+            "suites": suites}
+
+
+def test_fresh_lms_round_trip_and_leaf_reuse(tmp_path):
+    import json as _json
+    key, prompt = _fresh_round(tmp_path, _LMS_SET, count=1)
+    assert {s["suite"] for s in prompt["suites"]} == {
+        "LMS-keyGen-1.0", "LMS-sigGen-1.0", "LMS-sigVer-1.0"}
+    good = tmp_path / "good.json"
+    good.write_text(_json.dumps(_answer_lms(prompt)))
+    code, out = _cli("--verify-response", str(good), "--fresh-key", str(key))
+    assert code == 0 and "RESULT: VERIFIED" in out, out
+    bad = tmp_path / "reuse.json"
+    bad.write_text(_json.dumps(_answer_lms(prompt, reuse=True)))
+    code, out = _cli("--verify-response", str(bad), "--fresh-key", str(key))
+    assert code == 1 and "a one-time key used twice" in out, out
+
+
+def test_lms_siggen_answer_must_be_the_groups_key_type(tmp_path):
+    """A signature under a key of another parameter set does not answer the
+    question, however valid it is."""
+    import json as _json
+    key, prompt = _fresh_round(tmp_path, _LMS_SET, count=1)
+    doc = _answer_lms(prompt)
+    from pq_verify import hbs as H
+    other = H.LMSTree(H.LMS_BY_NAME["LMS_SHA256_M32_H5"],
+                      H.LMOTS_BY_NAME["LMOTS_SHA256_N32_W2"], b"\x07" * 32, b"\x01" * 16)
+    for s, sq in zip(doc["suites"], prompt["suites"]):
+        if sq["mode"] == "sigGen":
+            s["testGroups"][0]["publicKey"] = other.public_key.hex()
+    p = tmp_path / "r.json"
+    p.write_text(_json.dumps(doc))
+    code, out = _cli("--verify-response", str(p), "--fresh-key", str(key))
+    assert code == 1 and "publicKey is not a LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1" in out
+
+
+def test_large_lms_sets_get_siggen_questions_only():
+    """An HSM key of height 20 cannot be built in Python to pose keyGen or
+    sigVer questions; the black-box part, sigGen, still applies."""
+    from pq_verify.fresh import build
+    q, _ = build("LMS_SHA256_M32_H20/LMOTS_SHA256_N32_W8", b"\x01" * 32, 1)
+    assert [s["suite"] for s in q] == ["LMS-sigGen-1.0"]
+
+
+def test_pinned_lms_prompt_is_offered():
+    from pq_verify.response import available_parameter_sets, build_prompt
+    sets = available_parameter_sets()
+    lms = [s for s in sets if s.startswith("LMS_")]
+    assert lms, sets
+    doc = build_prompt(lms[0])
+    assert any(g.get("groupAnswerFields") == ["publicKey"]
+               for s in doc["suites"] if s["mode"] == "sigGen" for g in s["testGroups"]) \
+        or all(s["mode"] != "sigGen" for s in doc["suites"])

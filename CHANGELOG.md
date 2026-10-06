@@ -25,6 +25,19 @@ versioning](https://semver.org/spec/v2.0.0.html).
   questions are NIST's; so are the answers. The old claim that a matching
   response "proves the responder computes the standard" is withdrawn.
 
+### Added — LMS in the prompt/response path
+
+- **LMS, fresh and pinned, for implementations that cannot be loaded.**
+  `--emit-prompt LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1 --fresh-key K` (any
+  SP 800-208 pairing) poses keyGen, sigGen and sigVer in NIST's LMS ACVP
+  layout; NIST's own LMS prompts join the pinned path too. sigGen is answered
+  as ACVP asks — the responder signs with its own key and reports it per
+  group — so each signature is verified under that key, the key must be of
+  the group's type, and **a leaf signing twice under one key anywhere in the
+  response is a finding**: the key-state check, applied to a black box.
+  Sets too large to build in Python (over 3M hash calls, e.g. height 20) get
+  sigGen alone.
+
 ### Added — LMS/XMSS key state
 
 - **LMS/XMSS key-state audit: a one-time key used twice is broken, and no

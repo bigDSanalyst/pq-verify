@@ -88,7 +88,58 @@ _SUITES = (
     ("SLH-DSA-keyGen-FIPS205",    "SLH-DSA", "keyGen",     "FIPS205"),
     ("SLH-DSA-sigGen-FIPS205",    "SLH-DSA", "sigGen",     "FIPS205"),
     ("SLH-DSA-sigVer-FIPS205",    "SLH-DSA", "sigVer",     "FIPS205"),
+    # LMS (SP 800-208). A "parameter set" here is lmsMode/lmOtsMode, e.g.
+    # LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1: ACVP names the pair per group.
+    ("LMS-keyGen-1.0",            "LMS",     "keyGen",     "1.0"),
+    ("LMS-sigGen-1.0",            "LMS",     "sigGen",     "1.0"),
+    ("LMS-sigGen-SP800-208",      "LMS",     "sigGen",     "SP800-208"),
+    ("LMS-sigVer-1.0",            "LMS",     "sigVer",     "1.0"),
+    ("LMS-sigVer-SP800-208",      "LMS",     "sigVer",     "SP800-208"),
 )
+
+
+def _set_of(g):
+    """The parameter set a test group belongs to: ACVP's parameterSet, or for
+    LMS the lmsMode/lmOtsMode pair."""
+    if g.get("parameterSet"):
+        return g["parameterSet"]
+    if isinstance(g.get("lmsMode"), str) and isinstance(g.get("lmOtsMode"), str):
+        return f"{g['lmsMode']}/{g['lmOtsMode']}"
+    return None
+
+
+def _is_lms_siggen(suite_q):
+    return suite_q["algorithm"] == "LMS" and suite_q["mode"] == "sigGen"
+
+
+def _score_lms_siggen(g, t, ans, rgroup, leaves, tc):
+    """LMS sigGen: the responder signs with ITS OWN key, so the answer is not
+    compared with a stored one. It must verify under the publicKey the
+    responder's group reports, that key must be of the group's type, and no
+    leaf may sign twice under one key anywhere in the response -- the one
+    state property a black box can be held to."""
+    from . import hbs as H
+    pk_hex = _norm_hex((rgroup or {}).get("publicKey"))
+    if pk_hex is None:
+        return "malformed", "publicKey: the response's test group carries no hex publicKey"
+    sig_hex = _norm_hex(ans.get("signature"))
+    if sig_hex is None:
+        return "malformed", "signature: not an even-length hex string"
+    pk, sig = bytes.fromhex(pk_hex), bytes.fromhex(sig_hex)
+    want = (H.LMS_BY_NAME.get(g.get("lmsMode")), H.LMOTS_BY_NAME.get(g.get("lmOtsMode")))
+    got = (int.from_bytes(pk[:4], "big"), int.from_bytes(pk[4:8], "big")) if len(pk) >= 8 else None
+    if got != want:
+        return "mismatch", (f"publicKey is not a {g.get('lmsMode')}/{g.get('lmOtsMode')} "
+                            f"key")
+    if not H.lms_verify(pk, bytes.fromhex(t["message"]), sig):
+        return "mismatch", "signature does not verify under the response's publicKey"
+    q = int.from_bytes(sig[:4], "big")
+    used = leaves.setdefault(pk_hex, {})
+    if q in used:
+        return "mismatch", (f"leaf {q} already signed tcId {used[q]} under the same key: "
+                            f"a one-time key used twice")
+    used[q] = tc
+    return "ok", None
 
 _MAX_LISTED = 25          # cap on individually listed failures / unknown ids
 _PREFIX = 24              # hex digits shown when reporting a mismatch
@@ -112,7 +163,8 @@ def _source_label(local, param_set=None):
         # Cite only the suites this parameter set is answered from; listing
         # every pinned commit would name vectors the result never used.
         suites = [s[0] for s in _SUITES
-                  if param_set is None or param_set.startswith(s[1] + "-")]
+                  if param_set is None
+                  or param_set.startswith((s[1] + "-", s[1] + "_"))]
         rev = _vector_revision(*suites)
         return ("pinned bundle (shipped in this package"
                 + (f"; {rev})" if rev else ")"))
@@ -200,7 +252,7 @@ def _questions(param_set, local):
         exp = {t["tcId"]: t for g in E["testGroups"] for t in g["tests"]}
         groups = []
         for g in P["testGroups"]:
-            if g.get("parameterSet") != param_set:
+            if _set_of(g) != param_set:
                 continue
             tests = [t for t in g["tests"] if t.get("tcId") in exp]
             if not tests:
@@ -211,6 +263,10 @@ def _questions(param_set, local):
                 continue
             grp = {k: v for k, v in g.items() if k != "tests"}
             grp["answerFields"] = fields
+            if alg == "LMS" and mode == "sigGen":
+                # The responder's own key, reported once per group; each
+                # signature is verified under it rather than compared.
+                grp["groupAnswerFields"] = ["publicKey"]
             grp["tests"] = tests
             groups.append(grp)
         if groups:
@@ -243,8 +299,8 @@ def available_parameter_sets(prompt_dir=None, vector_dir=None, live=False):
         except (FileNotFoundError, OSError):
             continue
         for g in P["testGroups"]:
-            if g.get("parameterSet"):
-                seen.add(g["parameterSet"])
+            if _set_of(g):
+                seen.add(_set_of(g))
     return sorted(seen)
 
 
@@ -422,7 +478,7 @@ def _flatten_answers(doc):
     a list of raw ACVP response documents -- so a vendor whose harness already
     emits ACVP responses does not have to reshape anything.
     """
-    answers, meta, dups = {}, {}, []
+    answers, meta, dups, groups_of = {}, {}, [], {}
     param_set = prompt_id = None
 
     def _take_raw(d):
@@ -458,6 +514,7 @@ def _flatten_answers(doc):
                         dups.append(f"{suite} tcId {tc}")
                     else:
                         bucket[tc] = t
+                        groups_of[(suite, tc)] = g
 
     if isinstance(doc, list):
         for d in doc:
@@ -485,6 +542,7 @@ def _flatten_answers(doc):
             if s:
                 _absorb(s, doc["testGroups"])
     meta["duplicates"] = dups
+    meta["groups_of"] = groups_of
     return param_set, prompt_id, answers, meta
 
 
@@ -499,7 +557,7 @@ def _infer_param_set(answers, local):
         except (FileNotFoundError, OSError):
             continue
         for g in P["testGroups"]:
-            ps = g.get("parameterSet")
+            ps = _set_of(g)
             if not ps:
                 continue
             for t in g["tests"]:
@@ -621,6 +679,8 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         return _stop(f"response file is not readable JSON ({exc})")
 
     ps, claimed_id, answers, meta = _flatten_answers(doc)
+    groups_of = meta.pop("groups_of", {})
+    lms_leaves = {}
     res["response_prompt_id"] = claimed_id
     res["implementation"] = meta.get("implementation")
     res["duplicates"] = meta.get("duplicates", [])
@@ -705,6 +765,17 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
                 tally[1] += 1
                 res["answered"] += 1
                 verdict = "ok"
+                if _is_lms_siggen(suite_q):
+                    st, note = _score_lms_siggen(g, t, ans, groups_of.get((suite, tc)),
+                                                 lms_leaves, tc)
+                    if st == "ok":
+                        tally[0] += 1
+                        res["passed"] += 1
+                    else:
+                        if st == "malformed":
+                            res["malformed"] += 1
+                        res["findings"].append(f"response: {label} tcId {tc} {st} — {note}")
+                    continue
                 # Score only against fields the pinned answers actually carry
                 # for this test case. A group's answerFields is the union over
                 # its tests, so an irregular group must not crash the run --

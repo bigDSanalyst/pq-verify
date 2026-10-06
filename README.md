@@ -457,8 +457,18 @@ in NIST's ACVP layout — same suites, groups and field names, every interface
 context lengths, implicit-rejection ciphertexts, invalid keys and invalid
 signatures — so an ACVP harness answers it unchanged. Verification re-derives
 the questions, confirms their `promptId` matches the one issued, and computes
-every expected answer at that moment. ML-KEM, ML-DSA and all twelve SLH-DSA
-sets are supported.
+every expected answer at that moment. ML-KEM, ML-DSA, all twelve SLH-DSA
+sets and every SP 800-208 LMS pairing (`LMS_SHA256_M32_H10/LMOTS_SHA256_N32_W4`
+and so on) are supported.
+
+LMS is where black-box testing matters most: firmware-signing keys live in
+HSMs that will not export a key or sign at a chosen leaf. Its sigGen questions
+are answered the way ACVP asks — the responder signs with **its own key** and
+reports the public key — so each signature is verified under that key rather
+than compared, and **no leaf may sign twice under one key anywhere in the
+response**: a one-time key used twice is reported, from outside the box. keyGen
+and sigVer questions are posed where pq-verify can build the tree (up to about
+3 million hash calls); larger sets, such as height 20, get sigGen alone.
 
 A passing fresh response proves the responder computed the standard correctly
 on inputs nobody had seen. Neither kind proves **which binary did it**: there

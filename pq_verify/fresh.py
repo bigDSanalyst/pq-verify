@@ -60,11 +60,27 @@ KEM_SETS = ("ML-KEM-512", "ML-KEM-768", "ML-KEM-1024")
 DSA_SETS = ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")
 SLH_SETS = tuple(f"SLH-DSA-{h}-{b}{v}" for h in ("SHA2", "SHAKE")
                  for b in (128, 192, 256) for v in ("s", "f"))
-PARAMETER_SETS = KEM_SETS + DSA_SETS + SLH_SETS
+
+
+def _lms_sets():
+    """Every SP 800-208 LMS/LM-OTS pairing: one hash family, n = m."""
+    from . import hbs as H
+    return tuple(f"{tn}/{on}" for t, (tn, _, m, _h) in H.LMS.items()
+                 for o, (on, _, n, _w) in H.LMOTS.items()
+                 if n == m and tn.split("_")[1] == on.split("_")[1])
+
+
+LMS_SETS = _lms_sets()
+PARAMETER_SETS = KEM_SETS + DSA_SETS + SLH_SETS + LMS_SETS
+
+# Building an LMS tree is the cost of a keyGen or sigVer question here (pure
+# Python). Above this many hash calls a set gets sigGen questions only: the
+# responder signs with its own key, and pq-verify only verifies.
+LMS_TREE_BUDGET = 3_000_000
 
 # Tests per group. SLH-DSA signing is slow in pure Python (a few seconds for
 # the -f sets, much longer for -s), so it gets fewer; --fresh-count overrides.
-DEFAULT_COUNT = {"ML-KEM": 8, "ML-DSA": 4, "SLH-DSA": 1}
+DEFAULT_COUNT = {"ML-KEM": 8, "ML-DSA": 4, "SLH-DSA": 1, "LMS": 2}
 
 
 class FreshError(ValueError):
@@ -434,6 +450,78 @@ def _slhdsa(ps, D, n):
 
 
 # ----------------------------------------------------------------------
+# LMS (SP 800-208)
+# ----------------------------------------------------------------------
+
+def _lms(ps, D, n):
+    from . import hbs as H
+    tname, oname = ps.split("/")
+    t, o = H.LMS_BY_NAME[tname], H.LMOTS_BY_NAME[oname]
+    m = H.LMS[t][2]
+    h = H.LMS[t][3]
+    attrs = {"testType": "AFT", "lmsMode": tname, "lmOtsMode": oname}
+    small = H.lms_keygen_cost(t, o) <= LMS_TREE_BUDGET
+    suites = []
+
+    if small:
+        # keyGen: (SEED, I) -> public key
+        tests, exp = [], {}
+        for i in range(n):
+            tc = i + 1
+            seed, I = D.bytes(f"lms/keyGen/{tc}/seed", m), D.bytes(f"lms/keyGen/{tc}/I", 16)
+            tests.append({"tcId": tc, "seed": _hex(seed), "i": _hex(I)})
+            exp[tc] = {"publicKey": _hex(H.LMSTree(t, o, seed, I).public_key)}
+        suites.append(("LMS-keyGen-1.0", "LMS", "keyGen", "1.0",
+                       [(dict(attrs), ["publicKey"], tests)], exp))
+
+    # sigGen: the responder's own key, one per group; each signature is
+    # verified under it and no leaf may repeat (response._score_lms_siggen).
+    tests, exp = [], {}
+    for i in range(4 * n):
+        tc = i + 1
+        lab = f"lms/sigGen/{tc}"
+        tests.append({"tcId": tc,
+                      "message": _hex(D.bytes(lab + "/msg", D.int(lab + "/mlen", 1, 512)))})
+        exp[tc] = {}
+    suites.append(("LMS-sigGen-1.0", "LMS", "sigGen", "1.0",
+                   [(dict(attrs, groupAnswerFields=["publicKey"]), ["signature"], tests)],
+                   exp))
+
+    if small:
+        # sigVer: one key, valid signatures and ones wrong in one place
+        seed, I = D.bytes("lms/sigVer/seed", m), D.bytes("lms/sigVer/I", 16)
+        tree = H.LMSTree(t, o, seed, I)
+        _, _, nn, _w = H.LMOTS[o]
+        tests, exp = [], {}
+        for i in range(4 * n):
+            tc = i + 1
+            lab = f"lms/sigVer/{tc}"
+            msg = D.bytes(lab + "/msg", D.int(lab + "/mlen", 1, 512))
+            q = D.int(lab + "/q", 0, (1 << h) - 1)
+            sig = tree.sign(msg, q, D.bytes(lab + "/C", nn))
+            want, kind = True, i % 4
+            if kind == 1:                       # another message
+                msg = _flip(msg, D.int(lab + "/mpos", 0, len(msg) - 1))
+                want = False
+            elif kind == 2:                     # another leaf index
+                sig = (q ^ 1).to_bytes(4, "big") + sig[4:]
+                want = False
+            elif kind == 3:                     # an authentication-path node
+                sig = _flip(sig, len(sig) - 1 - D.int(lab + "/ppos", 0, h * m - 1))
+                want = False
+            got = H.lms_verify(tree.public_key, msg, sig)
+            if got != want:
+                raise FreshError(f"internal: reference verdict disagrees with the "
+                                 f"constructed case ({ps} sigVer tcId {tc})")
+            tests.append({"tcId": tc, "message": _hex(msg), "signature": _hex(sig)})
+            exp[tc] = {"testPassed": got}
+        suites.append(("LMS-sigVer-1.0", "LMS", "sigVer", "1.0",
+                       [(dict(attrs, publicKey=_hex(tree.public_key)), ["testPassed"],
+                         tests)], exp))
+    return suites
+
+
+# ----------------------------------------------------------------------
 # assembly
 # ----------------------------------------------------------------------
 
@@ -444,6 +532,8 @@ def _family(ps):
         return "ML-DSA"
     if ps in SLH_SETS:
         return "SLH-DSA"
+    if ps in LMS_SETS:
+        return "LMS"
     raise FreshError(f"no fresh questions for {ps!r}; known: {', '.join(PARAMETER_SETS)}")
 
 
@@ -459,14 +549,15 @@ def build(param_set, seed, count=None):
     if not 1 <= n <= 1000:
         raise FreshError("--fresh-count must be between 1 and 1000")
     D = _Derive(seed)
-    gen = {"ML-KEM": _mlkem, "ML-DSA": _mldsa, "SLH-DSA": _slhdsa}[fam]
+    gen = {"ML-KEM": _mlkem, "ML-DSA": _mldsa, "SLH-DSA": _slhdsa, "LMS": _lms}[fam]
     questions, expected = [], {}
     tg = 0
     for suite, alg, mode, rev, groups, exp in gen(param_set, D, n):
         out = []
         for attrs, fields, tests in groups:
             tg += 1
-            out.append({"tgId": tg, "parameterSet": param_set, **attrs,
+            head = {} if fam == "LMS" else {"parameterSet": param_set}
+            out.append({"tgId": tg, **head, **attrs,
                         "answerFields": sorted(fields), "tests": tests})
         questions.append({"suite": suite, "algorithm": alg, "mode": mode,
                           "revision": rev, "testGroups": out})
