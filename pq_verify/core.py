@@ -631,6 +631,11 @@ def integrity_report(verbose=True):
 
 _ENGINES_ATTEMPTED = False
 
+# Why an engine did not build, by name: the compiler's own words, for the
+# integrity report and CI annotations (a bare "compilation failed" on another
+# platform gives nobody anything to fix).
+ENGINE_ERRORS = {}
+
 
 def _cc(compiler, flags, out, src):
     """Compile one engine. The flags are written for gcc on Linux; two do not
@@ -681,6 +686,7 @@ def compile_all():
                 print(f"      {_l[:160]}")
             engines[name] = None
             DEGRADED['engines'].append(name)
+            ENGINE_ERRORS[name] = "\n".join(_why[-6:])[:1500]
     if DEGRADED['engines']:
         print(f"  \u26a0  {len(DEGRADED['engines'])} engine(s) unavailable — "
               f"this run cannot provide full coverage")
@@ -3415,7 +3421,14 @@ def main(quick=False):
             print(f"  Running Engine 6 \u2014 {_e6label}...")
             results.append(_e6fn(e6_engines[_e6key])); gc.collect()
         else:
+            # Each check it would have run is recorded as skipped, by name,
+            # so the count stays what the docs say and the gap is visible.
             print(f"  \u26a0 skipping {_e6label} \u2014 engine not compiled")
+            _title, _checks = _E6_CHECKS[_e6key]
+            _r = AuditResult(_title)
+            for _c in _checks:
+                _r.add_skip(_c, f"engine6/{_e6key} did not build on this platform")
+            results.append(_r)
     print("  Running Engine 6 \u2014 CFL front-end (Paper7 context)...")
     results.append(audit_engine6_cfl(e6_engines)); gc.collect()
     print("  Running Engine 6 \u2014 Coq certificate (Conjecture 7)...")
@@ -3845,6 +3858,11 @@ def compile_engine6():
             if _why:
                 print('     ' + _why[:200])
             engines[name] = None
+            # Registered like compile_all's engines. It was not: an Engine 6
+            # build failure only printed, its checks vanished from the count,
+            # and the integrity report still said "every engine built".
+            DEGRADED['engines'].append(f'engine6/{name}')
+            ENGINE_ERRORS[f'engine6/{name}'] = _why[-1500:]
             continue
         lib = ctypes.CDLL(so_path)
         # Version magic check for the C++ engines (stale-.so guard)
@@ -4334,6 +4352,29 @@ def audit_engine6_coq():
 # ============================================================
 # RUNNER — Phase 5 of the pq-verify stack
 # ============================================================
+# What each Engine 6 audit records, so an engine that cannot be built still
+# shows its checks -- as skipped -- rather than shrinking the suite.
+# tests/test_pqverify.py holds these to the audits' own titles.
+_E6_CHECKS = {
+    'rank2':   ('Engine 6a: rank-2 Legendre',
+                ['Theorem 1 entry-wise, rank 2', "Riccati U' = -U^2 - Q",
+                 'Lemma 3 / traceless commutator', "Legendre closed form tr(U[U,Q]U')",
+                 'Residues |Res| = 17/4 at z=0,1 (antisymmetric)']),
+    'genus2':  ('Engine 6b: rank-4 genus-2',
+                ['Theorem 1 entry-wise, rank 4',
+                 'tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
+                 'Paper 7 Table 1: Res f2 at z=0,1,2,3', 'Paper 7 Table 1: Res f4 at z=0']),
+    'quintic': ('Engine 6c: rank-4 mirror quintic',
+                ['Theorem 1 entry-wise, rank-4 CY3', 'tr[U,Q]^3 = 0 (Observation 4, CY3)',
+                 'f2(z) matches Paper 7 closed form',
+                 'Conjecture 7: CY3 residue rigidity (lambda_2, exact)']),
+    'genus4':  ('Engine 6d: rank-8 genus-4 (NEW)',
+                ['Theorem 1 entry-wise, rank 8',
+                 'Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0',
+                 'Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent']),
+}
+
+
 def run_engine6():
     print()
     print("=" * 70)
@@ -4360,6 +4401,11 @@ def run_engine6():
             results.append(fn(engines[key]))
         else:
             print(f"  ⚠ skipping {label} — engine not compiled")
+            title, checks = _E6_CHECKS[key]
+            r = AuditResult(title)
+            for c in checks:
+                r.add_skip(c, f"engine6/{key} did not build on this platform")
+            results.append(r)
 
     # Stack integration: CFL front-end + Coq certificate
     print("  Running Engine 6 — CFL front-end (CFL→FOL→QBF→router→dispatch)...")

@@ -200,7 +200,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints-reference.txt ".[dev]" pytest
+      - name: Engine builds (a failure is annotated with the compiler's words)
+        run: |
+          python - <<'PY'
+          import contextlib, io
+          from pq_verify import core
+          with contextlib.redirect_stdout(io.StringIO()):
+              core.compile_all(); core.compile_engine6()
+          for name, why in core.ENGINE_ERRORS.items():
+              msg = why.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::warning title=engine {name} did not build::{msg}")
+          print("engines unavailable:", sorted(core.ENGINE_ERRORS) or "none")
+          PY
       - name: Test suite (not slow)
+        if: success() || failure()
         run: python -m pytest tests/ -q -m "not slow" --junitxml="$RUNNER_TEMP/junit.xml"
       - name: Failing tests as annotations
         if: failure()

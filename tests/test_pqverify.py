@@ -4905,3 +4905,42 @@ def test_engine_flags_that_do_not_travel_are_dropped(monkeypatch, tmp_path):
     assert proc.returncode == 0
     assert all("-lrt" not in a for a in calls)
     assert "-march=native" not in calls[-1]
+
+
+def test_engine6_skip_names_are_the_checks_each_audit_records():
+    """When an Engine 6 engine cannot be built, its checks are recorded as
+    skipped under these names, so the list must be what the audits run."""
+    from pq_verify import core
+    eng = core.compile_engine6()
+    core.bind_engine6(eng)
+    fns = {"rank2": core.audit_engine6_rank2, "genus2": core.audit_engine6_genus2,
+           "quintic": core.audit_engine6_quintic, "genus4": core.audit_engine6_genus4}
+    for key, (title, names) in core._E6_CHECKS.items():
+        if not eng.get(key):
+            pytest.skip(f"engine6/{key} not built here")
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = fns[key](eng[key])
+        assert r.engine == title
+        got = [t["name"] for t in r.tests]
+        assert len(got) == len(names), (key, got)
+        assert all(g.startswith(n) for g, n in zip(got, names)), (key, got, names)
+
+
+def test_an_engine6_build_failure_is_degraded_not_silent(monkeypatch):
+    """compile_engine6 used to print a failure and register nothing: the
+    integrity report then said every engine built while four checks were
+    gone from the suite."""
+    from pq_verify import core
+
+    class P:
+        returncode, stdout, stderr = 1, "", "error: no matching function"
+    monkeypatch.setattr(core, "_cc", lambda *a, **k: P())
+    before = list(core.DEGRADED["engines"])
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            eng = core.compile_engine6()
+        assert all(v is None for v in eng.values())
+        assert "engine6/genus2" in core.DEGRADED["engines"]
+        assert "no matching function" in core.ENGINE_ERRORS["engine6/genus2"]
+    finally:
+        core.DEGRADED["engines"][:] = before
