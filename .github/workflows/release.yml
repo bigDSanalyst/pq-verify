@@ -54,7 +54,7 @@ jobs:
   verify:
     name: py${{ matrix.python }}
     if: ${{ !inputs.publish_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
       matrix:
@@ -80,7 +80,7 @@ jobs:
     name: build, attest and release
     if: ${{ !inputs.publish_only }}
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write        # create the tag and the release
       id-token: write        # OIDC, for signing the attestations
@@ -211,7 +211,7 @@ jobs:
     name: publish to PyPI
     needs: build
     if: ${{ inputs.publish_to_pypi && !inputs.publish_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write        # trusted publishing; no API token anywhere
@@ -234,7 +234,7 @@ jobs:
   publish-existing:
     name: publish an existing release to PyPI
     if: ${{ inputs.publish_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write        # trusted publishing

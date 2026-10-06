@@ -23,7 +23,7 @@ concurrency:
 jobs:
   test:
     name: py${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -109,7 +109,7 @@ jobs:
   # the job the day they are introduced.
   self-suite:
     name: self-suite (${{ matrix.profile }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +186,7 @@ jobs:
 
   wheel:
     name: wheel installs and runs at the floor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

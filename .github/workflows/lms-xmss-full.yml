@@ -28,7 +28,7 @@ concurrency:
 jobs:
   full:
     name: LMS/XMSS, every height-10 tree
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7

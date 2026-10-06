@@ -4763,3 +4763,17 @@ def test_a_mutant_must_add_a_failure_the_library_does_not_already_have(tmp_path,
     with contextlib.redirect_stdout(io.StringIO()):
         assert va._check_mutants(row, tmp_path, tmp_path, lambda s, i: "x",
                                  lambda so: new) == 0
+
+
+def test_workflows_pin_their_runner_image():
+    """ubuntu-latest moves under us (Ubuntu 26 from 2026-10-19): a new gcc or
+    OpenSSL would change what the pinned vendor rows were built with, and a
+    reproducible result must name the image it ran on."""
+    import pathlib, re
+    wf = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
+    if not wf.is_dir():
+        pytest.skip("no workflows in this layout")
+    floating = [f"{f.name}: {m}" for f in sorted(wf.glob("*.yml"))
+                for m in re.findall(r"runs-on:\s*(\S+)", f.read_text())
+                if m.endswith("-latest")]
+    assert not floating, floating
