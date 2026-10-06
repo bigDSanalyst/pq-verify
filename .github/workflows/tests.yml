@@ -201,14 +201,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c constraints-reference.txt ".[dev]" pytest
       - name: Test suite (not slow)
-        run: python -m pytest tests/ -q -m "not slow"
+        run: python -m pytest tests/ -q -m "not slow" --junitxml="$RUNNER_TEMP/junit.xml"
+      - name: Failing tests as annotations
+        if: failure()
+        run: python tools/ci_annotate.py "$RUNNER_TEMP/junit.xml"
       - name: NIST ACVP — 1566 pinned vectors
+        if: success() || failure()
         run: |
           python -m pq_verify.cli --acvp-all --json "$RUNNER_TEMP/acvp.json"
           python -c "import json,os; d = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'acvp.json'))); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 4, s; print(d['summary'])"
       - name: LMS/HSS + XMSS/XMSS^MT, default budget
+        if: success() || failure()
         run: python -m pq_verify.cli --lms-xmss
       - name: Self-suite (quick, gated)
+        if: success() || failure()
         run: python -m pq_verify.cli --quick
 
   wheel:
