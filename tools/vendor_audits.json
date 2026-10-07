@@ -25,7 +25,11 @@
     "the counts are fixed but the signatures are not. Mutants as above.",
     "\"accumulated\" (per parameter set): pq_verify/accumulated.py, 10 000 seeded",
     "cases hashed and compared with a pinned digest (Go's for ML-KEM, C2SP CCTV's for",
-    "ML-DSA); [1, 1] when the digest matches."
+    "ML-DSA); [1, 1] when the digest matches.",
+    "\"ct\" (ML-KEM rows, per parameter set): --constant-time, Encaps and Decaps under",
+    "Valgrind memcheck with the secret inputs marked; [1, 1] means no secret-dependent",
+    "branch or memory access. \"ct_mutants\" plant one leak each, with outputs left",
+    "correct; CI requires the constant-time stage to fail each in the stages named."
   ],
   "audits": [
     {
@@ -119,6 +123,38 @@
           1,
           1
         ]
+      },
+      "ct": {
+        "ML-KEM-512": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-768": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-1024": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
       }
     },
     {
@@ -212,7 +248,72 @@
           1,
           1
         ]
-      }
+      },
+      "ct": {
+        "ML-KEM-512": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-768": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-1024": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
+      "ct_mutants": [
+        {
+          "name": "branch on a secret message bit (Clangover class)",
+          "set": "ML-KEM-768",
+          "file": "crypto_kem/ml-kem-768/clean/poly.c",
+          "find": "            PQCLEAN_MLKEM768_CLEAN_cmov_int16(r->coeffs + 8 * i + j, ((KYBER_Q + 1) / 2), (msg[i] >> j) & 1);",
+          "replace": "            if ((msg[i] >> j) & 1) { r->coeffs[8 * i + j] = ((KYBER_Q + 1) / 2); __asm__ volatile(\"\"); }",
+          "fails": [
+            "ct:encaps",
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "lookup table indexed by a secret coefficient",
+          "set": "ML-KEM-768",
+          "file": "crypto_kem/ml-kem-768/clean/poly.c",
+          "find": "            t  = a->coeffs[8 * i + j];\n            // t += ((int16_t)t >> 15) & KYBER_Q;\n            // t  = (((t << 1) + KYBER_Q/2)/KYBER_Q) & 1;\n            t <<= 1;\n            t += 1665;\n            t *= 80635;\n            t >>= 28;\n            t &= 1;",
+          "replace": "            {\n                static uint8_t lut[65536]; static int ready;\n                if (!ready) {\n                    for (uint32_t v = 0; v < 65536; v++) {\n                        uint32_t u = (uint32_t)(int32_t)(int16_t)v;\n                        lut[v] = (uint8_t)((((u << 1) + 1665) * 80635 >> 28) & 1);\n                    }\n                    ready = 1;\n                }\n                t = lut[(uint16_t)a->coeffs[8 * i + j]];\n            }",
+          "fails": [
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "non-constant-time comparison in the FO re-encryption check",
+          "set": "ML-KEM-768",
+          "file": "crypto_kem/ml-kem-768/clean/kem.c",
+          "find": "    fail = PQCLEAN_MLKEM768_CLEAN_verify(ct, cmp, KYBER_CIPHERTEXTBYTES);",
+          "replace": "    fail = __builtin_memcmp(ct, cmp, KYBER_CIPHERTEXTBYTES) != 0;",
+          "fails": [
+            "ct:decaps"
+          ]
+        }
+      ]
     }
   ],
   "dsa_audits": [

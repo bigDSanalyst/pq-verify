@@ -539,6 +539,32 @@ reproduces CCTV's ML-KEM-512 value exactly. No implementation of the final
 standard can match them -- every correct library would fail -- so pq-verify
 does not use them.
 
+## Constant time (`--constant-time`)
+
+ML-KEM Encaps (m secret) and Decaps (the K-PKE secret key and z secret, on a
+valid and on a random ciphertext) run under Valgrind memcheck with the secret
+bytes marked; any branch or memory address that depends on them fails the
+stage and names the function. A self-test must first see a deliberate secret
+branch, or nothing is trusted.
+
+| Library | Sets | ct:encaps | ct:decaps | Division instructions |
+|---|---|---|---|---|
+| mlkem-native `fc269bc` | 512 / 768 / 1024 | 3/3 | 3/3 | none |
+| PQClean clean `0586a82` | 512 / 768 / 1024 | 3/3 | 3/3 | none |
+
+Leaks planted in PQClean ML-KEM-768, each leaving every output correct -- they
+pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
+
+| Planted leak | Caught in |
+|---|---|
+| a branch on a secret message bit (`poly_frommsg`; the Clangover class) | ct:encaps, ct:decaps |
+| a lookup table indexed by a secret coefficient (`poly_tomsg`) | ct:decaps |
+| `memcmp` in the FO re-encryption check (`crypto_kem_dec`) | ct:decaps |
+
+Not checked, and said so in every report: instruction timing (KyberSlash's
+secret division is invisible to memcheck; the library's division instructions
+are listed instead), key generation, and anything physical.
+
 ## Any language, through Crucible-protocol harnesses
 
 `--audit-harness COMMAND PARAM_SET` audits an ML-KEM or ML-DSA implementation

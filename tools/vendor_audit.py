@@ -98,10 +98,10 @@ def fetch(url, commit, dest):
         raise RuntimeError(f"fetched {head}, pinned {commit}")
 
 
-def build(recipe, src, param_set, out_dir):
+def build(recipe, src, param_set, out_dir, tag=""):
     """Compile one parameter set of a library to a shared object."""
     level = param_set.rsplit("-", 1)[1]
-    so = Path(out_dir) / f"{recipe}{level}.so"
+    so = Path(out_dir) / f"{recipe}{level}{tag}.so"
     cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared"]
     if recipe == "mlkem-native":
         rb = Path(out_dir) / "randombytes.c"
@@ -248,6 +248,63 @@ def audit_fndsa(so, param_set):
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
             "not_applicable": r["not_applicable_total"]}
+
+
+def audit_ct(so, param_set):
+    """The --constant-time stages alone: {stage: [p, t]} and the leaks."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import run_kem
+    from pq_verify.core import _resolve_kem_symbols
+    from pq_verify.symbols import exported_functions
+    f, _ = _resolve_kem_symbols(exported_functions(so), param_set)
+    r = run_kem(so, param_set, f["keypair"], f["encaps"], f["decaps"])
+    return ({"ct:" + k: list(v) for k, v in r["stages"].items()},
+            {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()})
+
+
+def check_ct(rows, workdir):
+    """ML-KEM rows' "ct" results, and every "ct_mutants" leak caught."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        print(f"  ERROR  constant-time rows cannot run: {why}")
+        return 2
+    failures = 0
+    for row in rows:
+        if "ct" not in row:
+            continue
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        if not (src / ".git").exists():
+            fetch(row["url"], row["commit"], src)
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
+            got, leaks = audit_ct(build(row["build"], src, ps, workdir), ps)
+            if got == row["ct"][ps]:
+                print(f"  ok     {label}: no secret-dependent branch or access, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}: recorded {row['ct'][ps]}  now {got}  {leaks}")
+        for i, m in enumerate(row.get("ct_mutants", [])):
+            label = f"{row['library']} ct mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build(row["build"], msrc, m["set"], workdir, tag=f"-ctmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got, leaks = audit_ct(so, m["set"])
+            missed = [s for s in m["fails"] if got.get(s, [0, 0])[0] == got.get(s, [0, 0])[1]]
+            if missed:
+                failures += 1
+                print(f"  MISSED {label}: {', '.join(missed)} passed. pq-verify cannot "
+                      f"see this leak.")
+            else:
+                print(f"  caught {label}: {'; '.join(x for v in leaks.values() for x in v)}")
+    if failures:
+        print(f"\n  {failures} constant-time row(s) or mutant(s) differ.")
+        return 1
+    return 0
 
 
 def audit(so, param_set):
@@ -669,6 +726,7 @@ def main(argv=None):
         code = 0
         if a.only in (None, "ML-KEM"):
             code = max(code, check_all(rows, work))
+            code = max(code, check_ct(rows, work))
         if a.only in (None, "ML-DSA"):
             code = max(code, check_dsa(dsa_rows, work))
         if a.only in (None, "LMS/XMSS"):

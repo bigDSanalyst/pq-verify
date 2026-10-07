@@ -657,10 +657,35 @@ the correct answer and leaks the key while doing it.**
 
 This is not hypothetical. KyberSlash and Clangover were byte-exact correct
 against every vector and still recovered secret material through timing. A
-tool that checked only what pq-verify checks would have passed both.
+tool that checked only values would have passed both.
 
-So every report carries the scope as a field rather than leaving it to be
-inferred:
+**`--audit-kem ... --constant-time` closes part of that gap, and says exactly
+which part.** It runs the vendor's own Encaps (m secret) and Decaps (the
+secret key and z secret, on a valid and on a random ciphertext) under
+Valgrind memcheck with the secret bytes marked, and fails on every branch and
+every memory address that depends on them, naming the function -- the
+technique mlkem-native and BoringSSL use on themselves. It catches the
+Clangover class (a compiler-introduced branch on a secret bit) and
+cache-timing table lookups; three such leaks planted in PQClean, each leaving
+every output correct, are caught in CI. It does **not** see instruction
+timing -- KyberSlash's secret division -- so the report lists the library's
+division instructions for a reviewer instead; it cannot check key generation
+(the public matrix seed is derived from the secret seed); and it measures
+nothing physical. The report records exactly that:
+
+```json
+"side_channel": {
+  "measured": false,
+  "constant_time_checked": {
+    "operations": ["decaps", "encaps"],
+    "scope": "secret-dependent branches and memory addresses in this binary, by Valgrind memcheck taint; not instruction timing (division), power, EM or microarchitecture, and not key generation",
+    "leak_free": true
+  }
+}
+```
+
+Without the flag, nothing is claimed:
+
 
 ```json
 "side_channel": {

@@ -6269,7 +6269,8 @@ def _resolve_kem_symbols(exported, param_set, explicit=None):
 
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
                        decaps=None, prompt_dir=None, vector_dir=None, live=False,
-                       verbose=True, edge=True, accumulated=10_000):
+                       verbose=True, edge=True, accumulated=10_000,
+                       constant_time=False):
     """Audit a THIRD-PARTY ML-KEM implementation end to end against NIST's vectors.
 
     This is the scheme-level counterpart to pqverify_scan (which audits the NTT
@@ -6459,6 +6460,18 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         acc_res = {'cases': accumulated, 'ok': ok, 'detail': why,
                    'source': _acc.source(param_set, accumulated)}
 
+    ct_res = None
+    if constant_time:
+        from . import ct_audit as _ct
+        try:
+            ct_res = _ct.run_kem(so_path, param_set, kp, en, de)
+            for op, v in ct_res['stages'].items():
+                tally['ct:' + op] = v
+        except _ct.Unavailable as exc:
+            # Asked for and not run is not a pass: a stage that fails, saying why.
+            ct_res = {'unavailable': str(exc)}
+            tally['ct:unavailable'] = (0, 1)
+
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     if verbose:
@@ -6500,6 +6513,18 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         if acc_res:
             print(f"  {'PASS' if acc_res['ok'] else 'FAIL'}  accumulated "
                   f"{int(acc_res['ok'])}/1  {acc_res['detail']}")
+        if ct_res and 'unavailable' in ct_res:
+            print(f"  FAIL  constant time: could not run ({ct_res['unavailable']})")
+        elif ct_res:
+            for op, (p, t) in ct_res['stages'].items():
+                print(f"  {'PASS' if p == t else 'FAIL'}  ct:{op:7s} {p}/{t}  no secret-dependent "
+                      f"branch or memory access (Valgrind memcheck)")
+                for lk in ct_res['leaks'][op][:3]:
+                    print(f"        \u2717 {lk['kind']} in {lk['function']} "
+                          f"({lk['count']} report(s))")
+            if ct_res.get('divisions'):
+                print(f"        division instructions (not checked for timing): "
+                      f"{', '.join(sorted(ct_res['divisions']))}")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
@@ -6510,6 +6535,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
             'keycheck': keycheck, 'edge': edge_res, 'accumulated': acc_res,
+            'constant_time': ct_res,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 
