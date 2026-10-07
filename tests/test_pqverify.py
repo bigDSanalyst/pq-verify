@@ -788,7 +788,7 @@ def test_unauditable_kem_library_fails_the_gate(tmp_path):
     so = tmp_path / "empty.so"
     so.write_bytes(b"\x7fELF")
     rpt = tmp_path / "kem.json"
-    code, out = _cli("--audit-kem", str(so), "ML-KEM-768",
+    code, out = _cli("--audit-kem", str(so), "ML-KEM-768", "--accumulated", "0",
                      "--json", str(rpt), "--fail-on-finding")
     assert code == 1
     doc = _json.loads(rpt.read_text())
@@ -2409,7 +2409,7 @@ def test_audit_kem_feeds_nist_invalid_keys(tmp_path, variant, ek, dk):
     from pq_verify.core import pqverify_audit_kem
     from pq_verify.report import to_json_kem
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", accumulated=0)
     for stage, want in (("ekCheck", ek), ("dkCheck", dk)):
         m = r["keycheck"][stage]
         got = (r["detail"][stage][0], m["accepted_invalid"], m["rejected_valid"])
@@ -2427,14 +2427,14 @@ def test_audit_kem_feeds_nist_invalid_keys(tmp_path, variant, ek, dk):
 
 def test_accepting_invalid_keys_fails_the_gate(tmp_path):
     so = _stub_kem(tmp_path, None)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--fail-on-finding")
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--fail-on-finding")
     assert code == 1
     assert "accepted 5 invalid key(s)" in out
 
 
 def test_kem_symbol_flags_override_detection(tmp_path):
     so = _stub_kem(tmp_path, None)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768",
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0",
                      "--kem-decaps", "stub_kem_dec",
                      "--kem-keypair", "stub_kem_keypair_derand",
                      "--kem-encaps", "stub_kem_enc_derand")
@@ -3337,7 +3337,7 @@ def test_audit_kem_runs_the_edge_cases(tmp_path, variant, ek_ok):
     from pq_verify.core import pqverify_audit_kem
     from pq_verify.report import to_json_kem
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", accumulated=0)
     assert r["detail"]["edgeEk"] == (ek_ok, 892)
     doc = to_json_kem(r, param_set="ML-KEM-768")
     text = " ".join(doc["findings"])
@@ -3345,7 +3345,8 @@ def test_audit_kem_runs_the_edge_cases(tmp_path, variant, ek_ok):
     assert "edgeEk" not in text or "NIST" not in text.split("edgeEk")[1].split("stage")[0]
     assert doc["edge"]["vectors"].startswith("Wycheproof ")
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", edge=False)
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", edge=False,
+                               accumulated=0)
     assert "edgeEk" not in r["detail"]
 
 
@@ -3808,6 +3809,7 @@ def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0):
 
 def _audit_shim(path, **kw):
     from pq_verify.dsa_audit import pqverify_audit_dsa
+    kw.setdefault("accumulated", 0)        # tested on its own below
     with contextlib.redirect_stdout(io.StringIO()):
         return pqverify_audit_dsa(path, "ML-DSA-65", **kw)
 
@@ -3922,7 +3924,7 @@ def test_dsa_report_names_not_applicable_stages_and_first_failures():
 
 def test_audit_dsa_cli_gates_and_rejects_bad_arguments(tmp_path):
     path, keep = _dsa_shim(tmp_path, verify=lambda pk, m, sig: True)
-    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--fail-on-finding",
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--accumulated", "0", "--fail-on-finding",
                      "--json", str(tmp_path / "r.json"))
     assert code == 1 and "FAILING: ML-DSA audit FINDINGS PRESENT" in out
     import json
@@ -3931,7 +3933,7 @@ def test_audit_dsa_cli_gates_and_rejects_bad_arguments(tmp_path):
     assert doc["artifact"]["bound"] is True
     code, out = _cli("--audit-dsa", path, "ML-DSA-99")
     assert code == 2
-    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--dsa-symbol", "bogus=x")
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--accumulated", "0", "--dsa-symbol", "bogus=x")
     assert code == 2
 
 
@@ -3944,7 +3946,8 @@ def test_dsa_vendor_rows_and_mutants_are_well_formed():
         assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
         assert set(row["results"]) == set(row["sets"]) == set(row["not_applicable"])
         for ps in row["sets"]:
-            assert set(row["results"][ps]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES)
+            assert set(row["results"][ps]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES
+                                                  + mod.ACC_STAGES)
             assert row["results"][ps]["keyGen"] == [25, 25]
         assert row["mutants"], row["library"]
         for m in row["mutants"]:
@@ -4639,7 +4642,7 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
     import json as _json
     so = _crash_kem(tmp_path)
     rpt = tmp_path / "r.json"
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--json", str(rpt))
     # a null write is SIGSEGV on Linux; macOS may deliver SIGBUS
     sig = "SIGSEGV" if "SIGSEGV" in out else "SIGBUS"
     assert code == 1 and sig in out
@@ -4650,7 +4653,7 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
 
 def test_a_hanging_library_times_out(tmp_path):
     so = _crash_kem(tmp_path, hang=True)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--audit-timeout", "3")
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--audit-timeout", "3")
     assert code == 1 and "did not finish within 3 s" in out
 
 
@@ -4658,7 +4661,7 @@ def test_the_artifact_binds_every_object_the_audit_loaded(tmp_path):
     import json as _json, os
     so = _stub_kem(tmp_path, None)
     rpt = tmp_path / "r.json"
-    _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--json", str(rpt))
     a = _json.loads(rpt.read_text())["artifact"]
     if a.get("loaded_objects") is None:
         pytest.skip("no /proc/self/maps on this platform")
@@ -5534,3 +5537,16 @@ def test_accumulated_cli_validates_the_count():
     assert code == 2 and "no 123-case digest" in out
     code, out = _cli("--accumulated", "100")
     assert code == 2 and "does nothing without" in out
+
+
+def test_dsa_audit_runs_the_accumulated_cases_through_the_vendor(tmp_path):
+    """The audit's own accumulated stage: CCTV's 100-case ML-DSA digest
+    through the vendor's keypair/sign/verify, reported with its source."""
+    pytest.importorskip("dilithium_py")
+    from pq_verify.report import to_json_dsa
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path, edge=False, accumulated=100)
+    assert r["detail"]["accumulated"] == (1, 1), r["accumulated"]
+    assert "CCTV" in r["accumulated"]["source"]
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert doc["accumulated"]["ok"] is True and doc["stages"]["accumulated"]["total"] == 1

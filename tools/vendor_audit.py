@@ -54,6 +54,7 @@ DSA_BEGIN, DSA_END = "<!-- vendor-audits-dsa:begin -->", "<!-- vendor-audits-dsa
 DSA_STAGES = ("keyGen", "sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGenMu",
               "sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu")
 DSA_EDGE_STAGES = ("edge:sigVerify", "edge:sigGen", "edge:edgeLength")
+ACC_STAGES = ("accumulated",)        # pq_verify/accumulated.py, every scheme
 DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa")
 HBS_BEGIN, HBS_END = "<!-- vendor-audits-hbs:begin -->", "<!-- vendor-audits-hbs:end -->"
 HBS_BUILDS = ("hash-sigs", "xmss-reference")
