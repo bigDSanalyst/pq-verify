@@ -29,10 +29,14 @@ on:
 permissions:
   contents: read
 
+# The runner image is pinned, not ubuntu-latest: these pinned results depend on
+# the toolchain that builds each library (gcc, OpenSSL). Moving to a new image
+# is a deliberate change in its own PR, re-recording any row that moves.
+
 jobs:
   audit:
     name: vendor audits (pinned libraries)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

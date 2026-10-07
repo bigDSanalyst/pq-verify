@@ -45,8 +45,12 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ## Proven (all tested on commodity hardware, Google Colab CPU)
 
-- **160/160** self-test across 6 field-native engines, 6 phases — in an
-  environment with every optional dependency present. Where one is missing the
+- **160/160** self-test across 6 field-native engines, 6 phases, of which
+  **54 verify PQC directly** (FIPS 203/204/205 NTTs, zetas, parameters,
+  Freivalds, Coq) and 13 check the harness itself; the other 93 are classical
+  and research engines being realigned toward post-quantum work (see
+  [Engines and where they are heading](#engines-and-where-they-are-heading)) —
+  in an environment with every optional dependency present. Where one is missing the
   dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
   what it needed. It is never counted as a pass, and never as a failure either
 - **240/240** NIST ACVP ML-KEM vectors — keyGen + encaps + decaps byte-exact, KeyCheck bool-exact
@@ -273,6 +277,24 @@ report says so rather than implying otherwise; see
 
 ---
 
+## Engines and where they are heading
+
+Every self-suite check is labelled with a track, printed per track in the
+summary and recorded in the JSON report (`track`, `realigns_to`, `tracks`).
+Only the PQC track verifies what a FIPS 203/204/205 implementation computes;
+the others are exact checks of other things, and none of them is counted as
+PQC evidence.
+
+| Track | Checks | What it verifies today | Being realigned toward |
+|---|---|---|---|
+| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): its NTT mod q = 12289, n = 512/1024 |
+| Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
+| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts, SafeCurves | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields), the ECDH half of **hybrid KEMs** |
+| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | mod-p Hasse–Witt test vectors for isogeny schemes (SQIsign); correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations |
+
+"Being realigned toward" is a direction, not a capability: until an engine
+checks a post-quantum implementation, it is reported under its own track.
+
 ## Architecture — six field-native engines
 
 pq-verify does not encode cryptographic arithmetic as generic boolean SAT and
@@ -457,8 +479,18 @@ in NIST's ACVP layout — same suites, groups and field names, every interface
 context lengths, implicit-rejection ciphertexts, invalid keys and invalid
 signatures — so an ACVP harness answers it unchanged. Verification re-derives
 the questions, confirms their `promptId` matches the one issued, and computes
-every expected answer at that moment. ML-KEM, ML-DSA and all twelve SLH-DSA
-sets are supported.
+every expected answer at that moment. ML-KEM, ML-DSA, all twelve SLH-DSA
+sets and every SP 800-208 LMS pairing (`LMS_SHA256_M32_H10/LMOTS_SHA256_N32_W4`
+and so on) are supported.
+
+LMS is where black-box testing matters most: firmware-signing keys live in
+HSMs that will not export a key or sign at a chosen leaf. Its sigGen questions
+are answered the way ACVP asks — the responder signs with **its own key** and
+reports the public key — so each signature is verified under that key rather
+than compared, and **no leaf may sign twice under one key anywhere in the
+response**: a one-time key used twice is reported, from outside the box. keyGen
+and sigVer questions are posed where pq-verify can build the tree (up to about
+3 million hash calls); larger sets, such as height 20, get sigGen alone.
 
 A passing fresh response proves the responder computed the standard correctly
 on inputs nobody had seen. Neither kind proves **which binary did it**: there

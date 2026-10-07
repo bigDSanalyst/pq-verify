@@ -4639,9 +4639,11 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
     so = _crash_kem(tmp_path)
     rpt = tmp_path / "r.json"
     code, out = _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
-    assert code == 1 and "SIGSEGV" in out
+    # a null write is SIGSEGV on Linux; macOS may deliver SIGBUS
+    sig = "SIGSEGV" if "SIGSEGV" in out else "SIGBUS"
+    assert code == 1 and sig in out
     d = _json.loads(rpt.read_text())
-    assert d["status"] == "CANNOT VERIFY" and "SIGSEGV" in d["findings"][0]
+    assert d["status"] == "CANNOT VERIFY" and sig in d["findings"][0]
     assert d["artifact"]["isolation"] == "child process"
 
 
@@ -4691,8 +4693,11 @@ def test_symbol_discovery_sees_ifunc_and_weak_exports(tmp_path):
     """CPU-dispatching libraries export their entry points as GNU IFUNCs
     (nm type 'i'); only 'T' used to be read, so they had no symbols at all."""
     import shutil, subprocess
+    import sys
     if not (shutil.which("gcc") and shutil.which("nm")):
         pytest.skip("gcc/nm not available")
+    if not sys.platform.startswith("linux"):
+        pytest.skip("GNU IFUNC is an ELF feature")
     from pq_verify.dsa_audit import exported_symbols
     src = tmp_path / "f.c"
     src.write_text("static int real(void){return 1;}\n"
@@ -4763,3 +4768,225 @@ def test_a_mutant_must_add_a_failure_the_library_does_not_already_have(tmp_path,
     with contextlib.redirect_stdout(io.StringIO()):
         assert va._check_mutants(row, tmp_path, tmp_path, lambda s, i: "x",
                                  lambda so: new) == 0
+
+
+def test_workflows_pin_their_runner_image():
+    """ubuntu-latest moves under us (Ubuntu 26 from 2026-10-19): a new gcc or
+    OpenSSL would change what the pinned vendor rows were built with, and a
+    reproducible result must name the image it ran on."""
+    import pathlib, re
+    wf = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
+    if not wf.is_dir():
+        pytest.skip("no workflows in this layout")
+    floating = [f"{f.name}: {m}" for f in sorted(wf.glob("*.yml"))
+                for m in re.findall(r"runs-on:\s*(\S+)", f.read_text())
+                if m.endswith("-latest")]
+    assert not floating, floating
+
+
+# ----------------------------------------------------------------------
+# LMS in the prompt/response path: an HSM signs with its own key
+# ----------------------------------------------------------------------
+
+_LMS_SET = "LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1"
+
+
+def _answer_lms(prompt, reuse=False, own_seed=b"\x07" * 32):
+    """A responder: computes keyGen and sigVer, and signs sigGen messages with
+    its OWN key at sequential leaves (or, with reuse, leaf 0 twice)."""
+    from pq_verify import hbs as H
+    suites = []
+    for s in prompt["suites"]:
+        groups = []
+        for g in s["testGroups"]:
+            t_, o_ = H.LMS_BY_NAME[g["lmsMode"]], H.LMOTS_BY_NAME[g["lmOtsMode"]]
+            out = {"tgId": g["tgId"], "tests": []}
+            if s["mode"] == "sigGen":
+                tree = H.LMSTree(t_, o_, own_seed, b"\x01" * 16)
+                out["publicKey"] = tree.public_key.hex()
+            for i, t in enumerate(g["tests"]):
+                a = {"tcId": t["tcId"]}
+                if s["mode"] == "keyGen":
+                    a["publicKey"] = H.LMSTree(t_, o_, bytes.fromhex(t["seed"]),
+                                               bytes.fromhex(t["i"])).public_key.hex()
+                elif s["mode"] == "sigGen":
+                    q = 0 if reuse and i < 2 else i
+                    a["signature"] = tree.sign(bytes.fromhex(t["message"]), q,
+                                               bytes(H.LMOTS[o_][2])).hex()
+                else:
+                    a["testPassed"] = H.lms_verify(bytes.fromhex(g["publicKey"]),
+                                                   bytes.fromhex(t["message"]),
+                                                   bytes.fromhex(t["signature"]))
+                out["tests"].append(a)
+            groups.append(out)
+        suites.append({"suite": s["suite"], "testGroups": groups})
+    return {"promptId": prompt["promptId"], "parameterSet": prompt["parameterSet"],
+            "suites": suites}
+
+
+def test_fresh_lms_round_trip_and_leaf_reuse(tmp_path):
+    import json as _json
+    key, prompt = _fresh_round(tmp_path, _LMS_SET, count=1)
+    assert {s["suite"] for s in prompt["suites"]} == {
+        "LMS-keyGen-1.0", "LMS-sigGen-1.0", "LMS-sigVer-1.0"}
+    good = tmp_path / "good.json"
+    good.write_text(_json.dumps(_answer_lms(prompt)))
+    code, out = _cli("--verify-response", str(good), "--fresh-key", str(key))
+    assert code == 0 and "RESULT: VERIFIED" in out, out
+    bad = tmp_path / "reuse.json"
+    bad.write_text(_json.dumps(_answer_lms(prompt, reuse=True)))
+    code, out = _cli("--verify-response", str(bad), "--fresh-key", str(key))
+    assert code == 1 and "a one-time key used twice" in out, out
+
+
+def test_lms_siggen_answer_must_be_the_groups_key_type(tmp_path):
+    """A signature under a key of another parameter set does not answer the
+    question, however valid it is."""
+    import json as _json
+    key, prompt = _fresh_round(tmp_path, _LMS_SET, count=1)
+    doc = _answer_lms(prompt)
+    from pq_verify import hbs as H
+    other = H.LMSTree(H.LMS_BY_NAME["LMS_SHA256_M32_H5"],
+                      H.LMOTS_BY_NAME["LMOTS_SHA256_N32_W2"], b"\x07" * 32, b"\x01" * 16)
+    for s, sq in zip(doc["suites"], prompt["suites"]):
+        if sq["mode"] == "sigGen":
+            s["testGroups"][0]["publicKey"] = other.public_key.hex()
+    p = tmp_path / "r.json"
+    p.write_text(_json.dumps(doc))
+    code, out = _cli("--verify-response", str(p), "--fresh-key", str(key))
+    assert code == 1 and "publicKey is not a LMS_SHA256_M32_H5/LMOTS_SHA256_N32_W1" in out
+
+
+def test_large_lms_sets_get_siggen_questions_only():
+    """An HSM key of height 20 cannot be built in Python to pose keyGen or
+    sigVer questions; the black-box part, sigGen, still applies."""
+    from pq_verify.fresh import build
+    q, _ = build("LMS_SHA256_M32_H20/LMOTS_SHA256_N32_W8", b"\x01" * 32, 1)
+    assert [s["suite"] for s in q] == ["LMS-sigGen-1.0"]
+
+
+def test_pinned_lms_prompt_is_offered():
+    from pq_verify.response import available_parameter_sets, build_prompt
+    sets = available_parameter_sets()
+    lms = [s for s in sets if s.startswith("LMS_")]
+    assert lms, sets
+    doc = build_prompt(lms[0])
+    assert any(g.get("groupAnswerFields") == ["publicKey"]
+               for s in doc["suites"] if s["mode"] == "sigGen" for g in s["testGroups"]) \
+        or all(s["mode"] != "sigGen" for s in doc["suites"])
+
+
+def test_symbol_listing_strips_the_mach_o_underscore(monkeypatch):
+    """Mach-O prefixes every C symbol with '_'; ctypes looks it up without."""
+    import pq_verify.symbols as S
+    monkeypatch.setattr(S.sys, "platform", "darwin")
+    monkeypatch.setattr(S, "_nm", lambda args: "0000000000003f50 T _k768_keypair_derand\n"
+                                               "0000000000003f60 T _k768_dec\n"
+                                               "                 U _memcpy\n")
+    assert S.exported_functions("lib.dylib") == ["k768_keypair_derand", "k768_dec"]
+
+
+def test_engine_flags_that_do_not_travel_are_dropped(monkeypatch, tmp_path):
+    """-lrt does not exist on macOS and Apple clang rejects -march=native; an
+    engine that cannot build is a skipped check, so the flags must yield."""
+    import pq_verify.core as core
+    calls = []
+
+    class P:
+        def __init__(self, rc):
+            self.returncode, self.stdout, self.stderr = rc, "", ""
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return P(1 if "-march=native" in argv else 0)
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    monkeypatch.setattr(core.sys, "platform", "darwin")
+    proc = core._cc("gcc", "-O3 -march=native -shared -fPIC -lm -lrt", "o.so", "s.c")
+    assert proc.returncode == 0
+    assert all("-lrt" not in a for a in calls)
+    # native tuning is kept under its arm64 spelling, not dropped
+    assert "-march=native" not in calls[-1] and "-mcpu=native" in calls[-1]
+    assert core.ENGINE_FLAGS["o.so"]["native"] is True
+
+
+def test_linux_engine_flags_are_unchanged(monkeypatch):
+    """On Linux the engines build with exactly the flags they always had."""
+    import pq_verify.core as core
+    calls = []
+
+    class P:
+        returncode, stdout, stderr = 0, "", ""
+    monkeypatch.setattr(core.subprocess, "run", lambda argv, **k: calls.append(argv) or P())
+    monkeypatch.setattr(core.sys, "platform", "linux")
+    core._cc("gcc", "-O3 -march=native -shared -fPIC -lm -lrt", "o.so", "s.c")
+    assert calls == [["gcc", "-O3", "-march=native", "-shared", "-fPIC", "-lm", "-lrt",
+                      "-o", "o.so", "s.c"]]
+
+
+def test_engine6_skip_names_are_the_checks_each_audit_records():
+    """When an Engine 6 engine cannot be built, its checks are recorded as
+    skipped under these names, so the list must be what the audits run."""
+    from pq_verify import core
+    eng = core.compile_engine6()
+    core.bind_engine6(eng)
+    fns = {"rank2": core.audit_engine6_rank2, "genus2": core.audit_engine6_genus2,
+           "quintic": core.audit_engine6_quintic, "genus4": core.audit_engine6_genus4}
+    for key, (title, names) in core._E6_CHECKS.items():
+        if not eng.get(key):
+            pytest.skip(f"engine6/{key} not built here")
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = fns[key](eng[key])
+        assert r.engine == title
+        got = [t["name"] for t in r.tests]
+        assert len(got) == len(names), (key, got)
+        assert all(g.startswith(n) for g, n in zip(got, names)), (key, got, names)
+
+
+def test_an_engine6_build_failure_is_degraded_not_silent(monkeypatch):
+    """compile_engine6 used to print a failure and register nothing: the
+    integrity report then said every engine built while four checks were
+    gone from the suite."""
+    from pq_verify import core
+
+    class P:
+        returncode, stdout, stderr = 1, "", "error: no matching function"
+    monkeypatch.setattr(core, "_cc", lambda *a, **k: P())
+    before = list(core.DEGRADED["engines"])
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            eng = core.compile_engine6()
+        assert all(v is None for v in eng.values())
+        assert "engine6/genus2" in core.DEGRADED["engines"]
+        assert "no matching function" in core.ENGINE_ERRORS["engine6/genus2"]
+    finally:
+        core.DEGRADED["engines"][:] = before
+
+
+def test_every_self_suite_check_has_a_track():
+    """The headline counts PQC checks only; every other engine is reported
+    under its track with the post-quantum work it is being realigned toward.
+    A new audit nobody classified fails here instead of joining a headline."""
+    from pq_verify.core import main as run_selftest, engine_track, track_totals
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = run_selftest(quick=True)
+    for r in results:
+        track, target = engine_track(r.engine)
+        assert track in ("pqc", "harness", "classical", "research")
+        if track in ("classical", "research"):
+            assert target, f"{r.engine} has no realignment target"
+    totals = track_totals(results)
+    assert totals["pqc"][1] + totals["pqc"][2] > 0
+    assert sum(v[1] + v[2] for v in totals.values()) == sum(len(r.tests) for r in results)
+
+
+def test_cpp_engines_build_as_cpp17(monkeypatch):
+    import pq_verify.core as core
+    seen = []
+
+    class P:
+        returncode, stdout, stderr = 0, "", ""
+    monkeypatch.setattr(core.subprocess, "run", lambda argv, **k: seen.append(argv) or P())
+    core._cc("g++", "-O3 -shared -fPIC -lm", "o.so", "s.cpp")
+    core._cc("gcc", "-O3 -shared -fPIC -lm", "o.so", "s.c")
+    assert "-std=c++17" in seen[0] and "-std=c++17" not in seen[1]

@@ -23,7 +23,7 @@ concurrency:
 jobs:
   test:
     name: py${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -109,7 +109,7 @@ jobs:
   # the job the day they are introduced.
   self-suite:
     name: self-suite (${{ matrix.profile }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -184,9 +184,60 @@ jobs:
           sys.exit(1 if problems else 0)
           PY
 
+  # macOS: Mach-O symbols (nm -gU, leading underscore), dyld instead of
+  # /proc for the loaded-object binding, Apple clang for the engines. Until
+  # this job passes, the package declares Linux only.
+  macos:
+    name: macOS (Apple silicon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints-reference.txt ".[dev]" pytest
+      - name: Engine builds (a failure is annotated with the compiler's words)
+        run: |
+          python - <<'PY'
+          import contextlib, io
+          from pq_verify import core
+          with contextlib.redirect_stdout(io.StringIO()):
+              core.compile_all(); core.compile_engine6()
+          for name, why in core.ENGINE_ERRORS.items():
+              msg = why.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::warning title=engine {name} did not build::{msg}")
+          print("engines unavailable:", sorted(core.ENGINE_ERRORS) or "none")
+          for so, info in sorted(core.ENGINE_FLAGS.items()):
+              lost = info["native_requested"] and not info["native"]
+              print(f"::{'warning' if lost else 'notice'} title=engine {so}::built with "
+                    f"{info['flags']}" + (" -- native CPU tuning refused by the compiler"
+                                          if lost else ""))
+          PY
+      - name: Test suite (not slow)
+        if: success() || failure()
+        run: python -m pytest tests/ -q -m "not slow" --junitxml="$RUNNER_TEMP/junit.xml"
+      - name: Failing tests as annotations
+        if: failure()
+        run: python tools/ci_annotate.py "$RUNNER_TEMP/junit.xml"
+      - name: NIST ACVP — 1566 pinned vectors
+        if: success() || failure()
+        run: |
+          python -m pq_verify.cli --acvp-all --json "$RUNNER_TEMP/acvp.json"
+          python -c "import json,os; d = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'acvp.json'))); s = d['suites']; assert all(v['ran'] for v in s.values()) and len(s) == 4, s; print(d['summary'])"
+      - name: LMS/HSS + XMSS/XMSS^MT, default budget
+        if: success() || failure()
+        run: python -m pq_verify.cli --lms-xmss
+      - name: Self-suite (quick, gated)
+        if: success() || failure()
+        run: python -m pq_verify.cli --quick
+
   wheel:
     name: wheel installs and runs at the floor
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

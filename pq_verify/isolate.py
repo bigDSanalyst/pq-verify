@@ -52,6 +52,8 @@ def in_process():
 
 def _mapped_objects():
     """{path: inode} for every file-backed shared object mapped right now."""
+    if sys.platform == "darwin":
+        return _dyld_images()
     out = {}
     try:
         with open("/proc/self/maps") as fh:
@@ -65,6 +67,29 @@ def _mapped_objects():
     except OSError:
         return None                   # not Linux: nothing to report
     return out
+
+
+def _dyld_images():
+    """macOS: every image dyld has loaded (there is no /proc), by path."""
+    import ctypes
+    try:
+        libc = ctypes.CDLL(None)
+        libc._dyld_image_count.restype = ctypes.c_uint32
+        libc._dyld_get_image_name.restype = ctypes.c_char_p
+        libc._dyld_get_image_name.argtypes = [ctypes.c_uint32]
+        out = {}
+        for i in range(libc._dyld_image_count()):
+            name = libc._dyld_get_image_name(i)
+            if not name:
+                continue
+            path = os.fsdecode(name)
+            try:
+                out[path] = os.stat(path).st_ino
+            except OSError:
+                out[path] = 0          # in the shared cache, not on disk
+        return out
+    except (OSError, AttributeError):
+        return None
 
 
 def _sha256(path):

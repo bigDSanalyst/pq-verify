@@ -232,7 +232,8 @@ def build_parser():
                         "--verify-response: the key to recompute the answers from")
     p.add_argument("--fresh-count", metavar="N", type=int,
                    help="with --emit-prompt --fresh-key: tests per group "
-                        "(default 8 ML-KEM, 4 ML-DSA, 1 SLH-DSA)")
+                        "(default 8 ML-KEM, 4 ML-DSA, 1 SLH-DSA, 2 LMS; "
+                        "LMS sigGen and sigVer get four times that)")
     p.add_argument("--prompt-out", metavar="FILE",
                    help="where --emit-prompt writes (default "
                         "pq-verify-prompt-<PARAM_SET>.json; .gz is honoured)")

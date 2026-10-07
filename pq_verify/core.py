@@ -631,6 +631,50 @@ def integrity_report(verbose=True):
 
 _ENGINES_ATTEMPTED = False
 
+# Why an engine did not build, by name: the compiler's own words, for the
+# integrity report and CI annotations (a bare "compilation failed" on another
+# platform gives nobody anything to fix).
+ENGINE_ERRORS = {}
+
+
+# The flags each engine was actually built with, by output file: shows
+# whether native CPU tuning is in effect on this machine.
+ENGINE_FLAGS = {}
+
+
+def _cc(compiler, flags, out, src):
+    """Compile one engine, keeping its native tuning wherever the compiler
+    allows. The flags are written for gcc on Linux, where they are used
+    unchanged. Two do not travel: -lrt (macOS has no librt; clock_gettime is
+    in libc) and -march=native, which Apple clang on arm64 may reject -- its
+    spelling there is -mcpu=native, tried next, so Apple silicon still gets a
+    build tuned to its own CPU. Only if both are refused is the engine built
+    without CPU tuning: the engines are exact integer arithmetic, so that can
+    cost speed but never change an answer, and an engine that does not build
+    at all is worse."""
+    flags = flags.split()
+    # The C++ engines are C++11 (constexpr, alias declarations). g++ already
+    # defaults to C++17; Apple clang++ defaults to C++98, where they do not
+    # compile. Same code, same optimisation, either way.
+    if compiler in ("g++", "c++", "clang++") and not any(f.startswith("-std=") for f in flags):
+        flags.insert(0, "-std=c++17")
+    if sys.platform == "darwin":
+        flags = [f for f in flags if f != "-lrt"]
+    attempts = [flags]
+    if "-march=native" in flags:
+        attempts.append([("-mcpu=native" if f == "-march=native" else f) for f in flags])
+        attempts.append([f for f in flags if f != "-march=native"])
+    for used in attempts:
+        proc = subprocess.run([compiler, *used, '-o', out, src],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            ENGINE_FLAGS[os.path.basename(out)] = {
+                "flags": " ".join(used),
+                "native_requested": len(attempts) > 1,
+                "native": any(f in used for f in ("-march=native", "-mcpu=native"))}
+            break
+    return proc
+
 
 def compile_all():
     global _ENGINES_ATTEMPTED
@@ -652,8 +696,7 @@ def compile_all():
         # A list argv rather than os.system: no shell to quote for, and the
         # compiler's diagnostics are captured instead of thrown at /dev/null,
         # where a build failure looked identical to a missing compiler.
-        proc = subprocess.run(['gcc', *flags.split(), '-o', so_path, c_path],
-                              capture_output=True, text=True)
+        proc = _cc('gcc', flags, so_path, c_path)
         if proc.returncode == 0:
             engines[name] = ctypes.CDLL(so_path)
             print(f"  {_OK} {name}")
@@ -665,6 +708,7 @@ def compile_all():
                 print(f"      {_l[:160]}")
             engines[name] = None
             DEGRADED['engines'].append(name)
+            ENGINE_ERRORS[name] = "\n".join(_why[-6:])[:1500]
     if DEGRADED['engines']:
         print(f"  \u26a0  {len(DEGRADED['engines'])} engine(s) unavailable — "
               f"this run cannot provide full coverage")
@@ -1483,6 +1527,83 @@ def coq_check(path, theorems=None, timeout=120):
 # REPORT
 # ================================================================
 
+# What each self-suite audit is FOR. Only the "pqc" track verifies anything a
+# FIPS 203/204/205 implementation computes; the others are engines that run
+# real, exact checks of other things, each with the post-quantum work it is
+# being realigned toward. The headline names the PQC count; the rest is
+# reported beside it, never folded in.
+#   (name prefix, track, realignment target or None)
+ENGINE_TRACKS = (
+    ('Z_3329 (Kyber)',         'pqc', None),
+    ('Z_8380417 (Dilithium)',  'pqc', None),
+    ('Kyber Scale',            'pqc', None),
+    ('Kyber Keygen',           'pqc', None),
+    ('Exhaustive Inverses',    'pqc', None),
+    ('Twiddle Factors',        'pqc', None),
+    ('Boundary Values',        'pqc', None),
+    ('FIPS 203 Parameters',    'pqc', None),
+    ('FIPS 204 Parameters',    'pqc', None),
+    ('FIPS 205 Parameters',    'pqc', None),
+    ('Kyber Roundtrip',        'pqc', None),
+    ('Full NTT Verification',  'pqc', None),
+    ('Dilithium Full NTT',     'pqc', None),
+    ('Freivalds NTT Check',    'pqc', None),
+    ('Batch Verification API', 'pqc', None),
+    ('FIPS 203 Zetas',         'pqc', None),
+    ('FIPS 204 Zetas',         'pqc', None),
+    ('Coq Certificate',        'pqc', None),
+    ('Stress: Z_3329',         'pqc', None),
+    ('Stress: Z_8380417',      'pqc', None),
+    ('UNSAT Detection',        'harness', None),
+    ('Reproducibility Hash',   'harness', None),
+    ('Coq Daemon',             'harness', None),
+    ('Adversarial Suite',      'harness', None),
+    ('Stress: Malformed Input', 'harness', None),
+    ('GF(2) Null-Space',       'classical', 'Classic McEliece: systematic-form public keys over GF(2)'),
+    ('GF(2)',                  'classical', 'HQC: quasi-cyclic arithmetic over GF(2)[x]/(x^n - 1)'),
+    ('Stress: GF(2)',          'classical', 'HQC / Classic McEliece'),
+    ('AES S-box Affine',       'classical', 'GF(2^m) arithmetic for Classic McEliece and HQC Reed-Solomon'),
+    ('Cubic B(a,b) + ECC',     'classical', 'the ECDH half of hybrid KEMs (X25519MLKEM768, ...)'),
+    ('Curve ',                 'classical', 'the ECDH half of hybrid KEMs'),
+    ('SafeCurves Database',    'classical', 'curve validation for hybrid KEMs'),
+    ('Conformity Gradient',    'research', 'correctness checks for NTT/FFT side-channel countermeasures'),
+    ('CFL Front-End',          'research', 'standards constraints as SAT/QBF obligations'),
+    ('DQBF Pipeline',          'research', 'standards constraints as SAT/QBF obligations'),
+    ('C CFL Pipeline',         'research', 'standards constraints as SAT/QBF obligations'),
+    ('Engine 6',               'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
+    ('Stress: Engine 6',       'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
+)
+
+TRACK_TITLES = {'pqc': 'PQC (FIPS 203/204/205)', 'harness': 'harness integrity',
+                'classical': 'classical (being realigned)',
+                'research': 'research (being realigned)'}
+
+
+def engine_track(name):
+    """(track, realignment target) for an audit name; the longest matching
+    prefix wins ('GF(2) Null-Space' over 'GF(2)'). KeyError if unknown: a
+    check nobody has classified must not slip into any headline."""
+    best = None
+    for prefix, track, target in ENGINE_TRACKS:
+        if name.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, track, target)
+    if best is None:
+        raise KeyError(f"self-suite audit {name!r} has no track in ENGINE_TRACKS")
+    return best[1], best[2]
+
+
+def track_totals(results):
+    """{track: [passed, run, skipped]} over a self-suite result list."""
+    out = {t: [0, 0, 0] for t in TRACK_TITLES}
+    for r in results:
+        p, t, _c = r.summary()
+        tr, _ = engine_track(r.engine)
+        out[tr][0] += p
+        out[tr][1] += t
+        out[tr][2] += r.n_skipped()
+    return out
+
+
 def print_report(results):
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     print(f"\n{'='*70}")
@@ -1517,6 +1638,9 @@ def print_report(results):
     print(f"  OVERALL: {total_p}/{total_t} tests passed"
           + (f"  ({total_s} SKIPPED \u2014 could not run, see integrity below)"
              if total_s else ""))
+    for tr, (tp, tt, ts) in track_totals(results).items():
+        print(f"    {TRACK_TITLES[tr]:32s} {tp}/{tt}"
+              + (f"  ({ts} skipped)" if ts else ""))
     if total_c == 0:
         print(f"  \u2705 No critical findings")
     else:
@@ -1533,11 +1657,15 @@ def save_json(results, filename):
     }
     for r in results:
         p, t, c = r.summary()
+        tr, target = engine_track(r.engine)
         report['engines'].append({
-            'name': r.engine, 'tests': r.tests, 'findings': r.findings,
+            'name': r.engine, 'track': tr, 'realigns_to': target,
+            'tests': r.tests, 'findings': r.findings,
             'summary': {'passed': p, 'total': t, 'critical': c,
                         'skipped': r.n_skipped()}
         })
+    report['tracks'] = {tr: {'passed': v[0], 'total': v[1], 'skipped': v[2]}
+                        for tr, v in track_totals(results).items()}
     with open(filename, 'w') as f:
         json.dump(report, f, indent=2)
     return filename
@@ -3399,7 +3527,14 @@ def main(quick=False):
             print(f"  Running Engine 6 \u2014 {_e6label}...")
             results.append(_e6fn(e6_engines[_e6key])); gc.collect()
         else:
+            # Each check it would have run is recorded as skipped, by name,
+            # so the count stays what the docs say and the gap is visible.
             print(f"  \u26a0 skipping {_e6label} \u2014 engine not compiled")
+            _title, _checks = _E6_CHECKS[_e6key]
+            _r = AuditResult(_title)
+            for _c in _checks:
+                _r.add_skip(_c, f"engine6/{_e6key} did not build on this platform")
+            results.append(_r)
     print("  Running Engine 6 \u2014 CFL front-end (Paper7 context)...")
     results.append(audit_engine6_cfl(e6_engines)); gc.collect()
     print("  Running Engine 6 \u2014 Coq certificate (Conjecture 7)...")
@@ -3822,14 +3957,18 @@ def compile_engine6():
                 os.remove(p)
         with open(c_path, 'w') as f:
             f.write(_decode(blob))
-        proc = subprocess.run([cc, *flags.split(), '-o', so_path, c_path],
-                              capture_output=True, text=True)
+        proc = _cc(cc, flags, so_path, c_path)
         if proc.returncode != 0 or not os.path.exists(so_path):
             print(f'  {_BAD} engine6/{name} — compilation failed')
             _why = (proc.stderr or proc.stdout or '').strip()
             if _why:
                 print('     ' + _why[:200])
             engines[name] = None
+            # Registered like compile_all's engines. It was not: an Engine 6
+            # build failure only printed, its checks vanished from the count,
+            # and the integrity report still said "every engine built".
+            DEGRADED['engines'].append(f'engine6/{name}')
+            ENGINE_ERRORS[f'engine6/{name}'] = _why[-1500:]
             continue
         lib = ctypes.CDLL(so_path)
         # Version magic check for the C++ engines (stale-.so guard)
@@ -4319,6 +4458,29 @@ def audit_engine6_coq():
 # ============================================================
 # RUNNER — Phase 5 of the pq-verify stack
 # ============================================================
+# What each Engine 6 audit records, so an engine that cannot be built still
+# shows its checks -- as skipped -- rather than shrinking the suite.
+# tests/test_pqverify.py holds these to the audits' own titles.
+_E6_CHECKS = {
+    'rank2':   ('Engine 6a: rank-2 Legendre',
+                ['Theorem 1 entry-wise, rank 2', "Riccati U' = -U^2 - Q",
+                 'Lemma 3 / traceless commutator', "Legendre closed form tr(U[U,Q]U')",
+                 'Residues |Res| = 17/4 at z=0,1 (antisymmetric)']),
+    'genus2':  ('Engine 6b: rank-4 genus-2',
+                ['Theorem 1 entry-wise, rank 4',
+                 'tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
+                 'Paper 7 Table 1: Res f2 at z=0,1,2,3', 'Paper 7 Table 1: Res f4 at z=0']),
+    'quintic': ('Engine 6c: rank-4 mirror quintic',
+                ['Theorem 1 entry-wise, rank-4 CY3', 'tr[U,Q]^3 = 0 (Observation 4, CY3)',
+                 'f2(z) matches Paper 7 closed form',
+                 'Conjecture 7: CY3 residue rigidity']),
+    'genus4':  ('Engine 6d: rank-8 genus-4 (NEW)',
+                ['Theorem 1 entry-wise, rank 8',
+                 'Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0',
+                 'Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent']),
+}
+
+
 def run_engine6():
     print()
     print("=" * 70)
@@ -4345,6 +4507,11 @@ def run_engine6():
             results.append(fn(engines[key]))
         else:
             print(f"  ⚠ skipping {label} — engine not compiled")
+            title, checks = _E6_CHECKS[key]
+            r = AuditResult(title)
+            for c in checks:
+                r.add_skip(c, f"engine6/{key} did not build on this platform")
+            results.append(r)
 
     # Stack integration: CFL front-end + Coq certificate
     print("  Running Engine 6 — CFL front-end (CFL→FOL→QBF→router→dispatch)...")
@@ -6149,14 +6316,8 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     lib = _ct.CDLL(so_path)
 
     # ---- locate the three entry points ----
-    try:
-        syms = _sp.run(['nm', '-D', '--defined-only', so_path],
-                       capture_output=True, text=True).stdout
-        # T function, i GNU IFUNC (CPU-dispatched), W weak definition
-        exported = [p[2] for p in (l.split() for l in syms.splitlines())
-                    if len(p) == 3 and p[1] in ('T', 'i', 'W')]
-    except Exception:
-        exported = []
+    from .symbols import exported_functions
+    exported = exported_functions(so_path)
 
     found, ambiguous = _resolve_kem_symbols(
         exported, param_set,
@@ -6664,11 +6825,9 @@ def pqverify_load_so(so_path, func_name='ntt', q=None, n=256, in_place=True,
 
     if fn is None:
         # Show available NTT-related symbols
-        try:
-            out = subprocess.check_output(['nm', '-D', so_path], stderr=subprocess.DEVNULL).decode()
-            ntt_syms = [l.strip() for l in out.splitlines() if 'ntt' in l.lower() or 'NTT' in l]
-            hint = '\n'.join(ntt_syms[:20]) if ntt_syms else '(none found)'
-        except: hint = '(nm not available)'
+        from .symbols import exported_functions
+        ntt_syms = [s for s in exported_functions(so_path) if 'ntt' in s.lower()]
+        hint = '\n'.join(ntt_syms[:20]) if ntt_syms else '(none found, or nm not available)'
         raise AttributeError(
             f"Symbol '{func_name}' not found in {so_path}\n"
             f"Tried: {list(dict.fromkeys(candidates))}\n"
