@@ -539,6 +539,51 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
     return doc
 
 
+def artifact_harness(path, command):
+    """Binding for a harness audit: the harness executable is hashed, and the
+    detail says that the library behind it is not."""
+    a = artifact_bound(path) if path else artifact_unbound(
+        "the harness command runs no file pq-verify could identify")
+    a["harness_command"] = list(command)
+    a["detail"] = ("A Crucible-protocol harness: this file is the harness. The "
+                   "library it wraps is not hashed, and a failure can be the "
+                   "harness's wiring as well as the library's.")
+    return a
+
+
+def to_json_harness_audit(result, artifact=None):
+    """Native schema for pqverify_audit_harness."""
+    doc = _envelope("pq-verify/harness-audit-result", artifact)
+    doc["protocol"] = "crucible-jsonl"
+    for k in ("parameter_set", "implementation", "command", "vectors",
+              "deterministic", "harness_notes", "calls"):
+        doc[k] = result.get(k)
+    doc["status"] = result["status"]
+    doc["verified"] = bool(result.get("verified"))
+    doc["stages"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
+                             for k, v in (result.get("not_applicable") or {}).items()}
+    fails = result.get("failures") or []
+    findings = []
+    if result["status"] == "CANNOT VERIFY":
+        findings.append("cannot verify: " + (result.get("reason") or "nothing checked"))
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            first = next((f for f in fails if f["stage"] == k), None)
+            where = f"; first: {first['case']}: {first['detail']}" if first else ""
+            findings.append(f"{result.get('parameter_set')}: stage {k}: {v[0]}/{v[1]}{where}")
+    doc["failures"] = fails
+    doc["findings"] = findings
+    doc["summary"] = {"checks_passed": result.get("passed", 0),
+                      "checks_total": result.get("total", 0),
+                      "not_applicable": result.get("not_applicable_total", 0),
+                      "findings": len(findings)}
+    doc["scope"] = _scope(result.get("total", 0), result.get("not_applicable_total", 0),
+                          na_why="the protocol or this harness cannot express them")
+    return doc
+
+
 def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
     """Native schema for pqverify_audit_hbs. Not applicable (the library
     does not implement it) and not run (over budget or sampled) are listed

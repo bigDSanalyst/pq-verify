@@ -516,6 +516,65 @@ The first version of the audit missed the range-check mutant (its test key
 changed value mod q, so the norm check refused it); the mutant is why the
 `w + q` case exists.
 
+## Any language, through Crucible-protocol harnesses
+
+`--audit-harness COMMAND PARAM_SET` audits an ML-KEM or ML-DSA implementation
+in any language through a harness that speaks
+[Crucible](https://github.com/symbolicsoft/crucible)'s JSON-line protocol.
+Crucible's harnesses cover Go's `crypto/mlkem`, CIRCL, Bouncy Castle, libcrux,
+AWS-LC, wolfCrypt, liboqs, noble and the Zig standard library.
+
+**What is taken from Crucible: the wire format only.** No Crucible test,
+verdict or exit code is used. Every check is pq-verify's — NIST's ACVP
+vectors, NIST's invalid keys, the Wycheproof/CCTV edge cases — scored by the
+same code as `--audit-kem` / `--audit-dsa`. The harness is untrusted:
+
+| Could have been assumed | What pq-verify does instead |
+|---|---|
+| The harness follows the protocol | It is checked. Crucible's protocol says `ML_DSA_Sign` takes FIPS 204's M′, but its CIRCL and liboqs harnesses sign M with an empty context. Which one a harness uses is settled against a NIST signature, and only what that convention can carry is sent. |
+| The harness is deterministic | Each operation is asked twice with the same inputs. Byte-exact checks a harness cannot be held to are not applicable, never passed. |
+| An error is the library refusing | Only once the harness has accepted its own fresh signature; otherwise CANNOT VERIFY, since none of its rejections can be scored. |
+| A crash, hang, or "unsupported" for an advertised function is a refusal | Never: CANNOT VERIFY. Scored as a refusal it would have passed every invalid-input check. |
+| The harness speaks for the library | Unprovable across a process boundary. The harness file is hashed; the library behind it is pinned only by the harness's own build (here, `go.sum`), and the report says a failure can be the harness's wiring. |
+
+Seed-form decapsulation keys (d ‖ z, which FIPS 203 §7.1 permits, as Go's
+`crypto/mlkem` does) are checked as such: keyGen requires the ek byte-exact
+and dk = d ‖ z, and NIST's expanded-key decapsulation cases are not
+applicable rather than failed.
+
+Crucible's harnesses at [`0522518`](https://github.com/symbolicsoft/crucible/commit/0522518e19559ef39ed1ff23643f52d2ac606084),
+built unmodified with Go 1.26.1 and re-audited in CI by
+`tools/harness_audit.py`:
+
+<!-- harness-audits:begin -->
+| Implementation (harness) | Parameter set | Result | Checks | Not applicable |
+|---|---|---|---|---|
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-512 | CANNOT VERIFY | 0/0 | 0 |
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-768 | **VERIFIED** | 1,468/1,468 | 31 |
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-1024 | **VERIFIED** | 1,734/1,734 | 31 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-512 | **VERIFIED** | 1,488/1,488 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-768 | **VERIFIED** | 1,499/1,499 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-1024 | **VERIFIED** | 1,765/1,765 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-44 | **VERIFIED** | 273/273 | 198 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-65 | **VERIFIED** | 312/312 | 208 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-87 | **VERIFIED** | 335/335 | 207 |
+<!-- harness-audits:end -->
+
+Go's `crypto/mlkem` has no ML-KEM-512, so its harness refuses that set:
+CANNOT VERIFY, not a finding. The CIRCL harness's ML-DSA cases that are not
+applicable are the internal, pre-hash and non-empty-context ones its
+convention cannot carry, and external μ, which the protocol cannot.
+
+Three places where Crucible's protocol and its harnesses disagree, found on
+the first runs:
+
+1. `ML_DSA_Sign` / `ML_DSA_Verify` "message": M′ in the protocol and
+   templates; M with an empty context in the CIRCL and liboqs harnesses.
+2. The verify signature input: `signature` in the README; `sigma` in the
+   test battery and the CIRCL harness. pq-verify sends both.
+3. Determinism: the liboqs harness's `ML_DSA_KeyGen` ignores its seed, so
+   byte-exact checks through it are not applicable.
+
 ## Which implementations can be audited by symbol
 
 | Linkage | Examples | Symbol audit |

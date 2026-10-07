@@ -296,6 +296,19 @@ PQC evidence.
 "Being realigned toward" is a direction, not a capability: until an engine
 checks a post-quantum implementation, it is reported under its own track.
 
+### Any language: Crucible-protocol harnesses
+
+`pq-verify --audit-harness './harness-go-stdlib' ML-KEM-768` audits an
+implementation in any language through a harness speaking
+[Crucible](https://github.com/symbolicsoft/crucible)'s JSON-line protocol,
+with pq-verify's own vectors and verdicts — only the wire format is
+Crucible's. Go's `crypto/mlkem` and Cloudflare CIRCL (ML-KEM and ML-DSA) are
+VERIFIED through Crucible's unmodified harnesses, rebuilt and re-audited in CI.
+A harness is untrusted: its message convention is settled against NIST, its
+determinism is tested, and a crash is CANNOT VERIFY, never a refusal. The
+library behind a harness is not hashed, and the report says so
+([AUDITS.md](AUDITS.md#any-language-through-crucible-protocol-harnesses)).
+
 ### Draft track: FN-DSA (FIPS 206)
 
 `pq-verify --fndsa` checks FN-DSA (Falcon) **verification** ahead of the final

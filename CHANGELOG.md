@@ -5,6 +5,29 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — audit any language through Crucible-protocol harnesses
+
+- **`--audit-harness COMMAND PARAM_SET`** audits an ML-KEM or ML-DSA
+  implementation through a harness speaking Crucible's JSON-line protocol
+  (Go, Java, Rust, JS, Zig ...). Only the wire format is Crucible's: NIST's
+  vectors and invalid keys and the Wycheproof/CCTV edge cases are scored by
+  the same code as `--audit-kem` / `--audit-dsa`. JSON
+  (`pq-verify/harness-audit-result`) and SARIF; the harness file is hashed.
+- The harness is untrusted. A crash, hang or protocol violation is CANNOT
+  VERIFY, never a refusal (as a refusal it would pass every invalid-input
+  check). Determinism is tested: checks a harness cannot be held to are not
+  applicable. Its ML-DSA message convention (M′, or M with an empty context)
+  is settled against a NIST signature. It must accept its own fresh signature
+  before its rejections are scored.
+- Seed-form decapsulation keys (d ‖ z, FIPS 203 §7.1) are checked as such,
+  not failed.
+- `tools/harness_audit.py` rebuilds Crucible's Go `crypto/mlkem` and CIRCL
+  harnesses at a pinned commit with Go 1.26.1 and requires their results in
+  CI: Go ML-KEM-768/1024 and CIRCL ML-KEM-512/768/1024 and ML-DSA-44/65/87
+  VERIFIED.
+- `pq_verify.edge`: a backend may declare inputs it cannot be handed
+  (`accepts`), counted as not applicable.
+
 ### Added — FN-DSA library audit, draft track (FIPS 206)
 
 - **`--audit-fndsa PATH FN-DSA-512|FN-DSA-1024`** audits a vendor's FN-DSA

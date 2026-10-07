@@ -1,0 +1,314 @@
+{
+  "_comment": [
+    "Implementations audited with --audit-harness through Crucible's own harnesses",
+    "(github.com/symbolicsoft/crucible), built unmodified from a pinned commit.",
+    "Only Crucible's wire protocol is used: every check is pq-verify's (NIST ACVP,",
+    "Wycheproof, CCTV), scored by pq-verify. tools/harness_audit.py rebuilds each",
+    "harness and fails if a result differs, so a failure means pq-verify changed",
+    "(or the pinned Go toolchain / module did). The library behind a harness is",
+    "pinned by the harness's go.sum, not hashed by pq-verify."
+  ],
+  "crucible": {
+    "url": "https://github.com/symbolicsoft/crucible",
+    "commit": "0522518e19559ef39ed1ff23643f52d2ac606084",
+    "date": "2026-06-10"
+  },
+  "go": "1.26.1",
+  "harnesses": [
+    {
+      "name": "go-stdlib",
+      "dir": "harnesses/go-stdlib",
+      "implementation": "Go standard library crypto/mlkem (Go 1.26.1)",
+      "results": {
+        "ML-KEM-512": {
+          "status": "CANNOT VERIFY",
+          "stages": {},
+          "not_applicable": 0
+        },
+        "ML-KEM-768": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              456,
+              456
+            ],
+            "edgeEk": [
+              892,
+              892
+            ],
+            "edgeLength": [
+              60,
+              60
+            ]
+          },
+          "not_applicable": 31
+        },
+        "ML-KEM-1024": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              458,
+              458
+            ],
+            "edgeEk": [
+              1156,
+              1156
+            ],
+            "edgeLength": [
+              60,
+              60
+            ]
+          },
+          "not_applicable": 31
+        }
+      }
+    },
+    {
+      "name": "circl",
+      "dir": "harnesses/circl",
+      "implementation": "Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum)",
+      "results": {
+        "ML-KEM-512": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              459,
+              459
+            ],
+            "edgeEk": [
+              883,
+              883
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-KEM-768": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              461,
+              461
+            ],
+            "edgeEk": [
+              892,
+              892
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-KEM-1024": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              463,
+              463
+            ],
+            "edgeEk": [
+              1156,
+              1156
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-DSA-44": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              3,
+              3
+            ],
+            "sigVerPure": [
+              1,
+              1
+            ],
+            "edge:sigVerify": [
+              166,
+              166
+            ],
+            "edge:sigGen": [
+              71,
+              71
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ]
+          },
+          "not_applicable": 198
+        },
+        "ML-DSA-65": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              2,
+              2
+            ],
+            "sigVerPure": [
+              1,
+              1
+            ],
+            "edge:sigVerify": [
+              196,
+              196
+            ],
+            "edge:sigGen": [
+              81,
+              81
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ]
+          },
+          "not_applicable": 208
+        },
+        "ML-DSA-87": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              3,
+              3
+            ],
+            "sigVerPure": [
+              1,
+              1
+            ],
+            "edge:sigVerify": [
+              227,
+              227
+            ],
+            "edge:sigGen": [
+              72,
+              72
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ]
+          },
+          "not_applicable": 207
+        }
+      }
+    }
+  ]
+}

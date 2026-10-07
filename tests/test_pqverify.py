@@ -5284,3 +5284,156 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
     assert published == mod.fndsa_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the FN-DSA table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-fndsa markers")
+
+
+# ----------------------------------------------------------------------
+# --audit-harness: any implementation behind a Crucible-protocol harness
+# (JSON lines over stdin/stdout). tests/data/crucible_ref_harness.py wraps
+# kyber-py / dilithium-py and plants one fault per argument.
+# ----------------------------------------------------------------------
+
+def _ref_harness(fault=""):
+    import sys
+    root = pathlib.Path(__file__).resolve().parent.parent
+    return [sys.executable, str(root / "tests" / "data" / "crucible_ref_harness.py")] + (
+        [fault] if fault else [])
+
+
+def _harness_audit(fault, ps, **kw):
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from pq_verify.harness_audit import pqverify_audit_harness
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_harness(_ref_harness(fault), ps, verbose=False, **kw)
+
+
+def _failing(r):
+    return {k for k, (p, t) in r["detail"].items() if p < t}
+
+
+def test_harness_audit_verifies_a_correct_kem():
+    r = _harness_audit("", "ML-KEM-512")
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+    assert {"keyGen", "encaps", "decaps", "ekCheck", "dkCheck", "edgeEk"} <= set(r["detail"])
+    assert r["deterministic"] == {"keyGen": True, "encaps": True, "seed_form_dk": False}
+
+
+def test_harness_audit_catches_a_missing_modulus_check():
+    """FIPS 203 §7.2: the gap Crucible reported in PQClean and pq-crystals,
+    and pq-verify's pinned audit records for PQClean."""
+    r = _harness_audit("no-ek-check", "ML-KEM-512")
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _failing(r) == {"ekCheck", "edgeEk"}
+
+
+def test_seed_form_decapsulation_keys_are_checked_not_failed():
+    """Go's crypto/mlkem keeps dk as d || z (FIPS 203 §7.1). keyGen checks ek
+    byte-exact and dk == d || z; NIST's expanded-key decaps cases are not
+    applicable rather than failed."""
+    r = _harness_audit("seed-dk", "ML-KEM-768")
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+    assert r["deterministic"]["seed_form_dk"] is True
+    assert r["detail"]["keyGen"] == (25, 25)
+    assert "decaps" not in r["detail"] and r["not_applicable"]["decaps"][0] == 10
+    assert r["not_applicable"]["dkCheck"][0] == 10
+
+
+def test_harness_that_ignores_the_seed_is_not_applicable_never_passed():
+    r = _harness_audit("seedless", "ML-KEM-512")
+    assert "keyGen" not in r["detail"]
+    assert r["not_applicable"]["keyGen"][0] == 25 and "ignores" in r["not_applicable"]["keyGen"][1]
+    assert r["not_applicable"]["edge"][0] > 0
+    assert r["deterministic"]["keyGen"] is False
+
+
+def test_harness_whose_sign_and_verify_disagree_cannot_verify():
+    """Signing M (external) but verifying M' (internal): the harness rejects
+    its own fresh signature, so none of its rejections can be scored."""
+    r = _harness_audit("external-sign", "ML-DSA-44")
+    assert r["status"] == "CANNOT VERIFY" and "own fresh signature" in r["reason"]
+
+
+def test_harness_on_the_external_convention_is_detected_from_nist():
+    """Crucible's CIRCL and liboqs harnesses sign M with an empty context,
+    not the protocol's M'. pq-verify settles which against a NIST signature
+    and routes only what that convention can carry."""
+    r = _harness_audit("external", "ML-DSA-44")
+    assert r["deterministic"]["message"] == "M, empty context"
+    assert r["status"] == "FINDINGS PRESENT"          # dilithium-py's known hint defect
+    assert _failing(r) == {"edge:sigVerify"}
+    assert "sigGenInternal" not in r["detail"] and r["not_applicable"]["sigGenInternal"][0] == 30
+    assert r["detail"]["sigGenPure"][1] < 30             # empty-context cases only
+    assert any("empty context" in n for n in r["harness_notes"])
+
+
+def test_harness_that_reads_sigma_is_driven_correctly():
+    """The README says "signature", the battery sends "sigma": both are sent."""
+    r = _harness_audit("sigma-only", "ML-DSA-44", edge=False)
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+
+
+@pytest.mark.parametrize("fault,why", [
+    ("crash-after=30", "exited"),
+    ("hang-after=30", "no answer"),
+    ("lie-unsupported", "unsupported"),
+])
+def test_a_harness_that_dies_cannot_verify_and_never_scores_a_refusal(fault, why):
+    r = _harness_audit(fault, "ML-KEM-512", timeout=3)
+    assert r["status"] == "CANNOT VERIFY" and why in r["reason"]
+    assert r["passed"] == r["total"] == 0
+
+
+def test_harness_died_escapes_the_refusal_handlers():
+    """edge.run_kem reads any Exception as the library refusing an input, so
+    a dead harness must not be one."""
+    from pq_verify.harness_audit import HarnessDied, Refused
+    assert not issubclass(HarnessDied, Exception)
+    assert issubclass(Refused, Exception)
+
+
+def test_harness_audit_cli_gate_and_report(tmp_path):
+    import json, shlex
+    pytest.importorskip("kyber_py")
+    cmd = shlex.join(_ref_harness("crash-after=5"))
+    code, out = _cli("--audit-harness", cmd, "ML-KEM-512", "--json", str(tmp_path / "h.json"))
+    assert code == 1, out
+    doc = json.loads((tmp_path / "h.json").read_text())
+    assert doc["schema"] == "pq-verify/harness-audit-result"
+    assert doc["status"] == "CANNOT VERIFY" and doc["findings"][0].startswith("cannot verify")
+    assert doc["artifact"]["harness_command"][-1] == "crash-after=5"
+    assert doc["artifact"]["path"].endswith("crucible_ref_harness.py")
+    code, out = _cli("--audit-harness", cmd, "ML-KEM-999")
+    assert code == 2 and "unknown parameter set" in out
+
+
+def test_harness_binding_skips_only_real_interpreters(tmp_path):
+    from pq_verify.harness_audit import harness_executable
+    for name in ("shim-harness", "javacrypto-harness", "envoy", "harness-go-stdlib"):
+        f = tmp_path / name
+        f.write_text("#!/bin/sh\n")
+        assert harness_executable([str(f)]) == str(f), name
+    script = tmp_path / "h.py"
+    script.write_text("")
+    import sys
+    assert harness_executable([sys.executable, str(script)]) == str(script)
+
+
+def test_harness_rows_are_pinned_and_published():
+    import importlib.util, re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("harness_audit_tool",
+                                                  root / "tools" / "harness_audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    table = mod.load()
+    assert re.fullmatch(r"[0-9a-f]{40}", table["crucible"]["commit"])
+    for row in table["harnesses"]:
+        for ps, r in row["results"].items():
+            p = sum(v[0] for v in r["stages"].values())
+            t = sum(v[1] for v in r["stages"].values())
+            assert (r["status"] == "VERIFIED") == (p == t and t > 0), (row["name"], ps)
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.BEGIN, 1)[1].split(mod.END, 1)[0].strip()
+    assert published == mod.markdown(table).strip(), (
+        "AUDITS.md is out of date: paste `python3 tools/harness_audit.py --markdown` "
+        "between the harness-audits markers")

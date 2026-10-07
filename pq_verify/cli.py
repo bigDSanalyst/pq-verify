@@ -15,6 +15,7 @@ pq-verify command-line interface.
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
+    pq-verify --audit-harness CMD SET  audit through a Crucible-protocol harness
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
                                    (--fresh-key K: fresh, unpublished ones)
@@ -208,6 +209,13 @@ def build_parser():
                         "malformed ones are refused, its keys are canonical and "
                         "match their secret keys, its signatures verify under "
                         "pq-verify's verifier and never reuse a nonce")
+    p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
+                   help="audit an ML-KEM or ML-DSA implementation in any language "
+                        "through a harness speaking Crucible's JSON-line protocol "
+                        "(github.com/symbolicsoft/crucible): NIST's vectors, its "
+                        "invalid keys and the Wycheproof/CCTV edge cases, e.g. "
+                        "--audit-harness './harness-circl' ML-KEM-768. COMMAND is "
+                        "split like a shell command line")
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
@@ -304,7 +312,7 @@ def main(argv=None):
             ("--fresh-count", args.fresh_count, args.fresh_key),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
-             or args.audit_fndsa)):
+             or args.audit_fndsa or args.audit_harness)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
@@ -365,6 +373,7 @@ def main(argv=None):
                 "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "proofs", "edge_cases",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
+                "audit_harness",
                 "audit_hbs", "audit_so")):
             return 0
     hbs_result = None
@@ -560,6 +569,31 @@ def main(argv=None):
         except OSError as exc:
             fna_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {fna_reason}")
+    har_result = har_artifact = None
+    if getattr(args, "audit_harness", None):
+        import shlex as _shlex
+        from .harness_audit import (KEM_SETS as _HK, DSA_SETS as _HD,
+                                    harness_executable, pqverify_audit_harness)
+        from .report import artifact_harness
+        _cmd, _ps = args.audit_harness
+        if _ps not in _HK + _HD:
+            print(f"  unknown parameter set {_ps!r} for --audit-harness — known: "
+                  f"{', '.join(_HK + _HD)}")
+            return 2
+        try:
+            _argv = _shlex.split(_cmd)
+        except ValueError as exc:
+            print(f"  cannot parse the harness command: {exc}")
+            return 2
+        if not _argv:
+            print("  --audit-harness needs a command")
+            return 2
+        ran_task = True
+        har_artifact = artifact_harness(harness_executable(_argv), _argv)
+        print(f"  artifact: {har_artifact['summary']}  (the harness)")
+        _t = args.audit_timeout
+        har_result = pqverify_audit_harness(
+            _argv, _ps, timeout=60 if _t is None else (_t or None))
     hbsa_result = hbsa_reason = hbsa_artifact = None
     hbsa_ran = bool(getattr(args, "audit_hbs", None))
     if hbsa_ran:
@@ -718,6 +752,29 @@ def main(argv=None):
               and doc.get("scope") and not doc["scope"]["complete"]):
             print(f"  FAILING: LMS/XMSS audit scope is partial and "
                   f"--require-full-coverage was set")
+            exit_code = 1
+
+    if har_result is not None:
+        from .report import to_json_harness_audit
+        doc = to_json_harness_audit(har_result, artifact=har_artifact)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-harness"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_harness[0]}:{args.audit_harness[1]}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=har_artifact)
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: harness audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print("  FAILING: harness audit scope is partial and "
+                  "--require-full-coverage was set")
             exit_code = 1
 
     if fna_ran is not None:
