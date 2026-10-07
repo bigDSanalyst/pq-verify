@@ -25,6 +25,23 @@ versioning](https://semver.org/spec/v2.0.0.html).
   questions are NIST's; so are the answers. The old claim that a matching
   response "proves the responder computes the standard" is withdrawn.
 
+### Added — engine tracks, macOS
+
+- **Every self-suite check carries a track** — `pqc` (54), `harness` (13),
+  `classical` (45), `research` (48) — printed per track in the summary and
+  recorded in the JSON report with the post-quantum work each non-PQC engine
+  is being realigned toward (FN-DSA's NTT, HQC, Classic McEliece, hybrid-KEM
+  curves, isogeny test vectors). Only the PQC track is PQC evidence; a check
+  without a track fails the test suite.
+- **macOS (Apple silicon) is tested in CI**: Mach-O symbols (`nm -gU`), dyld's
+  image list for the loaded-object binding, portable engine flags (`-lrt`
+  dropped on macOS, `-march=native` retried without, C++ engines built as
+  C++17). Engine 6 build failures are now DEGRADED with the compiler's
+  message and their checks recorded as skipped, rather than vanishing from
+  the count.
+- **CI pinned to `ubuntu-24.04`** ahead of `ubuntu-latest` moving to
+  Ubuntu 26; failing tests on the macOS job are reported as annotations.
+
 ### Added — LMS in the prompt/response path
 
 - **LMS, fresh and pinned, for implementations that cannot be loaded.**

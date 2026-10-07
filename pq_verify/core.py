@@ -644,6 +644,10 @@ def _cc(compiler, flags, out, src):
     exact integer arithmetic, so tuning flags change its speed, never its
     answers -- dropping one is safe, and failing to build is not."""
     flags = flags.split()
+    # The C++ engines are C++11 (constexpr, alias declarations). g++ defaults
+    # to a newer standard; Apple clang++ to C++98, where they do not compile.
+    if compiler in ("g++", "c++", "clang++") and not any(f.startswith("-std=") for f in flags):
+        flags.insert(0, "-std=c++17")
     if sys.platform == "darwin":
         flags = [f for f in flags if f != "-lrt"]
     proc = subprocess.run([compiler, *flags, '-o', out, src],
@@ -1505,6 +1509,83 @@ def coq_check(path, theorems=None, timeout=120):
 # REPORT
 # ================================================================
 
+# What each self-suite audit is FOR. Only the "pqc" track verifies anything a
+# FIPS 203/204/205 implementation computes; the others are engines that run
+# real, exact checks of other things, each with the post-quantum work it is
+# being realigned toward. The headline names the PQC count; the rest is
+# reported beside it, never folded in.
+#   (name prefix, track, realignment target or None)
+ENGINE_TRACKS = (
+    ('Z_3329 (Kyber)',         'pqc', None),
+    ('Z_8380417 (Dilithium)',  'pqc', None),
+    ('Kyber Scale',            'pqc', None),
+    ('Kyber Keygen',           'pqc', None),
+    ('Exhaustive Inverses',    'pqc', None),
+    ('Twiddle Factors',        'pqc', None),
+    ('Boundary Values',        'pqc', None),
+    ('FIPS 203 Parameters',    'pqc', None),
+    ('FIPS 204 Parameters',    'pqc', None),
+    ('FIPS 205 Parameters',    'pqc', None),
+    ('Kyber Roundtrip',        'pqc', None),
+    ('Full NTT Verification',  'pqc', None),
+    ('Dilithium Full NTT',     'pqc', None),
+    ('Freivalds NTT Check',    'pqc', None),
+    ('Batch Verification API', 'pqc', None),
+    ('FIPS 203 Zetas',         'pqc', None),
+    ('FIPS 204 Zetas',         'pqc', None),
+    ('Coq Certificate',        'pqc', None),
+    ('Stress: Z_3329',         'pqc', None),
+    ('Stress: Z_8380417',      'pqc', None),
+    ('UNSAT Detection',        'harness', None),
+    ('Reproducibility Hash',   'harness', None),
+    ('Coq Daemon',             'harness', None),
+    ('Adversarial Suite',      'harness', None),
+    ('Stress: Malformed Input', 'harness', None),
+    ('GF(2) Null-Space',       'classical', 'Classic McEliece: systematic-form public keys over GF(2)'),
+    ('GF(2)',                  'classical', 'HQC: quasi-cyclic arithmetic over GF(2)[x]/(x^n - 1)'),
+    ('Stress: GF(2)',          'classical', 'HQC / Classic McEliece'),
+    ('AES S-box Affine',       'classical', 'GF(2^m) arithmetic for Classic McEliece and HQC Reed-Solomon'),
+    ('Cubic B(a,b) + ECC',     'classical', 'the ECDH half of hybrid KEMs (X25519MLKEM768, ...)'),
+    ('Curve ',                 'classical', 'the ECDH half of hybrid KEMs'),
+    ('SafeCurves Database',    'classical', 'curve validation for hybrid KEMs'),
+    ('Conformity Gradient',    'research', 'correctness checks for NTT/FFT side-channel countermeasures'),
+    ('CFL Front-End',          'research', 'standards constraints as SAT/QBF obligations'),
+    ('DQBF Pipeline',          'research', 'standards constraints as SAT/QBF obligations'),
+    ('C CFL Pipeline',         'research', 'standards constraints as SAT/QBF obligations'),
+    ('Engine 6',               'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
+    ('Stress: Engine 6',       'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
+)
+
+TRACK_TITLES = {'pqc': 'PQC (FIPS 203/204/205)', 'harness': 'harness integrity',
+                'classical': 'classical (being realigned)',
+                'research': 'research (being realigned)'}
+
+
+def engine_track(name):
+    """(track, realignment target) for an audit name; the longest matching
+    prefix wins ('GF(2) Null-Space' over 'GF(2)'). KeyError if unknown: a
+    check nobody has classified must not slip into any headline."""
+    best = None
+    for prefix, track, target in ENGINE_TRACKS:
+        if name.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, track, target)
+    if best is None:
+        raise KeyError(f"self-suite audit {name!r} has no track in ENGINE_TRACKS")
+    return best[1], best[2]
+
+
+def track_totals(results):
+    """{track: [passed, run, skipped]} over a self-suite result list."""
+    out = {t: [0, 0, 0] for t in TRACK_TITLES}
+    for r in results:
+        p, t, _c = r.summary()
+        tr, _ = engine_track(r.engine)
+        out[tr][0] += p
+        out[tr][1] += t
+        out[tr][2] += r.n_skipped()
+    return out
+
+
 def print_report(results):
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     print(f"\n{'='*70}")
@@ -1539,6 +1620,9 @@ def print_report(results):
     print(f"  OVERALL: {total_p}/{total_t} tests passed"
           + (f"  ({total_s} SKIPPED \u2014 could not run, see integrity below)"
              if total_s else ""))
+    for tr, (tp, tt, ts) in track_totals(results).items():
+        print(f"    {TRACK_TITLES[tr]:32s} {tp}/{tt}"
+              + (f"  ({ts} skipped)" if ts else ""))
     if total_c == 0:
         print(f"  \u2705 No critical findings")
     else:
@@ -1555,11 +1639,15 @@ def save_json(results, filename):
     }
     for r in results:
         p, t, c = r.summary()
+        tr, target = engine_track(r.engine)
         report['engines'].append({
-            'name': r.engine, 'tests': r.tests, 'findings': r.findings,
+            'name': r.engine, 'track': tr, 'realigns_to': target,
+            'tests': r.tests, 'findings': r.findings,
             'summary': {'passed': p, 'total': t, 'critical': c,
                         'skipped': r.n_skipped()}
         })
+    report['tracks'] = {tr: {'passed': v[0], 'total': v[1], 'skipped': v[2]}
+                        for tr, v in track_totals(results).items()}
     with open(filename, 'w') as f:
         json.dump(report, f, indent=2)
     return filename

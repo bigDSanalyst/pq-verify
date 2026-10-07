@@ -45,8 +45,12 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ## Proven (all tested on commodity hardware, Google Colab CPU)
 
-- **160/160** self-test across 6 field-native engines, 6 phases — in an
-  environment with every optional dependency present. Where one is missing the
+- **160/160** self-test across 6 field-native engines, 6 phases, of which
+  **54 verify PQC directly** (FIPS 203/204/205 NTTs, zetas, parameters,
+  Freivalds, Coq) and 13 check the harness itself; the other 93 are classical
+  and research engines being realigned toward post-quantum work (see
+  [Engines and where they are heading](#engines-and-where-they-are-heading)) —
+  in an environment with every optional dependency present. Where one is missing the
   dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
   what it needed. It is never counted as a pass, and never as a failure either
 - **240/240** NIST ACVP ML-KEM vectors — keyGen + encaps + decaps byte-exact, KeyCheck bool-exact
@@ -272,6 +276,24 @@ report says so rather than implying otherwise; see
 [What a result is bound to](#what-a-result-is-bound-to).
 
 ---
+
+## Engines and where they are heading
+
+Every self-suite check is labelled with a track, printed per track in the
+summary and recorded in the JSON report (`track`, `realigns_to`, `tracks`).
+Only the PQC track verifies what a FIPS 203/204/205 implementation computes;
+the others are exact checks of other things, and none of them is counted as
+PQC evidence.
+
+| Track | Checks | What it verifies today | Being realigned toward |
+|---|---|---|---|
+| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): its NTT mod q = 12289, n = 512/1024 |
+| Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
+| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts, SafeCurves | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields), the ECDH half of **hybrid KEMs** |
+| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | mod-p Hasse–Witt test vectors for isogeny schemes (SQIsign); correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations |
+
+"Being realigned toward" is a direction, not a capability: until an engine
+checks a post-quantum implementation, it is reported under its own track.
 
 ## Architecture — six field-native engines
 

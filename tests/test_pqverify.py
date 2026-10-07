@@ -4944,3 +4944,33 @@ def test_an_engine6_build_failure_is_degraded_not_silent(monkeypatch):
         assert "no matching function" in core.ENGINE_ERRORS["engine6/genus2"]
     finally:
         core.DEGRADED["engines"][:] = before
+
+
+def test_every_self_suite_check_has_a_track():
+    """The headline counts PQC checks only; every other engine is reported
+    under its track with the post-quantum work it is being realigned toward.
+    A new audit nobody classified fails here instead of joining a headline."""
+    from pq_verify.core import main as run_selftest, engine_track, track_totals
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = run_selftest(quick=True)
+    for r in results:
+        track, target = engine_track(r.engine)
+        assert track in ("pqc", "harness", "classical", "research")
+        if track in ("classical", "research"):
+            assert target, f"{r.engine} has no realignment target"
+    totals = track_totals(results)
+    assert totals["pqc"][1] + totals["pqc"][2] > 0
+    assert sum(v[1] + v[2] for v in totals.values()) == sum(len(r.tests) for r in results)
+
+
+def test_cpp_engines_build_as_cpp17(monkeypatch):
+    import pq_verify.core as core
+    seen = []
+
+    class P:
+        returncode, stdout, stderr = 0, "", ""
+    monkeypatch.setattr(core.subprocess, "run", lambda argv, **k: seen.append(argv) or P())
+    core._cc("g++", "-O3 -shared -fPIC -lm", "o.so", "s.cpp")
+    core._cc("gcc", "-O3 -shared -fPIC -lm", "o.so", "s.c")
+    assert "-std=c++17" in seen[0] and "-std=c++17" not in seen[1]
