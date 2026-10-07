@@ -341,6 +341,17 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                       "findings": 0 if p == t else 1}
     if result.get("accumulated"):
         doc["accumulated"] = result["accumulated"]
+    if result.get("constant_time"):
+        doc["constant_time"] = result["constant_time"]
+        ct = result["constant_time"]
+        if "unavailable" not in ct:
+            doc["side_channel"]["constant_time_checked"] = {
+                "operations": sorted(ct["stages"]), "tool": ct.get("tool"),
+                "scope": ("secret-dependent branches and memory addresses in this "
+                          "binary, by Valgrind memcheck taint; not instruction "
+                          "timing (division), power, EM or microarchitecture, "
+                          "and not key generation"),
+                "leak_free": all(p == t for p, t in ct["stages"].values())}
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}
     keycheck = result.get("keycheck") or {}
@@ -368,6 +379,16 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
         if k == "accumulated":
             findings.append("stage accumulated: " + (result.get("accumulated") or {}).get(
                 "detail", "CCTV accumulated vectors did not match"))
+            continue
+        if k.startswith("ct:"):
+            ct = result.get("constant_time") or {}
+            if "unavailable" in ct:
+                findings.append(f"constant time: requested but could not run ({ct['unavailable']})")
+            else:
+                where = "; ".join(f"{l['kind']} in {l['function']}"
+                                  for l in (ct.get("leaks") or {}).get(k[3:], []))
+                findings.append(f"stage {k}: secret-dependent behaviour under Valgrind "
+                                f"memcheck: {where}")
             continue
         m = keycheck.get(k)
         if m is None:

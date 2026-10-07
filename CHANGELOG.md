@@ -5,6 +5,29 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — constant-time audit (`--constant-time`)
+
+- **`--audit-kem PATH SET --constant-time`** runs the vendor's own Encaps
+  (m secret) and Decaps (the K-PKE secret key and z secret, on a valid and on
+  a random ciphertext) under Valgrind memcheck with the secret bytes marked,
+  and fails on every secret-dependent branch or memory address, naming the
+  function. Stages `ct:encaps`, `ct:decaps`; the report's `side_channel`
+  gains `constant_time_checked` with the exact scope.
+- A self-test first: a deliberate branch on a marked secret must be
+  reported, or the check is unavailable -- memcheck's silence is never read
+  as a pass. Asked for and unable to run (no valgrind) fails the audit.
+- What it does not see, stated in every report: instruction timing (a secret
+  division, as in KyberSlash -- division instructions are listed for review
+  instead), key generation (rho is derived from the secret seed and
+  rejection-sampled; libraries declassify it internally), and anything
+  physical.
+- mlkem-native and PQClean pass at all three sets. Three leaks planted in
+  PQClean, each leaving every output correct (a secret branch in
+  `poly_frommsg`, the Clangover class; a secret-indexed table in
+  `poly_tomsg`; `memcmp` in the FO re-encryption check), pass every
+  correctness stage including the accumulated cases and are caught here. CI
+  installs valgrind and requires all of it (`tools/vendor_audit.py`).
+
 ## [2.11.0] — 2026-10-07
 
 ### Added — accumulated vectors

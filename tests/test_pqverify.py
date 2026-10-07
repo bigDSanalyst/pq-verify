@@ -5550,3 +5550,86 @@ def test_dsa_audit_runs_the_accumulated_cases_through_the_vendor(tmp_path):
     assert "CCTV" in r["accumulated"]["source"]
     doc = to_json_dsa(r, param_set="ML-DSA-65")
     assert doc["accumulated"]["ok"] is True and doc["stages"]["accumulated"]["total"] == 1
+
+
+# ----------------------------------------------------------------------
+# --constant-time: Encaps/Decaps under Valgrind memcheck with the secret
+# inputs marked. tests/data/ct_kem_shim.c is a fake KEM with planted leaks.
+# ----------------------------------------------------------------------
+
+def _ct_shim(tmp_path, define=None):
+    import shutil, subprocess
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        pytest.skip(why)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"ctshim_{define or 'clean'}.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared",
+                    *([f"-D{define}"] if define else []), "-o", str(so),
+                    str(root / "tests" / "data" / "ct_kem_shim.c")],
+                   check=True, capture_output=True)
+    return str(so)
+
+
+def _ct_run(so):
+    from pq_verify.ct_audit import run_kem
+    return run_kem(so, "ML-KEM-512", "shim_kem_keypair_derand", "shim_kem_enc_derand",
+                   "shim_kem_dec", iterations=2)
+
+
+def test_constant_time_passes_a_clean_library(tmp_path):
+    r = _ct_run(_ct_shim(tmp_path))
+    assert r["stages"] == {"encaps": (1, 1), "decaps": (1, 1)}
+    assert r["selftest"] and "keyGen" in r["not_applicable"]
+
+
+def test_constant_time_catches_a_secret_branch_and_names_the_function(tmp_path):
+    r = _ct_run(_ct_shim(tmp_path, "LEAK_BRANCH"))
+    assert r["stages"]["encaps"] == (0, 1) and r["stages"]["decaps"] == (1, 1)
+    assert [(l["kind"], l["function"]) for l in r["leaks"]["encaps"]] == [
+        ("branch on a secret", "shim_kem_enc_derand")]
+
+
+def test_constant_time_catches_a_secret_table_index(tmp_path):
+    r = _ct_run(_ct_shim(tmp_path, "LEAK_INDEX"))
+    assert r["stages"]["decaps"] == (0, 1) and r["stages"]["encaps"] == (1, 1)
+    assert r["leaks"]["decaps"][0]["kind"] == "secret used as a memory address"
+    assert r["leaks"]["decaps"][0]["function"] == "shim_kem_dec"
+
+
+def test_constant_time_refuses_to_trust_a_blind_memcheck(tmp_path, monkeypatch):
+    """If the self-test's deliberate secret branch is not reported, memcheck's
+    silence means nothing: the check is unavailable, never a pass."""
+    from pq_verify import ct_audit as C
+    so = _ct_shim(tmp_path)
+    monkeypatch.setattr(C, "DRIVER_C", C.DRIVER_C.replace("if (s[0] & 1) sink = 1;", "sink = 1;"))
+    with pytest.raises(C.Unavailable, match="self-test"):
+        _ct_run(so)
+
+
+def test_constant_time_requested_but_unavailable_fails_the_audit(monkeypatch):
+    from pq_verify import ct_audit as C
+    from pq_verify.report import to_json_kem
+    monkeypatch.setattr(C, "available", lambda: "valgrind is not installed")
+    with pytest.raises(C.Unavailable):
+        C.run_kem("x.so", "ML-KEM-512", "a", "b", "c")
+    doc = to_json_kem({"verified": False, "passed": 0, "total": 1,
+                       "detail": {"ct:unavailable": (0, 1)},
+                       "constant_time": {"unavailable": "valgrind is not installed"}},
+                      param_set="ML-KEM-512")
+    assert any("could not run" in f for f in doc["findings"])
+    assert "constant_time_checked" not in doc["side_channel"]
+
+
+def test_constant_time_flag_needs_audit_kem():
+    code, out = _cli("--constant-time", "--acvp")
+    assert code == 2 and "--audit-kem" in out
+
+
+def test_ct_vendor_rows_and_mutants_are_well_formed():
+    mod, _ = _vendor_audit()
+    for row in mod.load_table():
+        assert set(row["ct"]) == set(row["sets"])
+        for m in row.get("ct_mutants", []):
+            assert m["set"] in row["sets"] and set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
