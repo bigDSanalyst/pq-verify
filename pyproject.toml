@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pq-verify"
-version = "2.10.0"
+version = "2.11.0"
 description = "Independent verification for ML-KEM / ML-DSA / SLH-DSA / LMS / XMSS implementations — vendor-library audits, fresh ACVP prompts, NIST ACVP, Coq proofs."
 readme = "README.md"
 requires-python = ">=3.9"

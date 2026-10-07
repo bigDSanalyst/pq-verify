@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.10.0"
+    assert pq_verify.__version__ == VERSION == "2.11.0"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
