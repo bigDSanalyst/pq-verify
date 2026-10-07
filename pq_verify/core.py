@@ -6269,7 +6269,7 @@ def _resolve_kem_symbols(exported, param_set, explicit=None):
 
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
                        decaps=None, prompt_dir=None, vector_dir=None, live=False,
-                       verbose=True, edge=True):
+                       verbose=True, edge=True, accumulated=10_000):
     """Audit a THIRD-PARTY ML-KEM implementation end to end against NIST's vectors.
 
     This is the scheme-level counterpart to pqverify_scan (which audits the NTT
@@ -6448,6 +6448,17 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         for stage, (p, t) in edge_res['stages'].items():
             tally[stage] = (p, t)
 
+    acc_res = None
+    if accumulated:
+        from .edge import VendorKEM
+        from . import accumulated as _acc
+        ok, why = _acc.run_kem(VendorKEM(f_kp, f_en, f_de, (ek_n, dk_n, ct_n),
+                                         name=_o.path.basename(so_path)),
+                               param_set, accumulated)
+        tally['accumulated'] = (int(ok), 1)
+        acc_res = {'cases': accumulated, 'ok': ok, 'detail': why,
+                   'source': _acc.source(param_set, accumulated)}
+
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     if verbose:
@@ -6486,6 +6497,9 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
             if edge_res['not_applicable']:
                 print(f"        {edge_res['not_applicable']} wrong-length vectors not applicable: "
                       f"a C entry point takes fixed-size buffers")
+        if acc_res:
+            print(f"  {'PASS' if acc_res['ok'] else 'FAIL'}  accumulated "
+                  f"{int(acc_res['ok'])}/1  {acc_res['detail']}")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
@@ -6495,7 +6509,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
-            'keycheck': keycheck, 'edge': edge_res,
+            'keycheck': keycheck, 'edge': edge_res, 'accumulated': acc_res,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 

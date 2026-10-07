@@ -263,6 +263,9 @@ class VendorKEM:
 
 def _kem_lengths_ok(backend, kind, args, param_set):
     """Can this input be put to a fixed-buffer C entry point at all?"""
+    accepts = getattr(backend, "accepts", None)
+    if accepts is not None and not accepts(kind, args):
+        return False
     if not backend.fixed_buffers:
         return True
     from .core import _KEM_SIZES

@@ -788,7 +788,7 @@ def test_unauditable_kem_library_fails_the_gate(tmp_path):
     so = tmp_path / "empty.so"
     so.write_bytes(b"\x7fELF")
     rpt = tmp_path / "kem.json"
-    code, out = _cli("--audit-kem", str(so), "ML-KEM-768",
+    code, out = _cli("--audit-kem", str(so), "ML-KEM-768", "--accumulated", "0",
                      "--json", str(rpt), "--fail-on-finding")
     assert code == 1
     doc = _json.loads(rpt.read_text())
@@ -2409,7 +2409,7 @@ def test_audit_kem_feeds_nist_invalid_keys(tmp_path, variant, ek, dk):
     from pq_verify.core import pqverify_audit_kem
     from pq_verify.report import to_json_kem
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", accumulated=0)
     for stage, want in (("ekCheck", ek), ("dkCheck", dk)):
         m = r["keycheck"][stage]
         got = (r["detail"][stage][0], m["accepted_invalid"], m["rejected_valid"])
@@ -2427,14 +2427,14 @@ def test_audit_kem_feeds_nist_invalid_keys(tmp_path, variant, ek, dk):
 
 def test_accepting_invalid_keys_fails_the_gate(tmp_path):
     so = _stub_kem(tmp_path, None)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--fail-on-finding")
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--fail-on-finding")
     assert code == 1
     assert "accepted 5 invalid key(s)" in out
 
 
 def test_kem_symbol_flags_override_detection(tmp_path):
     so = _stub_kem(tmp_path, None)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768",
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0",
                      "--kem-decaps", "stub_kem_dec",
                      "--kem-keypair", "stub_kem_keypair_derand",
                      "--kem-encaps", "stub_kem_enc_derand")
@@ -3337,7 +3337,7 @@ def test_audit_kem_runs_the_edge_cases(tmp_path, variant, ek_ok):
     from pq_verify.core import pqverify_audit_kem
     from pq_verify.report import to_json_kem
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768")
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", accumulated=0)
     assert r["detail"]["edgeEk"] == (ek_ok, 892)
     doc = to_json_kem(r, param_set="ML-KEM-768")
     text = " ".join(doc["findings"])
@@ -3345,7 +3345,8 @@ def test_audit_kem_runs_the_edge_cases(tmp_path, variant, ek_ok):
     assert "edgeEk" not in text or "NIST" not in text.split("edgeEk")[1].split("stage")[0]
     assert doc["edge"]["vectors"].startswith("Wycheproof ")
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", edge=False)
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", edge=False,
+                               accumulated=0)
     assert "edgeEk" not in r["detail"]
 
 
@@ -3808,6 +3809,7 @@ def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0):
 
 def _audit_shim(path, **kw):
     from pq_verify.dsa_audit import pqverify_audit_dsa
+    kw.setdefault("accumulated", 0)        # tested on its own below
     with contextlib.redirect_stdout(io.StringIO()):
         return pqverify_audit_dsa(path, "ML-DSA-65", **kw)
 
@@ -3922,7 +3924,7 @@ def test_dsa_report_names_not_applicable_stages_and_first_failures():
 
 def test_audit_dsa_cli_gates_and_rejects_bad_arguments(tmp_path):
     path, keep = _dsa_shim(tmp_path, verify=lambda pk, m, sig: True)
-    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--fail-on-finding",
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--accumulated", "0", "--fail-on-finding",
                      "--json", str(tmp_path / "r.json"))
     assert code == 1 and "FAILING: ML-DSA audit FINDINGS PRESENT" in out
     import json
@@ -3931,7 +3933,7 @@ def test_audit_dsa_cli_gates_and_rejects_bad_arguments(tmp_path):
     assert doc["artifact"]["bound"] is True
     code, out = _cli("--audit-dsa", path, "ML-DSA-99")
     assert code == 2
-    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--dsa-symbol", "bogus=x")
+    code, out = _cli("--audit-dsa", path, "ML-DSA-65", "--accumulated", "0", "--dsa-symbol", "bogus=x")
     assert code == 2
 
 
@@ -3944,7 +3946,8 @@ def test_dsa_vendor_rows_and_mutants_are_well_formed():
         assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
         assert set(row["results"]) == set(row["sets"]) == set(row["not_applicable"])
         for ps in row["sets"]:
-            assert set(row["results"][ps]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES)
+            assert set(row["results"][ps]) <= set(mod.DSA_STAGES + mod.DSA_EDGE_STAGES
+                                                  + mod.ACC_STAGES)
             assert row["results"][ps]["keyGen"] == [25, 25]
         assert row["mutants"], row["library"]
         for m in row["mutants"]:
@@ -4639,7 +4642,7 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
     import json as _json
     so = _crash_kem(tmp_path)
     rpt = tmp_path / "r.json"
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--json", str(rpt))
     # a null write is SIGSEGV on Linux; macOS may deliver SIGBUS
     sig = "SIGSEGV" if "SIGSEGV" in out else "SIGBUS"
     assert code == 1 and sig in out
@@ -4650,7 +4653,7 @@ def test_a_crashing_library_is_reported_not_fatal(tmp_path):
 
 def test_a_hanging_library_times_out(tmp_path):
     so = _crash_kem(tmp_path, hang=True)
-    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--audit-timeout", "3")
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--audit-timeout", "3")
     assert code == 1 and "did not finish within 3 s" in out
 
 
@@ -4658,7 +4661,7 @@ def test_the_artifact_binds_every_object_the_audit_loaded(tmp_path):
     import json as _json, os
     so = _stub_kem(tmp_path, None)
     rpt = tmp_path / "r.json"
-    _cli("--audit-kem", so, "ML-KEM-768", "--json", str(rpt))
+    _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0", "--json", str(rpt))
     a = _json.loads(rpt.read_text())["artifact"]
     if a.get("loaded_objects") is None:
         pytest.skip("no /proc/self/maps on this platform")
@@ -5284,3 +5287,266 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
     assert published == mod.fndsa_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the FN-DSA table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-fndsa markers")
+
+
+# ----------------------------------------------------------------------
+# --audit-harness: any implementation behind a Crucible-protocol harness
+# (JSON lines over stdin/stdout). tests/data/crucible_ref_harness.py wraps
+# kyber-py / dilithium-py and plants one fault per argument.
+# ----------------------------------------------------------------------
+
+def _ref_harness(fault=""):
+    import sys
+    root = pathlib.Path(__file__).resolve().parent.parent
+    return [sys.executable, str(root / "tests" / "data" / "crucible_ref_harness.py")] + (
+        [fault] if fault else [])
+
+
+def _harness_audit(fault, ps, **kw):
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from pq_verify.harness_audit import pqverify_audit_harness
+    kw.setdefault("accumulated", 100)          # the 10 000-case run is CI's job
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_harness(_ref_harness(fault), ps, verbose=False, **kw)
+
+
+def _failing(r):
+    return {k for k, (p, t) in r["detail"].items() if p < t}
+
+
+def test_harness_audit_verifies_a_correct_kem():
+    r = _harness_audit("", "ML-KEM-512")
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+    assert {"keyGen", "encaps", "decaps", "ekCheck", "dkCheck", "edgeEk"} <= set(r["detail"])
+    assert r["deterministic"] == {"keyGen": True, "encaps": True, "seed_form_dk": False}
+
+
+def test_harness_audit_catches_a_missing_modulus_check():
+    """FIPS 203 §7.2: the gap Crucible reported in PQClean and pq-crystals,
+    and pq-verify's pinned audit records for PQClean."""
+    r = _harness_audit("no-ek-check", "ML-KEM-512")
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _failing(r) == {"ekCheck", "edgeEk"}
+
+
+def test_seed_form_decapsulation_keys_are_checked_not_failed():
+    """Go's crypto/mlkem keeps dk as d || z (FIPS 203 §7.1). keyGen checks ek
+    byte-exact and dk == d || z; NIST's expanded-key decaps cases are not
+    applicable rather than failed."""
+    r = _harness_audit("seed-dk", "ML-KEM-768")
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+    assert r["deterministic"]["seed_form_dk"] is True
+    assert r["detail"]["keyGen"] == (25, 25)
+    assert "decaps" not in r["detail"] and r["not_applicable"]["decaps"][0] == 10
+    assert r["not_applicable"]["dkCheck"][0] == 10
+
+
+def test_harness_that_ignores_the_seed_is_not_applicable_never_passed():
+    r = _harness_audit("seedless", "ML-KEM-512")
+    assert "keyGen" not in r["detail"]
+    assert r["not_applicable"]["keyGen"][0] == 25 and "ignores" in r["not_applicable"]["keyGen"][1]
+    assert r["not_applicable"]["edge"][0] > 0
+    assert r["deterministic"]["keyGen"] is False
+
+
+def test_harness_whose_sign_and_verify_disagree_cannot_verify():
+    """Signing M (external) but verifying M' (internal): the harness rejects
+    its own fresh signature, so none of its rejections can be scored."""
+    r = _harness_audit("external-sign", "ML-DSA-44")
+    assert r["status"] == "CANNOT VERIFY" and "own fresh signature" in r["reason"]
+
+
+def test_harness_on_the_external_convention_is_detected_from_nist():
+    """Crucible's CIRCL and liboqs harnesses sign M with an empty context,
+    not the protocol's M'. pq-verify settles which against a NIST signature
+    and routes only what that convention can carry."""
+    r = _harness_audit("external", "ML-DSA-44")
+    assert r["deterministic"]["message"] == "M, empty context"
+    assert r["status"] == "FINDINGS PRESENT"          # dilithium-py's known hint defect
+    assert _failing(r) == {"edge:sigVerify"}
+    assert "sigGenInternal" not in r["detail"] and r["not_applicable"]["sigGenInternal"][0] == 30
+    assert r["detail"]["sigGenPure"][1] < 30             # empty-context cases only
+    assert any("empty context" in n for n in r["harness_notes"])
+
+
+def test_harness_that_reads_sigma_is_driven_correctly():
+    """The README says "signature", the battery sends "sigma": both are sent."""
+    r = _harness_audit("sigma-only", "ML-DSA-44", edge=False)
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+
+
+@pytest.mark.parametrize("fault,why", [
+    ("crash-after=30", "exited"),
+    ("hang-after=30", "no answer"),
+    ("lie-unsupported", "unsupported"),
+])
+def test_a_harness_that_dies_cannot_verify_and_never_scores_a_refusal(fault, why):
+    r = _harness_audit(fault, "ML-KEM-512", timeout=3)
+    assert r["status"] == "CANNOT VERIFY" and why in r["reason"]
+    assert r["passed"] == r["total"] == 0
+
+
+def test_harness_died_escapes_the_refusal_handlers():
+    """edge.run_kem reads any Exception as the library refusing an input, so
+    a dead harness must not be one."""
+    from pq_verify.harness_audit import HarnessDied, Refused
+    assert not issubclass(HarnessDied, Exception)
+    assert issubclass(Refused, Exception)
+
+
+def test_harness_audit_cli_gate_and_report(tmp_path):
+    import json, shlex
+    pytest.importorskip("kyber_py")
+    cmd = shlex.join(_ref_harness("crash-after=5"))
+    code, out = _cli("--audit-harness", cmd, "ML-KEM-512", "--json", str(tmp_path / "h.json"))
+    assert code == 1, out
+    doc = json.loads((tmp_path / "h.json").read_text())
+    assert doc["schema"] == "pq-verify/harness-audit-result"
+    assert doc["status"] == "CANNOT VERIFY" and doc["findings"][0].startswith("cannot verify")
+    assert doc["artifact"]["harness_command"][-1] == "crash-after=5"
+    assert doc["artifact"]["path"].endswith("crucible_ref_harness.py")
+    code, out = _cli("--audit-harness", cmd, "ML-KEM-999")
+    assert code == 2 and "unknown parameter set" in out
+
+
+def test_harness_binding_skips_only_real_interpreters(tmp_path):
+    from pq_verify.harness_audit import harness_executable
+    for name in ("shim-harness", "javacrypto-harness", "envoy", "harness-go-stdlib"):
+        f = tmp_path / name
+        f.write_text("#!/bin/sh\n")
+        assert harness_executable([str(f)]) == str(f), name
+    script = tmp_path / "h.py"
+    script.write_text("")
+    import sys
+    assert harness_executable([sys.executable, str(script)]) == str(script)
+
+
+def test_harness_rows_are_pinned_and_published():
+    import importlib.util, re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("harness_audit_tool",
+                                                  root / "tools" / "harness_audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    table = mod.load()
+    assert re.fullmatch(r"[0-9a-f]{40}", table["crucible"]["commit"])
+    for row in table["harnesses"]:
+        for ps, r in row["results"].items():
+            p = sum(v[0] for v in r["stages"].values())
+            t = sum(v[1] for v in r["stages"].values())
+            assert (r["status"] == "VERIFIED") == (p == t and t > 0), (row["name"], ps)
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.BEGIN, 1)[1].split(mod.END, 1)[0].strip()
+    assert published == mod.markdown(table).strip(), (
+        "AUDITS.md is out of date: paste `python3 tools/harness_audit.py --markdown` "
+        "between the harness-audits markers")
+
+
+
+# ----------------------------------------------------------------------
+# Accumulated vectors (pq_verify/accumulated.py): seeded random cases hashed
+# into one digest, pinned with its provenance.
+# ----------------------------------------------------------------------
+
+class _RefKEM:
+    """kyber-py behind the accumulated backend contract, with one planted
+    fault: `corrupt(i, ek, c, K) -> (ek, c, K)` on the i-th case."""
+
+    def __init__(self, ps, corrupt=None):
+        from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
+        self.r = {"ML-KEM-512": ML_KEM_512, "ML-KEM-768": ML_KEM_768,
+                  "ML-KEM-1024": ML_KEM_1024}[ps]
+        self.corrupt, self.i = corrupt, -1
+
+    def keygen(self, d, z):
+        self.i += 1
+        return self.r._keygen_internal(d, z)
+
+    def encaps(self, ek, m):
+        K, c = self.r._encaps_internal(ek, m)
+        if self.corrupt:
+            _, c, K = self.corrupt(self.i, ek, c, K)
+        return c, K
+
+    def decaps(self, dk, c):
+        return self.r._decaps_internal(dk, c)
+
+
+def test_accumulated_reproduces_every_pinned_100_case_digest():
+    """pq-verify's references reproduce the pinned digests: Go's published
+    ML-KEM-768 value, the cross-checked ML-KEM-512/1024 values, and CCTV's
+    ML-DSA values."""
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
+    from pq_verify import accumulated as A
+    for ps in ("ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"):
+        ok, why = A.run_kem(_RefKEM(ps), ps, 100)
+        assert ok, why
+
+    class RefDSA:
+        def __init__(self, r):
+            self.r = r
+
+        def keygen(self, seed):
+            return self.r._keygen_internal(seed)
+
+        def sign_pure(self, m, ctx, rnd, sk):
+            return self.r._sign_internal(sk, bytes([0, len(ctx)]) + ctx + m, rnd)
+
+        def verify_pure(self, m, ctx, sig, pk):
+            return self.r._verify_internal(pk, bytes([0, len(ctx)]) + ctx + m, sig)
+    for ps, r in (("ML-DSA-44", ML_DSA_44), ("ML-DSA-65", ML_DSA_65), ("ML-DSA-87", ML_DSA_87)):
+        ok, why = A.run_dsa(RefDSA(r), ps, 100)
+        assert ok, why
+
+
+def test_accumulated_catches_one_wrong_case_in_a_hundred():
+    pytest.importorskip("kyber_py")
+    from pq_verify import accumulated as A
+    # a ciphertext bit wrong in case 37 only: the digest moves
+    flip_c = lambda i, ek, c, K: (ek, bytes([c[0] ^ 1]) + c[1:], K) if i == 37 else (ek, c, K)
+    ok, why = A.run_kem(_RefKEM("ML-KEM-512", flip_c), "ML-KEM-512", 100)
+    assert not ok
+    # a shared key wrong in case 61 only: Decaps disagrees, named by case
+    flip_k = lambda i, ek, c, K: (ek, c, bytes([K[0] ^ 1]) + K[1:]) if i == 61 else (ek, c, K)
+    ok, why = A.run_kem(_RefKEM("ML-KEM-512", flip_k), "ML-KEM-512", 100)
+    assert not ok and why.startswith("case 61:")
+
+
+def test_cctv_mlkem_accumulated_digests_are_the_fips203_draft():
+    """CCTV's README ML-KEM digests use the draft's K-PKE.KeyGen G(d), not
+    final FIPS 203's G(d || k): with the draft derivation a reference
+    reproduces CCTV's ML-KEM-512 value, so a final-FIPS-203 library can never
+    match it. Checked on 100 cases against pq-verify's own draft run."""
+    from pq_verify import accumulated as A
+    src = pathlib.Path(A.__file__).read_text()
+    assert "845913ea5a308b803c764a9ed8e9d814ca1fd9c82ba43c7b1e64b79c7a6ec8e4" not in src
+    assert "f7db260e1137a742e05fe0db9525012812b004d29040a5b606aad3d134b548d3" not in src
+    assert A.EXPECTED["ML-KEM-768"][10_000][0] == \
+        "8a518cc63da366322a8e7a818c7a0d63483cb3528d34a4cf42f35d5ad73f22fc"   # Go's
+    for ps in ("ML-KEM-512", "ML-KEM-1024"):
+        assert "no final-FIPS-203 value is published" in A.EXPECTED[ps][10_000][1]
+
+
+def test_accumulated_cli_validates_the_count():
+    code, out = _cli("--audit-kem", "x.so", "ML-KEM-768", "--accumulated", "100")
+    assert code != 2 or "publishes no" not in out       # 100 is published for 768
+    code, out = _cli("--audit-kem", "x.so", "ML-KEM-768", "--accumulated", "123")
+    assert code == 2 and "no 123-case digest" in out
+    code, out = _cli("--accumulated", "100")
+    assert code == 2 and "does nothing without" in out
+
+
+def test_dsa_audit_runs_the_accumulated_cases_through_the_vendor(tmp_path):
+    """The audit's own accumulated stage: CCTV's 100-case ML-DSA digest
+    through the vendor's keypair/sign/verify, reported with its source."""
+    pytest.importorskip("dilithium_py")
+    from pq_verify.report import to_json_dsa
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path, edge=False, accumulated=100)
+    assert r["detail"]["accumulated"] == (1, 1), r["accumulated"]
+    assert "CCTV" in r["accumulated"]["source"]
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert doc["accumulated"]["ok"] is True and doc["stages"]["accumulated"]["total"] == 1

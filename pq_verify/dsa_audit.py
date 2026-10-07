@@ -523,6 +523,25 @@ def _one(v, mode, op, g, t, ref, PREHASH):
         f"{'valid' if want else 'invalid'}")
 
 
+def run_accumulated(v, param_set, n, tally, na):
+    """CCTV's accumulated keygen + deterministic-signing cases through v
+    (VendorDSA, or any object with its keygen / sign_pure / verify_pure).
+    Records stage 'accumulated' in tally, or its reason in na."""
+    if not n:
+        return None
+    from . import accumulated as _acc
+    try:
+        ok, why = _acc.run_dsa(v, param_set, n)
+    except NotApplicable as exc:
+        na['accumulated'] = (1, f"CCTV accumulated vectors: {exc}")
+        return None
+    except VendorError as exc:
+        ok, why = False, f"refused a valid input: {exc}"
+    tally['accumulated'] = (int(ok), 1)
+    return {'cases': n, 'ok': ok, 'detail': why,
+            'source': _acc.source(param_set, n)}
+
+
 _OP_OF_STAGE = {
     'keyGen': 'keygen',
     'sigGenInternal': 'sign_internal', 'sigGenPure': 'sign_pure',
@@ -534,7 +553,7 @@ _OP_OF_STAGE = {
 
 def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
                        prompt_dir=None, vector_dir=None, live=False, verbose=True,
-                       edge=True):
+                       edge=True, accumulated=10_000):
     """Audit a third-party ML-DSA library end to end; see the module docstring.
 
     Returns None when the library cannot be audited at all (an ambiguous
@@ -599,6 +618,8 @@ def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
         for stage, (p, t) in edge_res['stages'].items():
             tally['edge:' + stage] = (p, t)
 
+    acc_res = run_accumulated(v, param_set, accumulated, tally, na)
+
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     na_all = sum(c for c, _ in na.values()) + (edge_res or {}).get('not_applicable', 0)
@@ -620,6 +641,11 @@ def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
             if edge_res.get('not_applicable'):
                 print(f"  n/a   edge        {edge_res['not_applicable']} vector(s) the API "
                       f"cannot express (fixed-size or out-of-range arguments)")
+        if acc_res:
+            print(f"  {'PASS' if acc_res['ok'] else 'FAIL'}  accumulated     "
+                  f"{int(acc_res['ok'])}/1   {acc_res['detail']}")
+        elif 'accumulated' in na:
+            print(f"  n/a   accumulated     {na['accumulated'][1]}")
         for f in (failures + (edge_res or {}).get('failures', []))[:5]:
             print(f"        ✗ {f.get('stage')} {f.get('tcId') or f.get('case')}: "
                   f"{f.get('detail')}")
@@ -638,5 +664,6 @@ def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
             'not_applicable_total': na_all, 'via': via, 'abi': v.abi,
             'harness': v.has('rng'), 'failures': failures,
             'rng': list(v.rng_findings), 'edge': edge_res, 'library': v.path,
+            'accumulated': acc_res,
             'vectors': _vector_label(_local, *dirs),
             'symbols': {k: s for k, s in v.sym.items() if s}}

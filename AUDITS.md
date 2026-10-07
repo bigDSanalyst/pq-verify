@@ -218,10 +218,10 @@ row beside the old one, so the table records when a library's behaviour
 changed. A test holds this table equal to the pinned file.
 
 <!-- vendor-audits:begin -->
-| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Result |
-|---|---|---|---|---|---|---|---|---|---|
-| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 80/80 + 4,320/4,320 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 70/80 + 1,383/4,320 findings |
+| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Accumulated | Result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 3/3 | 70/80 + 1,383/4,320 + 3/3 findings |
 <!-- vendor-audits:end -->
 
 Reproduce every row: `python3 tools/vendor_audit.py`.
@@ -288,11 +288,11 @@ more or less than FIPS 204 calls for. That is how the randomised
 only the seed-taking internal functions.
 
 <!-- vendor-audits-dsa:begin -->
-| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|
-| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 30 | 3/3 | 1,503/1,503 **VERIFIED** |
-| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 198 | 6/6 | 1,335/1,335 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 468 | 1/1 | 1,065/1,065 **VERIFIED** |
+| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Accumulated | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 3/3 | 30 | 3/3 | 1,506/1,506 **VERIFIED** |
+| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 198 | 6/6 | 1,338/1,338 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 468 | 1/1 | 1,068/1,068 **VERIFIED** |
 <!-- vendor-audits-dsa:end -->
 
 All three are byte-exact on every interface they expose. They differ in
@@ -515,6 +515,88 @@ the norm bound; a signer that reuses one nonce or writes the wrong header.
 The first version of the audit missed the range-check mutant (its test key
 changed value mod q, so the norm check refused it); the mutant is why the
 `w + q` case exists.
+
+## Accumulated vectors
+
+Every KEM, ML-DSA and harness audit also runs 10 000 seeded random cases
+(`pq_verify/accumulated.py`) and compares a SHAKE-128 digest of every output
+with a pinned value: the **Accumulated** column above. Fixed vectors cover
+the cases someone chose; these reach the rest. A planted bug that returns a
+wrong shared key on about 1 ciphertext in 8 192 passes every NIST, Wycheproof
+and CCTV vector, and the accumulated run catches it. Coverage is
+probabilistic: a bug rarer than about 1 in 10 000 operations may not be hit.
+
+| Scheme | Construction | Pinned digests |
+|---|---|---|
+| ML-DSA | C2SP CCTV `ML-DSA/accumulated` | CCTV's, as published (final FIPS 204: dilithium-py, PQClean, mldsa-native, the pq-crystals reference and CIRCL all reproduce them) |
+| ML-KEM-768 | Go's `crypto/mlkem` TestAccumulated | Go's, as published (100 and 10 000 cases) |
+| ML-KEM-512, -1024 | the same | none is published for final FIPS 203; computed, and pinned because PQClean, kyber-py and CIRCL (and Go, for 1024) agree |
+
+**CCTV's published ML-KEM accumulated digests are the FIPS 203 draft.** They
+absorb dk as well, and are attributed to pq-crystals; with the draft's
+K-PKE.KeyGen hash G(d) in place of final FIPS 203's G(d ‖ k), pq-verify
+reproduces CCTV's ML-KEM-512 value exactly. No implementation of the final
+standard can match them -- every correct library would fail -- so pq-verify
+does not use them.
+
+## Any language, through Crucible-protocol harnesses
+
+`--audit-harness COMMAND PARAM_SET` audits an ML-KEM or ML-DSA implementation
+in any language through a harness that speaks
+[Crucible](https://github.com/symbolicsoft/crucible)'s JSON-line protocol.
+Crucible's harnesses cover Go's `crypto/mlkem`, CIRCL, Bouncy Castle, libcrux,
+AWS-LC, wolfCrypt, liboqs, noble and the Zig standard library.
+
+**What is taken from Crucible: the wire format only.** No Crucible test,
+verdict or exit code is used. Every check is pq-verify's — NIST's ACVP
+vectors, NIST's invalid keys, the Wycheproof/CCTV edge cases — scored by the
+same code as `--audit-kem` / `--audit-dsa`. The harness is untrusted:
+
+| Could have been assumed | What pq-verify does instead |
+|---|---|
+| The harness follows the protocol | It is checked. Crucible's protocol says `ML_DSA_Sign` takes FIPS 204's M′, but its CIRCL and liboqs harnesses sign M with an empty context. Which one a harness uses is settled against a NIST signature, and only what that convention can carry is sent. |
+| The harness is deterministic | Each operation is asked twice with the same inputs. Byte-exact checks a harness cannot be held to are not applicable, never passed. |
+| An error is the library refusing | Only once the harness has accepted its own fresh signature; otherwise CANNOT VERIFY, since none of its rejections can be scored. |
+| A crash, hang, or "unsupported" for an advertised function is a refusal | Never: CANNOT VERIFY. Scored as a refusal it would have passed every invalid-input check. |
+| The harness speaks for the library | Unprovable across a process boundary. The harness file is hashed; the library behind it is pinned only by the harness's own build (here, `go.sum`), and the report says a failure can be the harness's wiring. |
+
+Seed-form decapsulation keys (d ‖ z, which FIPS 203 §7.1 permits, as Go's
+`crypto/mlkem` does) are checked as such: keyGen requires the ek byte-exact
+and dk = d ‖ z, and NIST's expanded-key decapsulation cases are not
+applicable rather than failed.
+
+Crucible's harnesses at [`0522518`](https://github.com/symbolicsoft/crucible/commit/0522518e19559ef39ed1ff23643f52d2ac606084),
+built unmodified with Go 1.26.1 and re-audited in CI by
+`tools/harness_audit.py`:
+
+<!-- harness-audits:begin -->
+| Implementation (harness) | Parameter set | Result | Checks | Not applicable |
+|---|---|---|---|---|
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-512 | CANNOT VERIFY | 0/0 | 0 |
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-768 | **VERIFIED** | 1,469/1,469 | 31 |
+| Go standard library crypto/mlkem (Go 1.26.1) (`harnesses/go-stdlib`) | ML-KEM-1024 | **VERIFIED** | 1,735/1,735 | 31 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-512 | **VERIFIED** | 1,489/1,489 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-768 | **VERIFIED** | 1,500/1,500 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-1024 | **VERIFIED** | 1,766/1,766 | 0 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-44 | **VERIFIED** | 274/274 | 198 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-65 | **VERIFIED** | 313/313 | 208 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-87 | **VERIFIED** | 336/336 | 207 |
+<!-- harness-audits:end -->
+
+Go's `crypto/mlkem` has no ML-KEM-512, so its harness refuses that set:
+CANNOT VERIFY, not a finding. The CIRCL harness's ML-DSA cases that are not
+applicable are the internal, pre-hash and non-empty-context ones its
+convention cannot carry, and external μ, which the protocol cannot.
+
+Three places where Crucible's protocol and its harnesses disagree, found on
+the first runs:
+
+1. `ML_DSA_Sign` / `ML_DSA_Verify` "message": M′ in the protocol and
+   templates; M with an empty context in the CIRCL and liboqs harnesses.
+2. The verify signature input: `signature` in the README; `sigma` in the
+   test battery and the CIRCL harness. pq-verify sends both.
+3. Determinism: the liboqs harness's `ML_DSA_KeyGen` ignores its seed, so
+   byte-exact checks through it are not applicable.
 
 ## Which implementations can be audited by symbol
 
