@@ -339,6 +339,8 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
     doc["symbols"] = result.get("symbols", {})
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "findings": 0 if p == t else 1}
+    if result.get("accumulated"):
+        doc["accumulated"] = result["accumulated"]
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}
     keycheck = result.get("keycheck") or {}
@@ -362,6 +364,10 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
             continue
         if k in _edge_msg:
             findings.append(_edge_msg[k](v[0], v[1]))
+            continue
+        if k == "accumulated":
+            findings.append("stage accumulated: " + (result.get("accumulated") or {}).get(
+                "detail", "CCTV accumulated vectors did not match"))
             continue
         m = keycheck.get(k)
         if m is None:
@@ -420,6 +426,10 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
     acvp_fail = result.get("failures") or []
     edge_fail = edge.get("failures") or []
     for k, v in (result.get("detail") or {}).items():
+        if k == "accumulated" and v[0] != v[1]:
+            findings.append("ML-DSA: stage accumulated: " + (result.get("accumulated") or {})
+                            .get("detail", "CCTV accumulated vectors did not match"))
+            continue
         if v[0] != v[1]:
             what = ("Wycheproof edge cases handled as specified" if k.startswith("edge:")
                     else "verdicts match NIST" if k.startswith("sigVer")
@@ -435,6 +445,8 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
             findings.append(f"ML-DSA: stage {k}: {v[0]}/{v[1]} {what}{where}")
     for r in result.get("rng") or []:
         findings.append(f"ML-DSA: randomness: {r}")
+    if result.get("accumulated"):
+        doc["accumulated"] = result["accumulated"]
     doc["failures"] = result.get("failures", [])
     doc["findings"] = findings
     doc["summary"] = {"checks_passed": p, "checks_total": t,

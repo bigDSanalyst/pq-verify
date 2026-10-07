@@ -51,6 +51,10 @@
             "edgeLength": [
               60,
               60
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 31
@@ -81,6 +85,10 @@
             "edgeLength": [
               60,
               60
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 31
@@ -130,6 +138,10 @@
             "edgeLength": [
               64,
               64
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 0
@@ -172,6 +184,10 @@
             "edgeLength": [
               64,
               64
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 0
@@ -214,6 +230,10 @@
             "edgeLength": [
               64,
               64
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 0
@@ -244,6 +264,10 @@
             "edge:edgeLength": [
               7,
               7
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 198
@@ -274,6 +298,10 @@
             "edge:edgeLength": [
               7,
               7
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 208
@@ -304,6 +332,10 @@
             "edge:edgeLength": [
               7,
               7
+            ],
+            "accumulated": [
+              1,
+              1
             ]
           },
           "not_applicable": 207

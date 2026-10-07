@@ -296,6 +296,19 @@ PQC evidence.
 "Being realigned toward" is a direction, not a capability: until an engine
 checks a post-quantum implementation, it is reported under its own track.
 
+### Accumulated vectors: 10 000 random cases, one digest
+
+Every `--audit-kem`, `--audit-dsa` and `--audit-harness` run also drives
+10 000 seeded random cases through the library and compares a SHAKE-128
+digest of every output with a pinned value -- the way Go and BoringSSL test
+themselves. Fixed vectors cover the edge cases someone thought of; these
+reach the ones nobody did (a planted bug that fires on 1 ciphertext in 8 192
+passes every NIST, Wycheproof and CCTV vector and is caught here). Coverage is
+probabilistic: bugs rarer than about 1 in 10 000 operations may not be hit.
+ML-DSA digests are C2SP CCTV's; ML-KEM's are Go's, because CCTV's published
+ML-KEM digests turn out to be the FIPS 203 draft
+([details](pq_verify/accumulated.py)). `--accumulated 0` skips them.
+
 ### Any language: Crucible-protocol harnesses
 
 `pq-verify --audit-harness './harness-go-stdlib' ML-KEM-768` audits an

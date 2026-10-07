@@ -193,7 +193,7 @@ def _deterministic(f, *args):
         return False
 
 
-def run_kem(h, param_set, load, edge=True):
+def run_kem(h, param_set, load, edge=True, accumulated=0):
     from .edge import run_kem as edge_kem, kem_cases
     h.need("ML_KEM_KeyGen", "ML_KEM_Encaps", "ML_KEM_Decaps")
     b = HarnessKEM(h, param_set)
@@ -304,6 +304,17 @@ def run_kem(h, param_set, load, edge=True):
             n = len(kem_cases(param_set))
             na["edge"] = (n, "the edge cases need deterministic key generation and "
                              "encapsulation, which this harness does not provide")
+    if accumulated:
+        from . import accumulated as _acc
+        if not (det_kg and det_en):
+            na["accumulated"] = (1, "CCTV accumulated vectors need deterministic key "
+                                    "generation and encapsulation")
+        else:
+            ok, why = _acc.run_kem(b, param_set, accumulated, seed_dk=b.seed_dk)
+            tally["accumulated"] = (int(ok), 1)
+            if not ok:
+                failures.append({"stage": "accumulated", "case": f"{accumulated} cases",
+                                 "detail": why})
     if edge_res and edge_res.get("not_applicable"):
         na["edge"] = (edge_res["not_applicable"], why_seed if b.seed_dk else
                       "inputs this harness cannot be handed")
@@ -490,7 +501,7 @@ class HarnessDSA:
         return pk, self.sign_pure(bytes.fromhex(msg), ctx, r, sk)
 
 
-def run_dsa(h, param_set, load, edge=True):
+def run_dsa(h, param_set, load, edge=True, accumulated=0):
     from .dsa_audit import run_acvp
     from .edge import run_dsa as edge_dsa
     h.need("ML_DSA_KeyGen", "ML_DSA_Sign", "ML_DSA_Verify")
@@ -512,6 +523,12 @@ def run_dsa(h, param_set, load, edge=True):
                                                  "external mu)")
         failures.extend({"stage": "edge:" + f["stage"], "case": f["case"],
                          "detail": f["detail"]} for f in res["failures"][:20])
+    if accumulated:
+        from .dsa_audit import run_accumulated
+        acc = run_accumulated(v, param_set, accumulated, tally, na)
+        if acc and not acc["ok"]:
+            failures.append({"stage": "accumulated", "case": f"{accumulated} cases",
+                             "detail": acc["detail"]})
     return tally, na, failures, {"keyGen": v.det_keygen, "sign": v.det_sign,
                                  "message": v.convention}
 
@@ -536,7 +553,7 @@ def harness_executable(argv):
 
 
 def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
-                           verbose=True, edge=True):
+                           verbose=True, edge=True, accumulated=10_000):
     """Audit the implementation behind a Crucible-protocol harness.
 
     `command` is the harness command line (a string, split with shlex, or a
@@ -566,7 +583,8 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
             print(f"  vectors : {base['vectors']}")
             print("=" * 68)
         runner = run_kem if kem else run_dsa
-        tally, na, failures, det = runner(h, param_set, load, edge=edge)
+        tally, na, failures, det = runner(h, param_set, load, edge=edge,
+                                          accumulated=accumulated)
         calls = h.calls
     except HarnessDied as exc:
         if verbose:

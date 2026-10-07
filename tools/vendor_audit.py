@@ -276,6 +276,8 @@ def check_all(rows, workdir):
         for ps in row["sets"]:
             want = {k: list(v) for k, v in row["expected"].items()}
             want.update({k: list(v) for k, v in row["edge"][ps].items()})
+            if "accumulated" in row:
+                want["accumulated"] = list(row["accumulated"][ps])
             label = f"{row['library']} @ {row['commit'][:7]} {ps}"
             try:
                 so = build(row["build"], src, ps, workdir)
@@ -292,7 +294,7 @@ def check_all(rows, workdir):
             if got is None:
                 print("         pq-verify could not audit it (entry points not resolved)")
                 continue
-            for s in STAGES + EDGE_STAGES:
+            for s in STAGES + EDGE_STAGES + ("accumulated",):
                 if got.get(s) != want.get(s):
                     print(f"         {s:8s} recorded {want.get(s)}  now {got.get(s)}")
     if failures:
@@ -543,28 +545,31 @@ def edge_total(row):
 
 def markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck "
-             "| dkCheck | Edge cases | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "| dkCheck | Edge cases | Accumulated | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         e = row["expected"]
         p, t = total(e)
         ep, et = edge_total(row)
-        ok = p == t and ep == et
+        acc = row.get("accumulated", {})
+        ap, at = (sum(acc[ps][i] for ps in acc) for i in (0, 1))
+        ok = p == t and ep == et and ap == at
         verdict = "**VERIFIED**" if ok else "findings"
         sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
         cells = [f"{e[s][0]}/{e[s][1]}" for s in STAGES]
         lines.append(f"| {row['library']} | [`{row['commit'][:7]}`]"
                      f"({row['url']}/commit/{row['commit']}) ({row['date']}) "
                      f"| {sets} | " + " | ".join(cells) +
-                     f" | {ep:,}/{et:,} | {p}/{t} + {ep:,}/{et:,} {verdict} |")
+                     f" | {ep:,}/{et:,} | {f'{ap}/{at}' if at else '—'} "
+                     f"| {p}/{t} + {ep:,}/{et:,}{f' + {ap}/{at}' if at else ''} {verdict} |")
     return "\n".join(lines)
 
 
 def dsa_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ "
              "| sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length "
-             "| Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "| Accumulated | Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stages):
             out = []
@@ -584,7 +589,7 @@ def dsa_markdown(rows):
             sets, cell(["keyGen"]),
             cell(["sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGenMu"]),
             cell(["sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu"]),
-            cell(list(DSA_EDGE_STAGES)), f"{na:,}",
+            cell(list(DSA_EDGE_STAGES)), cell(["accumulated"]), f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
     return "\n".join(lines)

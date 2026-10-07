@@ -216,6 +216,11 @@ def build_parser():
                         "invalid keys and the Wycheproof/CCTV edge cases, e.g. "
                         "--audit-harness './harness-circl' ML-KEM-768. COMMAND is "
                         "split like a shell command line")
+    p.add_argument("--accumulated", type=int, metavar="N",
+                   help="with --audit-kem / --audit-dsa / --audit-harness: run N of C2SP "
+                        "CCTV's accumulated cases (seeded random keygen/encaps/decaps or "
+                        "keygen/sign, hashed and compared with CCTV's published digest). "
+                        "Default 10000; 100 for a quick ML-DSA run; 0 to skip")
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
@@ -304,6 +309,8 @@ def main(argv=None):
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
+            ("--accumulated", args.accumulated is not None,
+             args.audit_kem or args.audit_dsa or args.audit_harness),
             ("--kem-keypair", args.kem_keypair, args.audit_kem),
             ("--kem-encaps", args.kem_encaps, args.audit_kem),
             ("--kem-decaps", args.kem_decaps, args.audit_kem),
@@ -316,11 +323,25 @@ def main(argv=None):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
+                       "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
                        "--audit-timeout": "an --audit-* task"}.get(
                 _flag, "--audit-dsa" if _flag.startswith("--dsa") else "--audit-kem")
             print(f"  {_flag} does nothing without {_parent}")
+            return 2
+    # --accumulated N must be a count CCTV publishes a digest for, for every
+    # parameter set this run audits: an unpublished count checks nothing.
+    from .accumulated import counts as _acc_counts, DEFAULT as _ACC_DEFAULT
+
+    def _acc_n(ps):
+        return _ACC_DEFAULT if args.accumulated is None else args.accumulated
+    for _ps_req in [x[1] for x in (args.audit_kem, args.audit_dsa, args.audit_harness) if x]:
+        _n = _acc_n(_ps_req)
+        if _n and _acc_counts(_ps_req) and _n not in _acc_counts(_ps_req):
+            print(f"  --accumulated {_n}: CCTV publishes no {_n}-case digest for "
+                  f"{_ps_req}; available: {', '.join(map(str, _acc_counts(_ps_req))) or 'none'}"
+                  f" (0 to skip)")
             return 2
     if args.no_fail and args.fail_on_finding:
         print("  --no-fail and --fail-on-finding contradict each other")
@@ -486,7 +507,7 @@ def main(argv=None):
             kem_result, _loaded, kem_reason = _isolated(
                 args, "pq_verify.core", "pqverify_audit_kem", _p, _ps,
                 keypair=args.kem_keypair, encaps=args.kem_encaps,
-                decaps=args.kem_decaps)
+                decaps=args.kem_decaps, accumulated=_acc_n(_ps))
             _bound = _bind_loaded(kem_artifact, _loaded)
             kem_reason = kem_reason or _bound
             if kem_reason:
@@ -524,7 +545,7 @@ def main(argv=None):
         try:
             dsa_result, _loaded, dsa_reason = _isolated(
                 args, "pq_verify.dsa_audit", "pqverify_audit_dsa", _p, _ps,
-                abi=args.dsa_abi, symbols=_syms, **_vsrc)
+                abi=args.dsa_abi, symbols=_syms, accumulated=_acc_n(_ps), **_vsrc)
             _bound = _bind_loaded(dsa_artifact, _loaded)
             dsa_reason = dsa_reason or _bound
             if dsa_reason:
@@ -593,7 +614,8 @@ def main(argv=None):
         print(f"  artifact: {har_artifact['summary']}  (the harness)")
         _t = args.audit_timeout
         har_result = pqverify_audit_harness(
-            _argv, _ps, timeout=60 if _t is None else (_t or None))
+            _argv, _ps, timeout=60 if _t is None else (_t or None),
+            accumulated=_acc_n(_ps))
     hbsa_result = hbsa_reason = hbsa_artifact = None
     hbsa_ran = bool(getattr(args, "audit_hbs", None))
     if hbsa_ran:

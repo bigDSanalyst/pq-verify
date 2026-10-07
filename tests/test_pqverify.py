@@ -5303,6 +5303,7 @@ def _harness_audit(fault, ps, **kw):
     pytest.importorskip("kyber_py")
     pytest.importorskip("dilithium_py")
     from pq_verify.harness_audit import pqverify_audit_harness
+    kw.setdefault("accumulated", 100)          # the 10 000-case run is CI's job
     with contextlib.redirect_stdout(io.StringIO()):
         return pqverify_audit_harness(_ref_harness(fault), ps, verbose=False, **kw)
 
@@ -5437,3 +5438,99 @@ def test_harness_rows_are_pinned_and_published():
     assert published == mod.markdown(table).strip(), (
         "AUDITS.md is out of date: paste `python3 tools/harness_audit.py --markdown` "
         "between the harness-audits markers")
+
+
+
+# ----------------------------------------------------------------------
+# Accumulated vectors (pq_verify/accumulated.py): seeded random cases hashed
+# into one digest, pinned with its provenance.
+# ----------------------------------------------------------------------
+
+class _RefKEM:
+    """kyber-py behind the accumulated backend contract, with one planted
+    fault: `corrupt(i, ek, c, K) -> (ek, c, K)` on the i-th case."""
+
+    def __init__(self, ps, corrupt=None):
+        from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
+        self.r = {"ML-KEM-512": ML_KEM_512, "ML-KEM-768": ML_KEM_768,
+                  "ML-KEM-1024": ML_KEM_1024}[ps]
+        self.corrupt, self.i = corrupt, -1
+
+    def keygen(self, d, z):
+        self.i += 1
+        return self.r._keygen_internal(d, z)
+
+    def encaps(self, ek, m):
+        K, c = self.r._encaps_internal(ek, m)
+        if self.corrupt:
+            _, c, K = self.corrupt(self.i, ek, c, K)
+        return c, K
+
+    def decaps(self, dk, c):
+        return self.r._decaps_internal(dk, c)
+
+
+def test_accumulated_reproduces_every_pinned_100_case_digest():
+    """pq-verify's references reproduce the pinned digests: Go's published
+    ML-KEM-768 value, the cross-checked ML-KEM-512/1024 values, and CCTV's
+    ML-DSA values."""
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
+    from pq_verify import accumulated as A
+    for ps in ("ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"):
+        ok, why = A.run_kem(_RefKEM(ps), ps, 100)
+        assert ok, why
+
+    class RefDSA:
+        def __init__(self, r):
+            self.r = r
+
+        def keygen(self, seed):
+            return self.r._keygen_internal(seed)
+
+        def sign_pure(self, m, ctx, rnd, sk):
+            return self.r._sign_internal(sk, bytes([0, len(ctx)]) + ctx + m, rnd)
+
+        def verify_pure(self, m, ctx, sig, pk):
+            return self.r._verify_internal(pk, bytes([0, len(ctx)]) + ctx + m, sig)
+    for ps, r in (("ML-DSA-44", ML_DSA_44), ("ML-DSA-65", ML_DSA_65), ("ML-DSA-87", ML_DSA_87)):
+        ok, why = A.run_dsa(RefDSA(r), ps, 100)
+        assert ok, why
+
+
+def test_accumulated_catches_one_wrong_case_in_a_hundred():
+    pytest.importorskip("kyber_py")
+    from pq_verify import accumulated as A
+    # a ciphertext bit wrong in case 37 only: the digest moves
+    flip_c = lambda i, ek, c, K: (ek, bytes([c[0] ^ 1]) + c[1:], K) if i == 37 else (ek, c, K)
+    ok, why = A.run_kem(_RefKEM("ML-KEM-512", flip_c), "ML-KEM-512", 100)
+    assert not ok
+    # a shared key wrong in case 61 only: Decaps disagrees, named by case
+    flip_k = lambda i, ek, c, K: (ek, c, bytes([K[0] ^ 1]) + K[1:]) if i == 61 else (ek, c, K)
+    ok, why = A.run_kem(_RefKEM("ML-KEM-512", flip_k), "ML-KEM-512", 100)
+    assert not ok and why.startswith("case 61:")
+
+
+def test_cctv_mlkem_accumulated_digests_are_the_fips203_draft():
+    """CCTV's README ML-KEM digests use the draft's K-PKE.KeyGen G(d), not
+    final FIPS 203's G(d || k): with the draft derivation a reference
+    reproduces CCTV's ML-KEM-512 value, so a final-FIPS-203 library can never
+    match it. Checked on 100 cases against pq-verify's own draft run."""
+    from pq_verify import accumulated as A
+    src = pathlib.Path(A.__file__).read_text()
+    assert "845913ea5a308b803c764a9ed8e9d814ca1fd9c82ba43c7b1e64b79c7a6ec8e4" not in src
+    assert "f7db260e1137a742e05fe0db9525012812b004d29040a5b606aad3d134b548d3" not in src
+    assert A.EXPECTED["ML-KEM-768"][10_000][0] == \
+        "8a518cc63da366322a8e7a818c7a0d63483cb3528d34a4cf42f35d5ad73f22fc"   # Go's
+    for ps in ("ML-KEM-512", "ML-KEM-1024"):
+        assert "no final-FIPS-203 value is published" in A.EXPECTED[ps][10_000][1]
+
+
+def test_accumulated_cli_validates_the_count():
+    code, out = _cli("--audit-kem", "x.so", "ML-KEM-768", "--accumulated", "100")
+    assert code != 2 or "publishes no" not in out       # 100 is published for 768
+    code, out = _cli("--audit-kem", "x.so", "ML-KEM-768", "--accumulated", "123")
+    assert code == 2 and "no 123-case digest" in out
+    code, out = _cli("--accumulated", "100")
+    assert code == 2 and "does nothing without" in out

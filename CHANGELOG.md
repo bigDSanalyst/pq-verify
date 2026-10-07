@@ -5,6 +5,33 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — accumulated vectors
+
+- **10 000 seeded random cases per audit**, hashed into one digest and
+  compared with a pinned value: ML-KEM (keyGen, encaps, decaps of the right
+  and of a random ciphertext) and ML-DSA (keyGen, deterministic signing,
+  verification), the way Go and BoringSSL test themselves. On by default for
+  `--audit-kem`, `--audit-dsa` and `--audit-harness`; `--accumulated N`
+  chooses 100 or 10 000, `0` skips. A stage of its own (`accumulated`) in
+  every report, with where its digest comes from.
+- They reach what no fixed vector set does. A planted bug that returns a
+  wrong shared key on about 1 ciphertext in 8 192 passes every NIST,
+  Wycheproof and CCTV vector and is caught by the accumulated run (ML-KEM-512
+  and -768; at 1024 its trigger never came up in 10 000 cases -- coverage is
+  probabilistic, and the docs say so).
+- **C2SP CCTV's published ML-KEM accumulated digests are the FIPS 203
+  draft.** With the draft's K-PKE.KeyGen G(d) instead of the final
+  G(d || k), pq-verify reproduces CCTV's ML-KEM-512 value exactly; no
+  final-FIPS-203 implementation can match them, so every correct library
+  would have failed. pq-verify uses Go's construction and Go's published
+  ML-KEM-768 digests instead, and pins ML-KEM-512/1024 digests computed only
+  where independent implementations agree (PQClean, kyber-py, CIRCL, Go),
+  labelled as computed, not published. CCTV's ML-DSA digests are final FIPS
+  204 and are used as published.
+- Every pinned library passes: mlkem-native, PQClean (ML-KEM and ML-DSA),
+  mldsa-native, the pq-crystals reference; through harnesses, Go
+  `crypto/mlkem` and CIRCL. The vendor-audit tables gain the column.
+
 ### Added — audit any language through Crucible-protocol harnesses
 
 - **`--audit-harness COMMAND PARAM_SET`** audits an ML-KEM or ML-DSA

@@ -14,6 +14,8 @@ it (or to refuse to score it):
                  Crucible's battery sends it and its CIRCL harness reads it
   seed-dk        keeps decapsulation keys as the seed d || z, as Go's
                  crypto/mlkem does (correct; FIPS 203 §7.1 allows it)
+  rare-encaps    a wrong shared key on about 1 ciphertext in 8192 (c[0] == 0
+                 and c[1] < 8): a bug only random coverage reaches
   crash-after=N  exits after N requests
   hang-after=N   stops answering after N requests
   lie-unsupported  answers "unsupported" for Decaps, which it advertises
@@ -64,6 +66,8 @@ def handle(req):
             c = kem._k_pke_encrypt(reduced, i["randomness"], r)
         else:
             K, c = kem._encaps_internal(i["ek"], i["randomness"])
+        if FAULT == "rare-encaps" and c[0] == 0 and c[1] < 8:
+            K = bytes([K[0] ^ 1]) + K[1:]
         return {"c": c, "K": K}
     if fn == "ML_KEM_Decaps":
         if FAULT == "lie-unsupported":
