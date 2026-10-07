@@ -86,3 +86,19 @@ The XMSS vectors carry signatures in signed-message form (`sig ‖ M`, as
 xmss-reference emits them); pq-verify strips M and requires the appended copy
 to equal the message. One file omits the OID from its public keys.
 
+
+
+## FN-DSA (Falcon) vectors — draft track, ahead of FIPS 206
+
+NIST publishes no FN-DSA vectors yet. `fndsa_vectors.json.gz` holds the
+outputs of PQClean's own generators for Falcon-512 and Falcon-1024, run on
+PQClean's reference code; `FNDSA_MANIFEST.json` records, for each file, its
+sha256 and, separately, the sha256 PQClean publishes for it in the scheme's
+`META.yml`. The two must agree. `tools/pin_fndsa_vectors.py` rebuilds them
+from a checkout at the pinned commit and refuses any output that differs;
+`--check` and `tools/doctor.py` re-verify offline. Reports label them as
+PQClean's and as draft-track, never as NIST's.
+
+| Source | Commit | Files |
+|---|---|---|
+| [PQClean/PQClean](https://github.com/PQClean/PQClean) | `0586a82` (2026-08-04) | `crypto_sign/falcon-{512,1024}`: `nistkat` (NIST's KAT harness and DRBG, first record) and `testvectors` (messages of 0–1024 bytes, signed and detached) |

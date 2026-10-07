@@ -1,0 +1,57 @@
+{
+  "files": {
+    "pqclean/falcon-1024/nistkat": {
+      "bytes": 11034,
+      "kind": "nistkat",
+      "label": "PQClean Falcon reference (round 3), FIPS 206 draft track",
+      "path": "crypto_sign/falcon-1024/META.yml (nistkat-sha256)",
+      "set": "FN-DSA-1024",
+      "sha256": "e699d88eb214fef30597385f40814baeb84ac505d5f05f5c257b0726fc4530b8",
+      "source": "pqclean"
+    },
+    "pqclean/falcon-1024/testvectors": {
+      "bytes": 95734,
+      "kind": "testvectors",
+      "label": "PQClean Falcon reference (round 3), FIPS 206 draft track",
+      "path": "crypto_sign/falcon-1024/META.yml (testvectors-sha256)",
+      "set": "FN-DSA-1024",
+      "sha256": "3814197113f1e4626d44ca49206dae0fbbeb504ab9207bd9a33b6a7439b2a6d0",
+      "source": "pqclean"
+    },
+    "pqclean/falcon-512/nistkat": {
+      "bytes": 5965,
+      "kind": "nistkat",
+      "label": "PQClean Falcon reference (round 3), FIPS 206 draft track",
+      "path": "crypto_sign/falcon-512/META.yml (nistkat-sha256)",
+      "set": "FN-DSA-512",
+      "sha256": "da27fe8a462de7307ddf1f9b00072a457d9c5b14e838c148fbe2662094b9a2ca",
+      "source": "pqclean"
+    },
+    "pqclean/falcon-512/testvectors": {
+      "bytes": 51616,
+      "kind": "testvectors",
+      "label": "PQClean Falcon reference (round 3), FIPS 206 draft track",
+      "path": "crypto_sign/falcon-512/META.yml (testvectors-sha256)",
+      "set": "FN-DSA-512",
+      "sha256": "e6d6d5b0ee34ccdeabfc9d7e5487adafedec13b425f2fe991a1fa6efff3be68a",
+      "source": "pqclean"
+    }
+  },
+  "sources": {
+    "pqclean": {
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "published": {
+        "FN-DSA-1024": {
+          "nistkat": "e699d88eb214fef30597385f40814baeb84ac505d5f05f5c257b0726fc4530b8",
+          "testvectors": "3814197113f1e4626d44ca49206dae0fbbeb504ab9207bd9a33b6a7439b2a6d0"
+        },
+        "FN-DSA-512": {
+          "nistkat": "da27fe8a462de7307ddf1f9b00072a457d9c5b14e838c148fbe2662094b9a2ca",
+          "testvectors": "e6d6d5b0ee34ccdeabfc9d7e5487adafedec13b425f2fe991a1fa6efff3be68a"
+        }
+      },
+      "repo": "https://github.com/PQClean/PQClean"
+    }
+  }
+}

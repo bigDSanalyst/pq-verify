@@ -2599,7 +2599,8 @@ def _doctor_repo(tmp_path, history=None):
     (repo / "tools" / "vector_state").mkdir(parents=True)
     for f in ("acvp_vectors.json.gz", "slhdsa_sig_vectors.json.gz", "MANIFEST.json",
               "edge_vectors.json.gz", "EDGE_MANIFEST.json",
-              "hbs_vectors.json.gz", "HBS_MANIFEST.json"):
+              "hbs_vectors.json.gz", "HBS_MANIFEST.json",
+              "fndsa_vectors.json.gz", "FNDSA_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
                 repo / "tools" / "vector_state" / "baseline.json")
@@ -4990,3 +4991,142 @@ def test_cpp_engines_build_as_cpp17(monkeypatch):
     core._cc("g++", "-O3 -shared -fPIC -lm", "o.so", "s.cpp")
     core._cc("gcc", "-O3 -shared -fPIC -lm", "o.so", "s.c")
     assert "-std=c++17" in seen[0] and "-std=c++17" not in seen[1]
+
+
+# ----------------------------------------------------------------------
+# FN-DSA (Falcon), DRAFT TRACK ahead of FIPS 206: pq_verify.fndsa checked
+# against PQClean's Falcon outputs, pinned to the sha256 PQClean publishes.
+# ----------------------------------------------------------------------
+
+def test_fndsa_suite_verifies_with_its_full_count():
+    from pq_verify.fndsa import pqverify_fndsa
+    r = pqverify_fndsa(verbose=False)
+    assert r["verified"] and r["passed"] == r["total"] == 188, r["failures"]
+    assert r["track"] == "draft" and "FIPS 206" in r["standard"]
+    stages = set(r["detail"])
+    for name in ("FN-DSA-512", "FN-DSA-1024"):
+        assert f"{name} verify (NIST-API signed message)" in stages
+        assert f"{name} rejects: a zero coefficient encoded as -0" in stages
+    if r["native_engine"]:
+        assert "FN-DSA-1024 NTT on the native Z_q engine" in stages
+
+
+def test_fndsa_vectors_are_pqclean_published_outputs():
+    """Every pinned file hashes to the value in PQClean's META.yml, which the
+    manifest records separately from the file's own digest."""
+    import json
+    from pq_verify import fndsa as F
+    assert F.bundle_problems() == []
+    m = json.loads(pathlib.Path(F.MANIFEST).read_text())
+    pub = m["sources"]["pqclean"]["published"]
+    assert pub["FN-DSA-512"]["nistkat"] == \
+        "da27fe8a462de7307ddf1f9b00072a457d9c5b14e838c148fbe2662094b9a2ca"
+    assert pub["FN-DSA-1024"]["testvectors"] == \
+        "3814197113f1e4626d44ca49206dae0fbbeb504ab9207bd9a33b6a7439b2a6d0"
+    assert len(F.load_vectors()) == 30
+
+
+def test_fndsa_tampered_bundle_is_caught(tmp_path, monkeypatch):
+    import gzip, json
+    from pq_verify import fndsa as F
+    with gzip.open(F.BUNDLE, "rt") as fh:
+        b = json.load(fh)
+    key = sorted(b)[0]
+    b[key] = b[key].replace("A", "B", 1)
+    bad = tmp_path / "b.json.gz"
+    with gzip.open(bad, "wt") as fh:
+        json.dump(b, fh)
+    monkeypatch.setattr(F, "BUNDLE", str(bad))
+    assert F.bundle_problems()
+    assert not F.pqverify_fndsa(verbose=False)["verified"]
+
+
+def test_fndsa_decoder_that_accepts_minus_zero_fails_the_suite(monkeypatch):
+    """The -0 mutant would pass a norm check unchanged (-0 == 0), so only the
+    decoder can reject it; a decoder that forgets fails the suite."""
+    from pq_verify import fndsa as F
+    real = F.decompress
+
+    def lax(buf, n):
+        bits = "".join(f"{b:08b}" for b in buf)
+        try:
+            return real(buf, n)
+        except F.Reject as exc:
+            if "-0" not in str(exc):
+                raise
+        # clear every sign bit on a zero magnitude and decode again
+        pos, out = 0, list(bits)
+        for _ in range(n):
+            low = int(bits[pos + 1:pos + 8], 2)
+            start, pos = pos, pos + 8
+            high = 0
+            while bits[pos] == "0":
+                pos += 1
+                high += 1
+            pos += 1
+            if low == 0 and high == 0:
+                out[start] = "0"
+        fixed = "".join(out)
+        return real(bytes(int(fixed[i:i + 8], 2) for i in range(0, len(fixed), 8)), n)
+
+    monkeypatch.setattr(F, "decompress", lax)
+    r = F.pqverify_fndsa(verbose=False)
+    assert not r["verified"]
+    assert any("-0" in f["stage"] for f in r["failures"])
+
+
+def test_fndsa_verifier_without_norm_check_fails_the_suite(monkeypatch):
+    from pq_verify import fndsa as F
+    monkeypatch.setitem(F.PARAMS, 9, F.PARAMS[9][:2] + (10 ** 12,) + F.PARAMS[9][3:])
+    r = F.pqverify_fndsa(verbose=False)
+    assert not r["verified"]
+    assert any(f["stage"] == "FN-DSA-512 rejects: message bit flipped" for f in r["failures"])
+
+
+def test_fndsa_native_engine_catches_a_wrong_butterfly():
+    from pq_verify import fndsa as F
+    lib = F.native_zq()
+    if not lib:
+        pytest.skip("gcc not available")
+    import random
+    f = [random.Random(1).randrange(F.Q) for _ in range(512)]
+    assert F._native_layers(lib, 9, f) == (True, 9 * 256)
+    real = F.ntt_layers
+
+    def off_by_one(g, logn):
+        s = real(g, logn)
+        s[5][17] = (s[5][17] + 1) % F.Q
+        return s
+    try:
+        F.ntt_layers = off_by_one
+        assert F._native_layers(lib, 9, f)[0] is False
+    finally:
+        F.ntt_layers = real
+
+
+def test_fndsa_codec_and_ntt_definitions():
+    import random
+    from pq_verify import fndsa as F
+    rng = random.Random(5)
+    s = [rng.randint(-2047, 2047) for _ in range(512)]
+    enc = F.compress(s)
+    assert F.decompress(enc, 512) == (s, len(enc))
+    with pytest.raises(F.Reject):
+        F.decompress(F.compress([2048] + s[1:]), 512)
+    for logn in (9, 10):
+        a = [rng.randrange(F.Q) for _ in range(1 << logn)]
+        b = [rng.randrange(F.Q) for _ in range(1 << logn)]
+        assert F.poly_mul(a, b, logn) == F.poly_mul_schoolbook(a, b)
+    c = F.hash_to_point(b"\x00" * 40, b"msg", 1024)
+    assert len(c) == 1024 and all(0 <= x < F.Q for x in c)
+
+
+def test_fndsa_cli_reports_the_draft_track(tmp_path):
+    import json
+    code, out = _cli("--fndsa", "--json", str(tmp_path / "f.json"))
+    assert code == 0, out
+    assert "DRAFT TRACK" in out
+    doc = json.loads((tmp_path / "f.json").read_text())
+    assert doc["schema"] == "pq-verify/fndsa-result"
+    assert doc["track"] == "draft" and doc["standard"] == "FIPS 206 (draft)"
+    assert doc["verified"] and doc["summary"]["checks_total"] == 188

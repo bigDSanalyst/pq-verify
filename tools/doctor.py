@@ -56,7 +56,8 @@ from pq_verify.core import _VECTOR_BUNDLES, _bundle_name      # noqa: E402
 
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
 PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
-               "edge:manifest", "references:edge", "hbs:manifest")
+               "edge:manifest", "references:edge", "hbs:manifest",
+               "fndsa:manifest")
 STABLE_DAYS = 14          # NIST has reverted files within a day; wait this long
 REFERENCES = ("kyber-py", "dilithium-py", "slh-dsa")
 SUITES = {                # the runner for each vector directory prefix
@@ -305,6 +306,26 @@ def check_hbs_manifest(repo=REPO):
     src = ", ".join(f"{k} {s['commit'][:7]}" for k, s in sorted(m["sources"].items()))
     return Check("hbs:manifest", OK, f"LMS/XMSS vectors: {len(m['files'])} files match "
                  f"HBS_MANIFEST.json ({src})")
+
+
+def check_fndsa_manifest(repo=REPO):
+    """The FN-DSA (draft track) bundle matches FNDSA_MANIFEST.json and the
+    sha256 PQClean publishes for each file, offline."""
+    import pin_fndsa_vectors as P
+    v = Path(repo) / "pq_verify" / "vectors"
+    bundle, manifest = v / "fndsa_vectors.json.gz", v / "FNDSA_MANIFEST.json"
+    if not bundle.exists() or not manifest.exists():
+        return Check("fndsa:manifest", BLOCK, "the FN-DSA bundle or its manifest is missing",
+                     fix="python3 tools/pin_fndsa_vectors.py")
+    problems = P.verify(bundle, manifest)
+    if problems:
+        return Check("fndsa:manifest", BLOCK,
+                     f"{len(problems)} FN-DSA file(s) do not match their pinned sha256",
+                     "\n".join(problems[:10]), "python3 tools/pin_fndsa_vectors.py")
+    m = json.loads(manifest.read_text())
+    return Check("fndsa:manifest", OK, f"FN-DSA vectors (draft track): {len(m['files'])} files "
+                 f"match FNDSA_MANIFEST.json and PQClean "
+                 f"{m['sources']['pqclean']['commit'][:7]}'s META.yml")
 
 
 def check_reference_edges():
@@ -643,6 +664,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
     checks.append(ref_check)
     checks.append(check_edge_manifest(repo))
     checks.append(check_hbs_manifest(repo))
+    checks.append(check_fndsa_manifest(repo))
     if not skip_edge:
         checks.append(check_reference_edges())
     up, moved = check_upstream_state(manifest, baseline, history)
