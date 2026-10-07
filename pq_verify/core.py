@@ -4455,7 +4455,7 @@ _E6_CHECKS = {
     'quintic': ('Engine 6c: rank-4 mirror quintic',
                 ['Theorem 1 entry-wise, rank-4 CY3', 'tr[U,Q]^3 = 0 (Observation 4, CY3)',
                  'f2(z) matches Paper 7 closed form',
-                 'Conjecture 7: CY3 residue rigidity (lambda_2, exact)']),
+                 'Conjecture 7: CY3 residue rigidity']),
     'genus4':  ('Engine 6d: rank-8 genus-4 (NEW)',
                 ['Theorem 1 entry-wise, rank 8',
                  'Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0',
