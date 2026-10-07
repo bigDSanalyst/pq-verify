@@ -493,7 +493,15 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   check accepts the signature, where a looser test would have been refused
   by the norm check and hidden the gap.
 - **keyGen:** the library's public keys are canonical and belong to their
-  secret keys (`h·f = g mod q`).
+  secret keys (`h·f = g mod q`), and every secret key is a valid Falcon key,
+  checked exactly in integers and rationals, never floating point: G is
+  recomputed as `g·F/f mod q` and `f·G − g·F = q` must hold in
+  ℤ[x]/(xⁿ+1) with every coefficient of G within ±127; and both
+  Gram–Schmidt norms are below 1.17²·q (the reference's 16822.4121):
+  `‖(g, −f)‖²`, and `‖(q·f*/D, q·g*/D)‖² = q²·[1/D]₀` with `D = f·f* + g·g*`,
+  whose constant coefficient is computed as an exact rational through the
+  field-norm tower. A key with a wrong F, or one whose basis is too long for
+  the sampler's bounds, fails here even when its public key is right.
 - **sign:** the library's signatures verify under pq-verify's verifier and
   its own, are in range and canonically encoded, and never reuse a nonce.
   Signing is randomised, so it is checked for validity, not byte-for-byte; a
@@ -505,13 +513,18 @@ liboqs takes a key length, so the library would read past the buffer.
 <!-- vendor-audits-fndsa:begin -->
 | Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Not applicable | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 12/12 | 48/48 | 14 | 7/7 | 225/225 **VERIFIED** (draft) |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 14 | 8/8 | 243/243 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
 to fail it: a verifier that accepts `-0`, ignores nonzero padding bits,
 accepts a public-key coefficient ≥ q, ignores the public-key header or skips
-the norm bound; a signer that reuses one nonce or writes the wrong header.
+the norm bound; a signer that reuses one nonce or writes the wrong header;
+a key generator that stores an F that does not solve the NTRU equation
+(caught by keyGen, and by sign when the library then refuses its own key).
+The Gram–Schmidt bound has no mutant: a generator that skips it emits an
+over-long basis only now and then, so no planted bug fails it on every run;
+the test suite checks it on constructed keys instead.
 The first version of the audit missed the range-check mutant (its test key
 changed value mod q, so the norm check refused it); the mutant is why the
 `w + q` case exists.
