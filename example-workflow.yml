@@ -28,7 +28,7 @@ jobs:
           gcc -O2 -fPIC -shared -I. -o build/libmldsa65.so src/*.c "$HARNESS"
 
       - name: Verify against FIPS 204
-        uses: bigDSanalyst/pq-verify@v2.10.0
+        uses: bigDSanalyst/pq-verify@v2.11.0
         with:
           audit: dsa                  # kem | dsa | hbs | ntt
           library: build/libmldsa65.so
@@ -48,4 +48,4 @@ jobs:
   acvp:
     runs-on: ubuntu-latest
     steps:
-      - uses: bigDSanalyst/pq-verify@v2.10.0
+      - uses: bigDSanalyst/pq-verify@v2.11.0

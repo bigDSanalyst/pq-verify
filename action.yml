@@ -69,7 +69,7 @@ inputs:
     default: 'pq-verify.json'
   version:
     description: >
-      Which pq-verify to install. A bare version (e.g. '2.10.0') installs that
+      Which pq-verify to install. A bare version (e.g. '2.11.0') installs that
       release from PyPI. Prefix with 'git:' to install a ref from source (e.g.
       'git:main'). Default is the latest PyPI release.
     required: false

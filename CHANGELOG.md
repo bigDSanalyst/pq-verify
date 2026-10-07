@@ -5,6 +5,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-10-07
+
 ### Added — accumulated vectors
 
 - **10 000 seeded random cases per audit**, hashed into one digest and
