@@ -4904,7 +4904,23 @@ def test_engine_flags_that_do_not_travel_are_dropped(monkeypatch, tmp_path):
     proc = core._cc("gcc", "-O3 -march=native -shared -fPIC -lm -lrt", "o.so", "s.c")
     assert proc.returncode == 0
     assert all("-lrt" not in a for a in calls)
-    assert "-march=native" not in calls[-1]
+    # native tuning is kept under its arm64 spelling, not dropped
+    assert "-march=native" not in calls[-1] and "-mcpu=native" in calls[-1]
+    assert core.ENGINE_FLAGS["o.so"]["native"] is True
+
+
+def test_linux_engine_flags_are_unchanged(monkeypatch):
+    """On Linux the engines build with exactly the flags they always had."""
+    import pq_verify.core as core
+    calls = []
+
+    class P:
+        returncode, stdout, stderr = 0, "", ""
+    monkeypatch.setattr(core.subprocess, "run", lambda argv, **k: calls.append(argv) or P())
+    monkeypatch.setattr(core.sys, "platform", "linux")
+    core._cc("gcc", "-O3 -march=native -shared -fPIC -lm -lrt", "o.so", "s.c")
+    assert calls == [["gcc", "-O3", "-march=native", "-shared", "-fPIC", "-lm", "-lrt",
+                      "-o", "o.so", "s.c"]]
 
 
 def test_engine6_skip_names_are_the_checks_each_audit_records():

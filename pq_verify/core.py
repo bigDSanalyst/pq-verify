@@ -637,24 +637,42 @@ _ENGINES_ATTEMPTED = False
 ENGINE_ERRORS = {}
 
 
+# The flags each engine was actually built with, by output file: shows
+# whether native CPU tuning is in effect on this machine.
+ENGINE_FLAGS = {}
+
+
 def _cc(compiler, flags, out, src):
-    """Compile one engine. The flags are written for gcc on Linux; two do not
-    travel: -lrt (clock_gettime lives in libc on macOS, and there is no
-    librt) and -march=native (Apple clang on arm64 rejects it). An engine is
-    exact integer arithmetic, so tuning flags change its speed, never its
-    answers -- dropping one is safe, and failing to build is not."""
+    """Compile one engine, keeping its native tuning wherever the compiler
+    allows. The flags are written for gcc on Linux, where they are used
+    unchanged. Two do not travel: -lrt (macOS has no librt; clock_gettime is
+    in libc) and -march=native, which Apple clang on arm64 may reject -- its
+    spelling there is -mcpu=native, tried next, so Apple silicon still gets a
+    build tuned to its own CPU. Only if both are refused is the engine built
+    without CPU tuning: the engines are exact integer arithmetic, so that can
+    cost speed but never change an answer, and an engine that does not build
+    at all is worse."""
     flags = flags.split()
-    # The C++ engines are C++11 (constexpr, alias declarations). g++ defaults
-    # to a newer standard; Apple clang++ to C++98, where they do not compile.
+    # The C++ engines are C++11 (constexpr, alias declarations). g++ already
+    # defaults to C++17; Apple clang++ defaults to C++98, where they do not
+    # compile. Same code, same optimisation, either way.
     if compiler in ("g++", "c++", "clang++") and not any(f.startswith("-std=") for f in flags):
         flags.insert(0, "-std=c++17")
     if sys.platform == "darwin":
         flags = [f for f in flags if f != "-lrt"]
-    proc = subprocess.run([compiler, *flags, '-o', out, src],
-                          capture_output=True, text=True)
-    if proc.returncode != 0 and "-march=native" in flags:
-        proc = subprocess.run([compiler, *[f for f in flags if f != "-march=native"],
-                               '-o', out, src], capture_output=True, text=True)
+    attempts = [flags]
+    if "-march=native" in flags:
+        attempts.append([("-mcpu=native" if f == "-march=native" else f) for f in flags])
+        attempts.append([f for f in flags if f != "-march=native"])
+    for used in attempts:
+        proc = subprocess.run([compiler, *used, '-o', out, src],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            ENGINE_FLAGS[os.path.basename(out)] = {
+                "flags": " ".join(used),
+                "native_requested": len(attempts) > 1,
+                "native": any(f in used for f in ("-march=native", "-mcpu=native"))}
+            break
     return proc
 
 

@@ -211,6 +211,11 @@ jobs:
               msg = why.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print(f"::warning title=engine {name} did not build::{msg}")
           print("engines unavailable:", sorted(core.ENGINE_ERRORS) or "none")
+          for so, info in sorted(core.ENGINE_FLAGS.items()):
+              lost = info["native_requested"] and not info["native"]
+              print(f"::{'warning' if lost else 'notice'} title=engine {so}::built with "
+                    f"{info['flags']}" + (" -- native CPU tuning refused by the compiler"
+                                          if lost else ""))
           PY
       - name: Test suite (not slow)
         if: success() || failure()
