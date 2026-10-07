@@ -65,6 +65,8 @@ jobs:
 
       - name: LMS/HSS + XMSS/XMSS^MT, default budget
         run: python -m pq_verify.cli --lms-xmss --fail-on-finding
+      - name: FN-DSA (draft track) — PQClean vectors, rejections, native NTT
+        run: python -m pq_verify.cli --fndsa
 
       - name: Hybrid (RFC 10024) — prompt emits and round-trips
         run: |
@@ -231,6 +233,9 @@ jobs:
       - name: LMS/HSS + XMSS/XMSS^MT, default budget
         if: success() || failure()
         run: python -m pq_verify.cli --lms-xmss
+      - name: FN-DSA (draft track), native NTT on Apple clang
+        if: success() || failure()
+        run: python -m pq_verify.cli --fndsa
       - name: Self-suite (quick, gated)
         if: success() || failure()
         run: python -m pq_verify.cli --quick
@@ -297,6 +302,14 @@ jobs:
           r = pqverify_hbs(budget=0, verbose=False)
           assert r["verified"] and r["total"] == 1441, (r["passed"], r["total"])
           print("LMS/XMSS vectors present:", r["vectors"])
+          PY
+      - name: The wheel must carry the FN-DSA vectors
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          from pq_verify.fndsa import pqverify_fndsa
+          r = pqverify_fndsa(verbose=False)
+          assert r["verified"] and r["total"] == 188, (r["passed"], r["total"])
+          print("FN-DSA vectors present (draft track):", r["vectors"])
           PY
       - name: The wheel must carry the hybrid module
         run: |

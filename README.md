@@ -86,6 +86,7 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 pip install "pq-verify[full]"
 pq-verify --acvp-all            # 1566/1566, offline, no configuration, ~1 min
 pq-verify --slhdsa-siggen      # + SLH-DSA sigGen, 624 signatures, ~30 min
+pq-verify --fndsa              # FN-DSA verification, FIPS 206 DRAFT track, ~1 s
 ```
 
 That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
@@ -287,13 +288,33 @@ PQC evidence.
 
 | Track | Checks | What it verifies today | Being realigned toward |
 |---|---|---|---|
-| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): its NTT mod q = 12289, n = 512/1024 |
+| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](#draft-track-fn-dsa-fips-206)) |
 | Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
 | Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts, SafeCurves | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields), the ECDH half of **hybrid KEMs** |
 | Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | mod-p Hasse–Witt test vectors for isogeny schemes (SQIsign); correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations |
 
 "Being realigned toward" is a direction, not a capability: until an engine
 checks a post-quantum implementation, it is reported under its own track.
+
+### Draft track: FN-DSA (FIPS 206)
+
+`pq-verify --fndsa` checks FN-DSA (Falcon) **verification** ahead of the final
+FIPS 206. It is a separate task with its own report (`track: "draft"`,
+`standard: "FIPS 206 (draft)"`): it is not one of the 160 self-suite checks,
+not one of the 1566 ACVP vectors, and never part of a FIPS 203/204/205 verdict.
+
+| Check | What |
+|---|---|
+| Vectors | Falcon-512 and Falcon-1024 outputs of PQClean's reference code (NIST KAT harness + PQClean's deterministic generator), each pinned to the sha256 PQClean publishes for it in the scheme's metadata; 30 signatures, NIST-API signed messages and detached |
+| Rejections | for every detached signature, the inputs a verifier must refuse — altered message or nonce, a changed `s2` coefficient, the wrong header, `-0`, nonzero padding bits, trailing bytes, a public-key coefficient ≥ q — each required to fail **for the right reason** (an encoding error from the decoder, not a lucky norm check) |
+| Arithmetic | the NTT mod q = 12289 for n = 512 and 1024 against the negacyclic definition, and every butterfly of every layer through the native Z_q engine, unchanged |
+
+What is checked is Falcon round 3, the scheme FIPS 206 standardises.
+Verification is integer arithmetic that the final standard is not expected to
+change; framing (headers, padding, how a context string is bound) may change,
+and lives in one section of `pq_verify/fndsa.py`. Signing — floating-point FFT
+and a Gaussian sampler, where Falcon implementations actually go wrong — is
+not checked until the final standard's vectors exist.
 
 ## Architecture — six field-native engines
 
@@ -632,6 +653,7 @@ pq_verify/
   cli.py                   Command-line interface
   response.py              Prompt/response verification for un-loadable builds
   hybrid.py                RFC 10024 hybrid key-agreement composition
+  fndsa.py                 FN-DSA (Falcon) verification, FIPS 206 draft track
   report.py                Native JSON + SARIF 2.1.0 output
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 pyproject.toml             Build config + console-script entry point
@@ -658,7 +680,10 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
   `kyber-py` and `dilithium-py` both require `>=3.9`. `requires-python` and the
   code are held together mechanically — a module that stops parsing at the
   declared floor fails the suite, and widening the floor fails it too.
-- gcc and g++ (the C/C++ engines compile at runtime)
+- gcc and g++ (the C/C++ engines compile at runtime); on macOS, Xcode's
+  command-line tools (Apple clang) — every engine still builds with
+  `-march=native`, falling back to `-mcpu=native`
+- Linux (x86-64) or macOS (Apple silicon); both run the full suite in CI
 
 **For the full 160/160 self-suite and the 1566/1566 ACVP claim:**
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests

@@ -5,6 +5,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-10-07
+
 ### Changed — read before upgrading
 
 - **Failing results now fail the exit status by default.** `0` verified, `1` a
@@ -25,6 +27,25 @@ versioning](https://semver.org/spec/v2.0.0.html).
   questions are NIST's; so are the answers. The old claim that a matching
   response "proves the responder computes the standard" is withdrawn.
 
+### Added — FN-DSA verification, draft track (FIPS 206)
+
+- **`pq-verify --fndsa`** checks FN-DSA (Falcon) signature verification
+  ahead of the final FIPS 206, in its own report (`pq-verify/fndsa-result`,
+  `track: "draft"`). It is not part of the self-suite's 160 checks, the 1566
+  ACVP vectors, or any FIPS 203/204/205 verdict.
+- Vectors: Falcon-512/1024 outputs of PQClean's reference code at `0586a82`
+  (its NIST KAT harness and deterministic generator), 30 signatures, each file
+  pinned to the sha256 PQClean publishes in META.yml.
+  `tools/pin_fndsa_vectors.py` regenerates them from a checkout and refuses
+  output that does not match; `--check` and `tools/doctor.py` re-verify
+  offline.
+- For every detached signature, the encodings a verifier must refuse, each
+  required to be refused for the right reason: a decoder that accepts `-0`
+  would pass a norm check unchanged, so the suite distinguishes the two.
+- The NTT mod 12289 (n = 512, 1024) against the negacyclic definition, and
+  every butterfly through the native Z_q engine, unchanged.
+- Signing is not checked: it needs the final standard's vectors.
+
 ### Added — engine tracks, macOS
 
 - **Every self-suite check carries a track** — `pqc` (54), `harness` (13),
@@ -35,7 +56,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
   without a track fails the test suite.
 - **macOS (Apple silicon) is tested in CI**: Mach-O symbols (`nm -gU`), dyld's
   image list for the loaded-object binding, portable engine flags (`-lrt`
-  dropped on macOS, `-march=native` retried without, C++ engines built as
+  dropped on macOS, `-march=native` retried as `-mcpu=native`
+  before building untuned, with the flags each engine got recorded in
+  `core.ENGINE_FLAGS`; C++ engines built as
   C++17). Engine 6 build failures are now DEGRADED with the compiler's
   message and their checks recorded as skipped, rather than vanishing from
   the count.

@@ -6,6 +6,7 @@ pq-verify command-line interface.
     pq-verify --acvp               full NIST ACVP (all 12 ML-KEM groups)
     pq-verify --acvp-all           ML-KEM + ML-DSA + SLH-DSA + LMS (1566 vectors)
     pq-verify --lms-xmss           LMS/HSS + XMSS/XMSS^MT, every SP 800-208 family
+    pq-verify --fndsa              FN-DSA (Falcon) verification, FIPS 206 draft track
     pq-verify --slhdsa-siggen      SLH-DSA sigGen, 624 signatures (~30 min)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
@@ -145,6 +146,12 @@ def build_parser():
     p.add_argument("--lms-xmss-full", action="store_true",
                    help="--lms-xmss with every tree of height 10 or less built and "
                         "signed byte-exactly (about ten minutes)")
+    p.add_argument("--fndsa", action="store_true",
+                   help="FN-DSA (Falcon) verification, DRAFT TRACK ahead of FIPS 206: "
+                        "PQClean's Falcon-512/1024 vectors (pinned to its published "
+                        "sha256), the encodings a verifier must reject, and the NTT "
+                        "mod 12289 on the native Z_q engine. Not part of any FIPS "
+                        "203/204/205 result")
     p.add_argument("--slhdsa-acvp", action="store_true",
                    help="NIST ACVP SLH-DSA (FIPS 205) alone: keyGen and sigVer, "
                         "all 12 parameter sets (624 vectors)")
@@ -341,7 +348,7 @@ def main(argv=None):
             return 0 if args.no_fail else 1
         if not any(getattr(args, a, None) for a in (
                 "acvp", "mldsa_acvp", "acvp_all", "slhdsa_acvp", "slhdsa_siggen",
-                "lms_acvp", "lms_xmss", "lms_xmss_full", "proofs", "edge_cases",
+                "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "proofs", "edge_cases",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa",
                 "audit_hbs", "audit_so")):
@@ -350,6 +357,11 @@ def main(argv=None):
     if getattr(args, "lms_xmss", False) or getattr(args, "lms_xmss_full", False):
         from .hbs_suite import pqverify_hbs
         hbs_result = pqverify_hbs(full=getattr(args, "lms_xmss_full", False))
+        ran_task = True
+    fndsa_result = None
+    if getattr(args, "fndsa", False):
+        from .fndsa import pqverify_fndsa
+        fndsa_result = pqverify_fndsa()
         ran_task = True
     proofs_result = None
     if getattr(args, "proofs", False):
@@ -725,6 +737,16 @@ def main(argv=None):
             json_doc, reported = doc, "--lms-xmss"
         if gate and not doc["verified"]:
             print(f"  FAILING: LMS/XMSS {doc['status']} "
+                  f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
+            exit_code = 1
+
+    if fndsa_result is not None:
+        from .report import to_json_fndsa
+        doc = to_json_fndsa(fndsa_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--fndsa"
+        if gate and not doc["verified"]:
+            print(f"  FAILING: FN-DSA (draft) {doc['status']} "
                   f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
             exit_code = 1
 

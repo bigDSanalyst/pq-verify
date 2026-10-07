@@ -469,6 +469,29 @@ def to_json_hbs(result):
     return doc
 
 
+def to_json_fndsa(result):
+    """Native schema for pqverify_fndsa: FN-DSA verification on the draft
+    track. `track` and `standard` say so in every report; a VERIFIED here is
+    against Falcon round 3, never against a final FIPS 206."""
+    doc = _envelope("pq-verify/fndsa-result", None,
+                    reason="reference conformance, no vendor binary loaded")
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["track"] = "draft"
+    doc["standard"] = result.get("standard", "FIPS 206 (draft)")
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["vectors"] = result.get("vectors")
+    doc["reference"] = result.get("reference")
+    doc["native_engine"] = bool(result.get("native_engine"))
+    doc["groups"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["failures"] = result.get("failures", [])
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "findings": 0 if p == t else t - p}
+    return doc
+
+
 def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
     """Native schema for pqverify_audit_hbs. Not applicable (the library
     does not implement it) and not run (over budget or sampled) are listed
