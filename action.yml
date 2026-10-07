@@ -15,8 +15,9 @@ inputs:
   audit:
     description: >
       What to audit in `library`: 'kem' (ML-KEM keygen/encaps/decaps), 'dsa'
-      (ML-DSA keygen/sign/verify), 'hbs' (LMS/XMSS through a pqv_hbs adapter)
-      or 'ntt' (one NTT symbol, the original mode). Leave empty for 'ntt' when
+      (ML-DSA keygen/sign/verify), 'hbs' (LMS/XMSS through a pqv_hbs adapter),
+      'fndsa' (FN-DSA, FIPS 206 draft track) or 'ntt' (one NTT symbol, the
+      original mode). Leave empty for 'ntt' when
       `symbol` is set, and for no library audit otherwise.
     required: false
     default: ''
@@ -27,7 +28,7 @@ inputs:
     required: false
     default: ''
   param-set:
-    description: "With audit 'kem' or 'dsa': the parameter set, e.g. ML-KEM-768 or ML-DSA-65."
+    description: "With audit 'kem', 'dsa' or 'fndsa': the parameter set, e.g. ML-KEM-768, ML-DSA-65 or FN-DSA-512."
     required: false
     default: ''
   symbol:
@@ -192,7 +193,9 @@ runs:
             dsa) [ -z "$IN_PARAM_SET" ] && { echo "::error::audit 'dsa' needs 'param-set'"; exit 2; }
                  ARGS=(--audit-dsa "$IN_LIBRARY" "$IN_PARAM_SET") ;;
             hbs) ARGS=(--audit-hbs "$IN_LIBRARY") ;;
-            *)   echo "::error::audit must be kem, dsa, hbs or ntt, not '$MODE'"; exit 2 ;;
+            fndsa) [ -z "$IN_PARAM_SET" ] && { echo "::error::audit 'fndsa' needs 'param-set'"; exit 2; }
+                 ARGS=(--audit-fndsa "$IN_LIBRARY" "$IN_PARAM_SET") ;;
+            *)   echo "::error::audit must be kem, dsa, hbs, fndsa or ntt, not '$MODE'"; exit 2 ;;
           esac
           ARGS+=(--sarif "$IN_SARIF" --json "$IN_JSON" "${GATE[@]}")
           echo "::group::Auditing $IN_LIBRARY ($MODE)"

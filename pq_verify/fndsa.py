@@ -489,10 +489,15 @@ def _mutants(pk, message, sig):
     if len(sig) < padded:
         out.append(("padded to the fixed length with a nonzero byte", True, pk, message,
                     sig + bytes(padded - len(sig) - 1) + b"\x01"))
-    h_bad = bytearray(pk)
-    h_bad[1] |= 0xFC                                  # first coefficient >= q
-    h_bad[2] |= 0x03
-    out.append(("public key coefficient >= q", True, bytes(h_bad), message, sig))
+    # A coefficient w re-encoded as w + q: the same key mod q, so a decoder
+    # that skips the range check verifies the signature anyway. Only the
+    # decoder can reject it -- an out-of-range value that also changed the
+    # key would be caught by the norm check, hiding a missing range check.
+    _, h = decode_public_key(pk)
+    i = next(j for j, w in enumerate(h) if w + Q < 1 << 14)
+    acc = int.from_bytes(pk[1:], "big") + (Q << (8 * (len(pk) - 1) - 14 * (i + 1)))
+    out.append(("public key coefficient >= q (w + q: same key mod q)", True,
+                pk[:1] + acc.to_bytes(len(pk) - 1, "big"), message, sig))
     out.append(("public key one byte short", True, pk[:-1], message, sig))
     return out
 

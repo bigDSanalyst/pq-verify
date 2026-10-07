@@ -18,7 +18,11 @@
     "hbs_audits: LMS/HSS and XMSS libraries audited with --audit-hbs through a",
     "pqv_hbs adapter (pq_verify/harness/hbs). One row per library: \"results\" are the",
     "audit's stages, \"not_applicable\" what the library does not implement, \"not_run\"",
-    "key generation and signing over the default budget or sample. Mutants as above."
+    "key generation and signing over the default budget or sample. Mutants as above.",
+    "fndsa_audits: FN-DSA (Falcon) libraries audited with --audit-fndsa, DRAFT",
+    "TRACK ahead of FIPS 206. \"results\" and \"not_applicable\" per parameter set.",
+    "Signing is randomised and audited for validity, encoding and nonce reuse, so",
+    "the counts are fixed but the signatures are not. Mutants as above."
   ],
   "audits": [
     {
@@ -908,6 +912,142 @@
         "XMSS^MT state: XMSSMT-SHA2_20/4_192: every issued signature verifies",
         "XMSS^MT state: XMSSMT-SHA2_40/8_192: every issued signature verifies",
         "XMSS^MT state: XMSSMT-SHA2_40/8_192: refuses once exhausted"
+      ]
+    }
+  ],
+  "fndsa_audits": [
+    {
+      "library": "PQClean clean",
+      "url": "https://github.com/PQClean/PQClean",
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "note": "Falcon round 3 reference (NIST API: keypair, signature, verify, open)",
+      "build": "pqclean-falcon",
+      "sets": [
+        "FN-DSA-512",
+        "FN-DSA-1024"
+      ],
+      "results": {
+        "FN-DSA-512": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            65,
+            65
+          ],
+          "open": [
+            8,
+            8
+          ],
+          "keyGen": [
+            6,
+            6
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        },
+        "FN-DSA-1024": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            70,
+            70
+          ],
+          "open": [
+            8,
+            8
+          ],
+          "keyGen": [
+            6,
+            6
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        }
+      },
+      "not_applicable": {
+        "FN-DSA-512": 7,
+        "FN-DSA-1024": 7
+      },
+      "mutants": [
+        {
+          "name": "verify accepts a coefficient encoded as -0",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/codec.c",
+          "find": "if (s && m == 0) {",
+          "replace": "if (0) {",
+          "fails": [
+            "reject"
+          ]
+        },
+        {
+          "name": "verify ignores nonzero bits after the last coefficient",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/codec.c",
+          "find": "if ((acc & ((1u << acc_len) - 1u)) != 0) {",
+          "replace": "if (0) {",
+          "fails": [
+            "reject"
+          ]
+        },
+        {
+          "name": "verify accepts a public-key coefficient >= q",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/codec.c",
+          "find": "if (w >= 12289) {",
+          "replace": "if (0) {",
+          "fails": [
+            "reject"
+          ]
+        },
+        {
+          "name": "verify ignores the public-key header",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/pqclean.c",
+          "find": "if (pk[0] != 0x00 + 9) {",
+          "replace": "if (0) {",
+          "fails": [
+            "reject"
+          ]
+        },
+        {
+          "name": "verify skips the norm bound",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/vrfy.c",
+          "find": "return PQCLEAN_FALCON512_CLEAN_is_short((int16_t *)tt, s2, logn);",
+          "replace": "return 1;",
+          "fails": [
+            "reject"
+          ]
+        },
+        {
+          "name": "signer reuses one nonce",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/pqclean.c",
+          "find": "randombytes(nonce, NONCELEN);",
+          "replace": "memset(nonce, 0x5A, NONCELEN);",
+          "fails": [
+            "sign"
+          ]
+        },
+        {
+          "name": "signer writes the wrong header",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/pqclean.c",
+          "find": "sig[0] = 0x30 + 9;",
+          "replace": "sig[0] = 0x30 + 8;",
+          "fails": [
+            "sign"
+          ]
+        }
       ]
     }
   ]

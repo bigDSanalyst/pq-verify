@@ -14,6 +14,7 @@ pq-verify command-line interface.
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
+    pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
                                    (--fresh-key K: fresh, unpublished ones)
@@ -200,6 +201,16 @@ def build_parser():
                         "optional state functions -- the library's own key state: "
                         "no leaf issued twice, state durable before a signature "
                         "leaves, refusal once the key is exhausted")
+    p.add_argument("--audit-fndsa", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="DRAFT TRACK, ahead of FIPS 206: audit an FN-DSA (Falcon) "
+                        "library in PATH through its own entry points, e.g. "
+                        "--audit-fndsa lib.so FN-DSA-512. Pinned signatures verify, "
+                        "malformed ones are refused, its keys are canonical and "
+                        "match their secret keys, its signatures verify under "
+                        "pq-verify's verifier and never reuse a nonce")
+    p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
+                   help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
+                        "to SYM; repeatable")
     p.add_argument("--audit-hbs-full", action="store_true",
                    help="with --audit-hbs: every key generation and signing case up to "
                         "height 16, not a sample")
@@ -284,6 +295,7 @@ def main(argv=None):
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
+            ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
             ("--kem-keypair", args.kem_keypair, args.audit_kem),
             ("--kem-encaps", args.kem_encaps, args.audit_kem),
             ("--kem-decaps", args.kem_decaps, args.audit_kem),
@@ -291,9 +303,11 @@ def main(argv=None):
              args.emit_prompt or args.verify_response),
             ("--fresh-count", args.fresh_count, args.fresh_key),
             ("--audit-timeout", args.audit_timeout is not None,
-             args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so)):
+             args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
+             or args.audit_fndsa)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
+                       "--fndsa-symbol": "--audit-fndsa",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
                        "--audit-timeout": "an --audit-* task"}.get(
@@ -350,7 +364,7 @@ def main(argv=None):
                 "acvp", "mldsa_acvp", "acvp_all", "slhdsa_acvp", "slhdsa_siggen",
                 "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "proofs", "edge_cases",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
-                "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa",
+                "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
                 "audit_hbs", "audit_so")):
             return 0
     hbs_result = None
@@ -510,6 +524,42 @@ def main(argv=None):
         except OSError as exc:
             dsa_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {dsa_reason}")
+    fna_result = fna_ran = fna_reason = fna_artifact = None
+    if getattr(args, "audit_fndsa", None):
+        from .fndsa_audit import SETS as _FN_SETS, _ROLES as _FN_ROLES
+        _p, _ps = args.audit_fndsa
+        if _ps not in _FN_SETS:
+            print(f"  unknown parameter set {_ps!r} for --audit-fndsa — known: "
+                  f"{', '.join(sorted(_FN_SETS))}")
+            return 2
+        _syms = {}
+        for item in args.fndsa_symbol:
+            role, _, sym = item.partition("=")
+            if role not in _FN_ROLES or not sym:
+                print(f"  bad --fndsa-symbol {item!r}: use ROLE=SYMBOL with ROLE one "
+                      f"of {', '.join(_FN_ROLES)}")
+                return 2
+            _syms[role] = sym
+        fna_ran = _ps
+        ran_task = True
+        try:
+            fna_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {fna_artifact['summary']}")
+        try:
+            fna_result, _loaded, fna_reason = _isolated(
+                args, "pq_verify.fndsa_audit", "pqverify_audit_fndsa", _p, _ps,
+                symbols=_syms)
+            _bound = _bind_loaded(fna_artifact, _loaded)
+            fna_reason = fna_reason or _bound
+            if fna_reason:
+                fna_result = None
+                print(f"  cannot verify: {fna_reason}")
+        except OSError as exc:
+            fna_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {fna_reason}")
     hbsa_result = hbsa_reason = hbsa_artifact = None
     hbsa_ran = bool(getattr(args, "audit_hbs", None))
     if hbsa_ran:
@@ -667,6 +717,30 @@ def main(argv=None):
         elif (gate and getattr(args, "require_full_coverage", False)
               and doc.get("scope") and not doc["scope"]["complete"]):
             print(f"  FAILING: LMS/XMSS audit scope is partial and "
+                  f"--require-full-coverage was set")
+            exit_code = 1
+
+    if fna_ran is not None:
+        from .report import to_json_fndsa_audit
+        doc = to_json_fndsa_audit(fna_result, artifact=fna_artifact, param_set=fna_ran,
+                                  library=args.audit_fndsa[0], reason=fna_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-fndsa"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_fndsa[0]}:{fna_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=fna_artifact)
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: FN-DSA audit (draft) {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print(f"  FAILING: FN-DSA audit scope is partial and "
                   f"--require-full-coverage was set")
             exit_code = 1
 

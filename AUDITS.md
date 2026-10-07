@@ -477,6 +477,45 @@ pq-verify --audit-hbs ./libhashsigs.so
 
 ---
 
+## FN-DSA (Falcon) library audit — draft track, with mutants
+
+`--audit-fndsa PATH FN-DSA-512|FN-DSA-1024` audits a vendor's FN-DSA library
+ahead of the final FIPS 206. Every report says `track: "draft"`: a VERIFIED
+here is against Falcon round 3, the scheme FIPS 206 standardises, never a
+final FIPS 206, and it is not part of any FIPS 203/204/205 result.
+
+- **Verify:** the pinned PQClean signatures (`pq-verify --fndsa`) are accepted.
+- **Open:** the pinned NIST-API signed messages are opened to their message.
+- **Malformed rejected:** for each pinned signature, the inputs a verifier
+  must refuse. The non-canonical encodings are built so that only the
+  decoder can refuse them: `-0` decodes to 0, and a public-key coefficient
+  re-encoded as `w + q` is the same key mod q. A verifier missing either
+  check accepts the signature, where a looser test would have been refused
+  by the norm check and hidden the gap.
+- **keyGen:** the library's public keys are canonical and belong to their
+  secret keys (`h·f = g mod q`).
+- **sign:** the library's signatures verify under pq-verify's verifier and
+  its own, are in range and canonically encoded, and never reuse a nonce.
+  Signing is randomised, so it is checked for validity, not byte-for-byte; a
+  subtly biased sampler is out of scope.
+
+A wrong-length public key is **not applicable**: neither the NIST API nor
+liboqs takes a key length, so the library would read past the buffer.
+
+<!-- vendor-audits-fndsa:begin -->
+| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 12/12 | 48/48 | 14 | 7/7 | 225/225 **VERIFIED** (draft) |
+<!-- vendor-audits-fndsa:end -->
+
+Every mutant plants one bug class in PQClean's source; CI requires the audit
+to fail it: a verifier that accepts `-0`, ignores nonzero padding bits,
+accepts a public-key coefficient ≥ q, ignores the public-key header or skips
+the norm bound; a signer that reuses one nonce or writes the wrong header.
+The first version of the audit missed the range-check mutant (its test key
+changed value mod q, so the norm check refused it); the mutant is why the
+`w + q` case exists.
+
 ## Which implementations can be audited by symbol
 
 | Linkage | Examples | Symbol audit |
