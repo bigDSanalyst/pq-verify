@@ -5130,3 +5130,157 @@ def test_fndsa_cli_reports_the_draft_track(tmp_path):
     assert doc["schema"] == "pq-verify/fndsa-result"
     assert doc["track"] == "draft" and doc["standard"] == "FIPS 206 (draft)"
     assert doc["verified"] and doc["summary"]["checks_total"] == 188
+
+
+# ----------------------------------------------------------------------
+# --audit-fndsa: a vendor's FN-DSA library (DRAFT TRACK). The pinned PQClean
+# Falcon builds and their mutants run in CI (tools/vendor_audit.py); here a
+# shim whose verify/open call back into pq_verify.fndsa exercises the ctypes
+# path offline, with faults planted in the callbacks.
+# ----------------------------------------------------------------------
+
+_FNDSA_KEEP = []          # ctypes callbacks must outlive the library calls
+
+
+def _fndsa_shim(tmp_path, accept=None, padded_too=False):
+    """accept(pk, msg, sig) -> bool decides verify; default: pq-verify's own."""
+    import ctypes as C, shutil, subprocess
+    from pq_verify import fndsa as F
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libfndsashim{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
+                    *(["-DPQVTEST_PADDED_TOO"] if padded_too else []),
+                    str(root / "tests" / "data" / "fndsa_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    U8, SZ, PSZ = C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_size_t)
+    accept = accept or (lambda pk, m, s: F.verify(pk, m, s)[0])
+
+    @C.CFUNCTYPE(C.c_int, U8, SZ, U8, SZ, U8)
+    def ver(sig, sl, m, ml, pk):
+        return 0 if accept(C.string_at(pk, 897), C.string_at(m, ml),
+                           C.string_at(sig, sl)) else -1
+
+    @C.CFUNCTYPE(C.c_int, U8, PSZ, U8, SZ, U8)
+    def opn(m, ml, sm, sl, pk):
+        got, _ = F.open_signed(C.string_at(pk, 897), C.string_at(sm, sl))
+        if got is None:
+            return -1
+        C.memmove(m, got, len(got))
+        ml[0] = len(got)
+        return 0
+    lib.pqvtest_fndsa_register(ver, opn)
+    _FNDSA_KEEP.extend([lib, ver, opn])
+    return str(so)
+
+
+def _fndsa_audit(so, **kw):
+    from pq_verify.fndsa_audit import pqverify_audit_fndsa
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_fndsa(so, "FN-DSA-512", verbose=False, **kw)
+
+
+def test_fndsa_audit_correct_verifier_verifies(tmp_path):
+    r = _fndsa_audit(_fndsa_shim(tmp_path))
+    assert r["verified"], r["failures"]
+    assert r["detail"]["verify"] == (7, 7) and r["detail"]["open"] == (8, 8)
+    assert r["detail"]["reject"] == (65, 65)
+    # no keypair/signing entry points: not applicable, never passed
+    assert "keyGen" not in r["detail"] and "sign" not in r["detail"]
+    assert r["not_applicable"]["keyGen"][0] == 3 and r["not_applicable"]["sign"][0] == 24
+    assert r["track"] == "draft"
+
+
+def test_fndsa_audit_catches_a_verifier_that_accepts_minus_zero(tmp_path):
+    from pq_verify import fndsa as F
+
+    def lax(pk, m, s):
+        ok, why = F.verify(pk, m, s)
+        return ok or "-0" in why
+    r = _fndsa_audit(_fndsa_shim(tmp_path, lax))
+    assert not r["verified"]
+    assert {f["case"] for f in r["failures"]} == {"a zero coefficient encoded as -0"}
+
+
+def test_fndsa_audit_catches_a_verifier_without_a_range_check(tmp_path):
+    """The w + q mutant is the same key mod q: only a decoder range check can
+    refuse it, so a verifier without one is caught (an out-of-range value that
+    changed the key would have been refused by the norm check instead)."""
+    from pq_verify import fndsa as F
+
+    def no_range(pk, m, s):
+        acc = int.from_bytes(pk[1:], "big")
+        h = [((acc >> (8 * 896 - 14 * (i + 1))) & 0x3FFF) % F.Q for i in range(512)]
+        canon = pk[:1] + int("".join(f"{w:014b}" for w in h), 2).to_bytes(896, "big")
+        return F.verify(canon, m, s)[0]
+    r = _fndsa_audit(_fndsa_shim(tmp_path, no_range))
+    assert not r["verified"]
+    assert all(f["case"].startswith("public key coefficient >= q") for f in r["failures"])
+
+
+def test_fndsa_audit_catches_a_verifier_that_ignores_the_key_header(tmp_path):
+    from pq_verify import fndsa as F
+    r = _fndsa_audit(_fndsa_shim(
+        tmp_path, lambda pk, m, s: F.verify(bytes([9]) + pk[1:], m, s)[0]))
+    assert not r["verified"]
+    assert {f["case"] for f in r["failures"]} == {
+        "public key header names the other parameter set"}
+
+
+def test_fndsa_audit_never_guesses_between_variants(tmp_path):
+    r = _fndsa_audit(_fndsa_shim(tmp_path, padded_too=True))
+    assert r is None
+    sym = "PQCLEAN_FALCON512_CLEAN_crypto_sign_verify"
+    r = _fndsa_audit(_fndsa_shim(tmp_path, padded_too=True), symbols={"verify": sym})
+    assert r is not None and r["via"]["verify"] == sym
+
+
+def test_fndsa_secret_keys_match_their_public_keys():
+    """The keyGen check h * f = g mod q, on the pinned PQClean key pairs."""
+    import gzip, json
+    from pq_verify import fndsa as F
+    from pq_verify.fndsa_audit import decode_secret_key
+    with gzip.open(F.BUNDLE, "rt") as fh:
+        b = json.load(fh)
+    for key in ("pqclean/falcon-512/testvectors", "pqclean/falcon-1024/testvectors"):
+        lines = b[key].split()
+        pk, sk = bytes.fromhex(lines[0]), bytes.fromhex(lines[1])
+        logn, h = F.decode_public_key(pk)
+        f, g, _ = decode_secret_key(sk, logn)
+        assert F.poly_mul([x % F.Q for x in f], h, logn) == [x % F.Q for x in g]
+        g2 = list(g)
+        g2[0] += 1
+        assert F.poly_mul([x % F.Q for x in f], h, logn) != [x % F.Q for x in g2]
+
+
+def test_fndsa_audit_cli_inputs_and_report(tmp_path):
+    from pq_verify.report import to_json_fndsa_audit
+    code, out = _cli("--fndsa-symbol", "verify=x", "--fndsa")
+    assert code == 2 and "--audit-fndsa" in out
+    so = tmp_path / "x.so"
+    so.write_bytes(b"")
+    code, out = _cli("--audit-fndsa", str(so), "FN-DSA-768")
+    assert code == 2 and "unknown parameter set" in out
+    doc = to_json_fndsa_audit(None, param_set="FN-DSA-512", reason="no entry point")
+    assert doc["status"] == "CANNOT VERIFY" and doc["track"] == "draft"
+    assert doc["findings"] == ["cannot verify: no entry point"]
+
+
+def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
+    import re
+    mod, root = _vendor_audit()
+    rows = mod.load_fndsa_table()
+    assert {r["build"] for r in rows} == set(mod.FNDSA_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert row["mutants"]
+        for m in row["mutants"]:
+            assert m["set"] in row["sets"]
+            assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.FNDSA_BEGIN, 1)[1].split(mod.FNDSA_END, 1)[0].strip()
+    assert published == mod.fndsa_markdown(rows).strip(), (
+        "AUDITS.md is out of date: paste the FN-DSA table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-fndsa markers")

@@ -492,6 +492,53 @@ def to_json_fndsa(result):
     return doc
 
 
+def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
+                        reason=None):
+    """Native schema for pqverify_audit_fndsa: a vendor FN-DSA library on the
+    draft track. A VERIFIED here is against Falcon round 3, never a final
+    FIPS 206, and `track` says so."""
+    doc = _envelope("pq-verify/fndsa-audit-result", artifact)
+    doc["track"] = "draft"
+    doc["standard"] = "FIPS 206 (draft)"
+    doc["parameter_set"] = param_set
+    doc["library"] = library or (result or {}).get("library")
+    if result is None:
+        doc.update(status="CANNOT VERIFY", verified=False, stages={}, symbols={},
+                   not_applicable={},
+                   summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
+                   findings=["cannot verify: " + (
+                       reason or "no FN-DSA entry point could be bound unambiguously")])
+        return doc
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["calling_convention"] = result.get("abi")
+    doc["padded"] = bool(result.get("padded"))
+    doc["symbols"] = result.get("symbols", {})
+    doc["vectors"] = result.get("vectors")
+    doc["stages"] = {k: {"passed": v[0], "total": v[1],
+                         "via": (result.get("via") or {}).get(k)}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
+                             for k, v in (result.get("not_applicable") or {}).items()}
+    fails = result.get("failures") or []
+    findings = []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            first = next((f for f in fails if f["stage"] == k), None)
+            where = f"; first: {first['case']}: {first['detail']}" if first else ""
+            findings.append(f"FN-DSA (draft): stage {k}: {v[0]}/{v[1]}{where}")
+    doc["failures"] = fails
+    doc["findings"] = findings
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "not_applicable": result.get("not_applicable_total", 0),
+                      "findings": len(findings)}
+    doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
+                          na_why="the API cannot express them")
+    return doc
+
+
 def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
     """Native schema for pqverify_audit_hbs. Not applicable (the library
     does not implement it) and not run (over budget or sampled) are listed

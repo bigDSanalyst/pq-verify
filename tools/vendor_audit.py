@@ -3,7 +3,8 @@
 
   python3 tools/vendor_audit.py              build every row, check its result
   python3 tools/vendor_audit.py --markdown   print the AUDITS.md tables (offline)
-  python3 tools/vendor_audit.py --only ML-DSA   just one scheme (ML-KEM, ML-DSA, LMS/XMSS)
+  python3 tools/vendor_audit.py --only ML-DSA   just one scheme (ML-KEM, ML-DSA, LMS/XMSS,
+                                                FN-DSA)
 
 ML-KEM rows are re-run with --audit-kem, ML-DSA rows with --audit-dsa. ML-DSA
 libraries are linked with pq-verify's randomness harness
@@ -57,6 +58,9 @@ DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa")
 HBS_BEGIN, HBS_END = "<!-- vendor-audits-hbs:begin -->", "<!-- vendor-audits-hbs:end -->"
 HBS_BUILDS = ("hash-sigs", "xmss-reference")
 HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
+FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audits-fndsa:end -->"
+FNDSA_BUILDS = ("pqclean-falcon",)
+FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
                 b"int randombytes(uint8_t *o, size_t n)"
@@ -185,6 +189,30 @@ def mutate(src, mutant, dest):
     return dest
 
 
+def load_fndsa_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("fndsa_audits", [])
+
+
+def build_fndsa(recipe, src, param_set, out_dir, tag=""):
+    """Compile one FN-DSA (Falcon) parameter set. Signing draws its nonce
+    and seeds from the system RNG: FN-DSA signing is audited for validity,
+    not byte-for-byte, so no randomness harness is linked."""
+    n = param_set.rsplit("-", 1)[1]
+    so = Path(out_dir) / f"{recipe}{n}{tag}.so"
+    src = Path(src)
+    if recipe == "pqclean-falcon":
+        d = src / "crypto_sign" / f"falcon-{n}" / "clean"
+        common = src / "common"
+        cmd = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared", "-I", str(common),
+               "-o", str(so), *sorted(str(p) for p in d.glob("*.c")),
+               str(common / "fips202.c"), str(common / "randombytes.c")]
+    else:
+        raise ValueError(f"unknown FN-DSA build recipe {recipe!r}")
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
 # ─────────────────────────────── audit ───────────────────────────────
 
 def audit_dsa(so, param_set):
@@ -208,6 +236,17 @@ def audit_hbs(so):
             # Which checks fail, by name: pinned for a library with known
             # defects, so a mutant is judged on what it ADDS (below).
             "failing": sorted(f"{f['stage']}: {f['case']}" for f in r["failures"])}
+
+
+def audit_fndsa(so, param_set):
+    sys.path.insert(0, str(REPO))
+    from pq_verify.fndsa_audit import pqverify_audit_fndsa
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_fndsa(so, param_set, verbose=False)
+    if r is None:
+        return None
+    return {"results": {k: list(v) for k, v in r["detail"].items()},
+            "not_applicable": r["not_applicable_total"]}
 
 
 def audit(so, param_set):
@@ -429,6 +468,72 @@ def check_hbs(rows, workdir):
     return 0
 
 
+def check_fndsa(rows, workdir):
+    """FN-DSA (draft track): each row's sets as recorded, and every mutant
+    failed in the stages it names."""
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        try:
+            if not (src / ".git").exists():
+                fetch(row["url"], row["commit"], src)
+        except Exception as e:
+            print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: fetch failed: {e}")
+            return 2
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps}"
+            try:
+                so = build_fndsa(row["build"], src, ps, workdir)
+            except subprocess.CalledProcessError as e:
+                print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
+                return 2
+            got = audit_fndsa(so, ps)
+            want = {"results": row["results"][ps],
+                    "not_applicable": row["not_applicable"][ps]}
+            if got == want:
+                p, t = total(got["results"])
+                print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}")
+            if got is None:
+                print("         pq-verify could not audit it (entry points not resolved)")
+                continue
+            for s in sorted(set(got["results"]) | set(want["results"])):
+                if got["results"].get(s) != want["results"].get(s):
+                    print(f"         {s:8s} recorded {want['results'].get(s)}  "
+                          f"now {got['results'].get(s)}")
+            if got["not_applicable"] != want["not_applicable"]:
+                print(f"         not applicable recorded {want['not_applicable']}  "
+                      f"now {got['not_applicable']}")
+        for i, m in enumerate(row.get("mutants", [])):
+            label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build_fndsa(row["build"], msrc, m["set"], workdir, tag=f"-mut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got = audit_fndsa(so, m["set"])
+            missed = [f"{st} {p}/{t}" for st in m["fails"]
+                      for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                      if not (t and p < t)]
+            if got is not None and not missed:
+                bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
+                print(f"  caught {label}: fails {', '.join(bad)}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: the audit did not fail "
+                  + (", ".join(missed) if got else "(could not audit it)")
+                  + ". pq-verify cannot see this bug class.")
+    if failures:
+        print(f"\n  {failures} FN-DSA row(s) or mutant(s) differ. Fix the regression, "
+              f"or, if intended, update tools/vendor_audits.json and AUDITS.md in "
+              f"the same PR and say why.")
+        return 1
+    return 0
+
+
 # ─────────────────────────────── table ───────────────────────────────
 
 def edge_total(row):
@@ -510,22 +615,48 @@ def hbs_markdown(rows):
     return "\n".join(lines)
 
 
+def fndsa_markdown(rows):
+    lines = ["| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected "
+             "| keyGen | sign | Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        def cell(stage):
+            p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
+            t = sum(row["results"][ps].get(stage, [0, 0])[1] for ps in row["sets"])
+            return f"{p}/{t}" if t else "n/a"
+        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
+                for i in (0, 1))
+        na = sum(row["not_applicable"][ps] for ps in row["sets"])
+        muts = row.get("mutants", [])
+        sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
+        lines.append(" | ".join([
+            f"| {row['library']}",
+            f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
+            sets, cell("verify"), cell("open"), cell("reject"), cell("keyGen"),
+            cell("sign"), f"{na:,}", f"{len(muts)}/{len(muts)}" if muts else "—",
+            f"{p:,}/{t:,} {'**VERIFIED** (draft)' if p == t else 'findings'} |"]))
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--markdown", action="store_true",
                     help="print the AUDITS.md table from the pinned rows; no build")
     ap.add_argument("--workdir", help="where to fetch and build (default: a "
                                       "temporary directory, removed afterwards)")
-    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS"),
+    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA"),
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
     rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
+    fndsa_rows = load_fndsa_table()
     if a.markdown:
         print(markdown(rows))
         print()
         print(dsa_markdown(dsa_rows))
         print()
         print(hbs_markdown(hbs_rows))
+        print()
+        print(fndsa_markdown(fndsa_rows))
         return 0
 
     def run(work):
@@ -536,6 +667,8 @@ def main(argv=None):
             code = max(code, check_dsa(dsa_rows, work))
         if a.only in (None, "LMS/XMSS"):
             code = max(code, check_hbs(hbs_rows, work))
+        if a.only in (None, "FN-DSA"):
+            code = max(code, check_fndsa(fndsa_rows, work))
         return code
     if a.workdir:
         return run(a.workdir)

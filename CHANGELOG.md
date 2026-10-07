@@ -5,6 +5,26 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — FN-DSA library audit, draft track (FIPS 206)
+
+- **`--audit-fndsa PATH FN-DSA-512|FN-DSA-1024`** audits a vendor's FN-DSA
+  (Falcon) library through its own entry points (NIST API / PQClean, or
+  liboqs `OQS_SIG_falcon_*`, padded variants included; `--fndsa-symbol
+  ROLE=SYMBOL` when a library exports more than one candidate). Report
+  `pq-verify/fndsa-audit-result`, `track: "draft"`, JSON and SARIF, run in an
+  isolated child process like every other audit.
+- Stages: the pinned signatures verify and open; every malformed input is
+  refused (including a public key with the wrong header); the library's keys
+  are canonical and satisfy h·f = g mod q; its signatures verify under
+  pq-verify's verifier and its own, are in range, and never reuse a nonce.
+- **The public-key range check is now tested so only the decoder can catch
+  it.** The case used to set a coefficient to 0x3FFF, which also changed the
+  key mod q, so a verifier without the range check still rejected it at the
+  norm check. A PQClean mutant with the check removed passed. The case now
+  re-encodes a coefficient as `w + q`: the same key mod q.
+- `tools/vendor_audit.py` pins PQClean's Falcon-512/1024 (225/225) and seven
+  mutants, each failed by the audit in CI; AUDITS.md publishes the table.
+
 ## [2.10.0] — 2026-10-07
 
 ### Changed — read before upgrading

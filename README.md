@@ -309,6 +309,14 @@ not one of the 1566 ACVP vectors, and never part of a FIPS 203/204/205 verdict.
 | Rejections | for every detached signature, the inputs a verifier must refuse — altered message or nonce, a changed `s2` coefficient, the wrong header, `-0`, nonzero padding bits, trailing bytes, a public-key coefficient ≥ q — each required to fail **for the right reason** (an encoding error from the decoder, not a lucky norm check) |
 | Arithmetic | the NTT mod q = 12289 for n = 512 and 1024 against the negacyclic definition, and every butterfly of every layer through the native Z_q engine, unchanged |
 
+`pq-verify --audit-fndsa lib.so FN-DSA-512` audits a vendor's FN-DSA library
+the same way, through its own entry points (the NIST API as PQClean exports
+it, or liboqs's `OQS_SIG_falcon_*`): the pinned signatures verify, every
+malformed input is refused, its keys are canonical and match their secret
+keys, and its signatures verify under pq-verify's verifier with no nonce
+reused. PQClean's Falcon passes; seven planted bugs in its source each fail
+the audit in CI ([AUDITS.md](AUDITS.md)).
+
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
