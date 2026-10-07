@@ -11,7 +11,10 @@ checked against pq_verify.fndsa (the reference verifier, itself checked by
                header on the signature or the key, -0, nonzero padding bits,
                trailing bytes, a public-key coefficient >= q)
     keyGen     vendor key pairs: the public key is canonical (header, every
-               coefficient below q) and matches the secret key (h * f = g mod q)
+               coefficient below q) and matches the secret key (h * f = g mod q);
+               the secret key solves the NTRU equation (f G - g F = q, with G
+               recomputed) and meets both Gram-Schmidt bounds, in exact
+               integer and rational arithmetic
     sign       vendor signatures: pq-verify's verifier accepts each one, the
                vendor's own verifier accepts it, the encoding is canonical
                and in range, and no nonce repeats
@@ -32,6 +35,7 @@ ambiguous role is never guessed (--fndsa-symbol ROLE=SYMBOL).
 """
 import ctypes as _ct
 import re as _re
+from fractions import Fraction as _Fraction
 
 from . import fndsa as F
 
@@ -186,15 +190,120 @@ def _trim_decode(bits_str, pos, n, bits):
 
 
 def decode_secret_key(sk, logn):
-    """(f, g, F) from the reference encoding, or Reject."""
+    """(f, g, F) from the reference encoding, or Reject. G is not stored:
+    the key's owner recomputes it (see ntru_checks)."""
     n = 1 << logn
     if len(sk) != SK_BYTES[logn] or sk[0] != 0x50 + logn:
         raise F.Reject("not the reference secret-key encoding")
     bits = "".join(f"{b:08b}" for b in sk[1:])
     f, pos = _trim_decode(bits, 0, n, FG_BITS[logn])
     g, pos = _trim_decode(bits, pos, n, FG_BITS[logn])
-    G, pos = _trim_decode(bits, pos, n, 8)
-    return f, g, G
+    F_, pos = _trim_decode(bits, pos, n, 8)
+    return f, g, F_
+
+
+# ---------------------------------------------------------------------------
+# Exact key checks: the NTRU equation and the Gram-Schmidt bound
+# ---------------------------------------------------------------------------
+# Every Falcon key generator must output (f, g, F, G) with
+#     f G - g F = q                in Z[x]/(x^n + 1)           (NTRU equation)
+#     ||(g, -f)||^2              < 1.17^2 q                     (Gram-Schmidt
+#     ||(q f*/D, q g*/D)||^2     < 1.17^2 q,  D = f f* + g g*    bound)
+# (round 3, section 3.8; the reference's 16822.4121). Its signatures are only
+# as short, and its sampler only as sound, as these make them. Both are
+# checked here in exact arithmetic -- integers and rationals, never floating
+# point: the second norm is q^2 times the constant coefficient of 1/D, since
+# D is self-adjoint and ||u||^2 is the constant coefficient of u u*.
+
+BOUND_SQ = _Fraction(168224121, 10000)        # 1.17^2 * 12289, exactly
+KEY_CHECKS = ("f G - g F = q", "||(g, -f)||^2 < 1.17^2 q",
+              "||(q f*/D, q g*/D)||^2 < 1.17^2 q")
+
+
+def _zmul(a, b):
+    """a * b in Z[x]/(x^n + 1), exactly (Kronecker substitution)."""
+    n = len(a)
+    k = (max(map(abs, a), default=0).bit_length() + max(map(abs, b), default=0).bit_length()
+         + n.bit_length() + 2)
+    pa = sum(c << (k * i) for i, c in enumerate(a))
+    pb = sum(c << (k * i) for i, c in enumerate(b))
+    prod, full, half, mask = pa * pb, [], 1 << (k - 1), (1 << k) - 1
+    for _ in range(2 * n - 1):
+        d = prod & mask
+        if d >= half:
+            d -= 1 << k
+        full.append(d)
+        prod = (prod - d) >> k
+    return [full[i] - (full[i + n] if i + n < len(full) else 0) for i in range(n)]
+
+
+def _zmul_school(a, b):
+    """a * b in Z[x]/(x^n + 1) when b's coefficients are huge and a's small:
+    cheaper than packing both."""
+    n = len(a)
+    out = [0] * n
+    for i, ai in enumerate(a):
+        if ai:
+            for j, bj in enumerate(b):
+                if i + j < n:
+                    out[i + j] += ai * bj
+                else:
+                    out[i + j - n] -= ai * bj
+    return out
+
+
+def _inverse_scaled(d):
+    """(p, den), integers, with d * p = den in Z[x]/(x^n + 1): the field-norm
+    tower (as in NTRUSolve), d(x) d(-x) = N(x^2)."""
+    if len(d) == 1:
+        return [1], d[0]
+    de, do = d[0::2], d[1::2]
+    sq_o = _zmul(do, do)
+    norm = [x - (sq_o[i - 1] if i else -sq_o[-1]) for i, x in enumerate(_zmul(de, de))]
+    q, den = _inverse_scaled(norm)
+    # 1/d = d(-x) / N(x^2) = (de(x^2) - x do(x^2)) q(x^2) / den
+    pe, po = _zmul_school(de, q), _zmul_school(do, q)
+    p = [0] * len(d)
+    p[0::2], p[1::2] = pe, [-x for x in po]
+    return p, den
+
+
+def recover_G(f, g, F_, logn):
+    """G = g F / f mod q, centred (as the reference recomputes it), or None
+    if f is not invertible mod q."""
+    fh = F.ntt([x % F.Q for x in f], logn)
+    if any(x == 0 for x in fh):
+        return None
+    gh, Fh = F.ntt([x % F.Q for x in g], logn), F.ntt([x % F.Q for x in F_], logn)
+    G = F.intt([a * b * pow(c, -1, F.Q) % F.Q for a, b, c in zip(gh, Fh, fh)], logn)
+    return [x - F.Q if x > F.Q // 2 else x for x in G]
+
+
+def ntru_checks(f, g, F_, logn):
+    """[(name, ok, detail)]: the NTRU equation and both Gram-Schmidt norms,
+    exactly."""
+    out = []
+    G = recover_G(f, g, F_, logn)
+    if G is None:
+        out.append(("f G - g F = q", False, "f is not invertible mod q"))
+    else:
+        fG, gF = _zmul(f, G), _zmul(g, F_)
+        lhs = [a - b for a, b in zip(fG, gF)]
+        ok = lhs[0] == F.Q and not any(lhs[1:]) and max(map(abs, G)) <= 127
+        why = ("" if ok else "G has a coefficient beyond 127" if lhs[0] == F.Q and not any(lhs[1:])
+               else f"f G - g F has constant {lhs[0]} and "
+                    f"{sum(1 for x in lhs[1:] if x)} other nonzero coefficients")
+        out.append(("f G - g F = q", ok, why))
+    n1 = sum(x * x for x in f) + sum(x * x for x in g)
+    out.append(("||(g, -f)||^2 < 1.17^2 q", n1 < BOUND_SQ, f"{n1}"))
+    n = 1 << logn
+    adj = lambda a: [a[0]] + [-a[n - i] for i in range(1, n)]
+    d = [a + b for a, b in zip(_zmul(f, adj(f)), _zmul(g, adj(g)))]
+    p, den = _inverse_scaled(d)
+    n2 = _Fraction(F.Q * F.Q * p[0], den)
+    out.append(("||(q f*/D, q g*/D)||^2 < 1.17^2 q", n2 < BOUND_SQ,
+                f"{float(n2):.4f}"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -279,21 +388,28 @@ def run(v):
             ok, why, h = False, str(exc), None
         T.rec("keyGen", ok, f"key {k}: public key canonical", why)
         try:
-            f, g, _ = decode_secret_key(sk, v.logn)
+            f, g, F_ = decode_secret_key(sk, v.logn)
             if h is not None:
                 T.rec("keyGen", F.poly_mul([x % F.Q for x in f], h, v.logn)
                       == [x % F.Q for x in g], f"key {k}: h * f = g mod q",
                       "the public key does not belong to the secret key")
+            for name, ok, why in ntru_checks(f, g, F_, v.logn):
+                T.rec("keyGen", ok, f"key {k}: {name}", why if not ok else "")
         except F.Reject:
-            T.not_applicable("keyGen", 1, "secret key not in the reference encoding")
+            T.not_applicable("keyGen", 1 + len(KEY_CHECKS),
+                             "secret key not in the reference encoding")
         if not v.has("sign"):
             T.not_applicable("sign", len(SIGN_MESSAGES) * SIGS_PER_MESSAGE,
                              "no signing entry point")
             continue
         for msg in SIGN_MESSAGES:
             for _ in range(SIGS_PER_MESSAGE):
-                sig = v.sign(sk, msg)
                 case = f"key {k}, {len(msg)}-byte message"
+                try:
+                    sig = v.sign(sk, msg)
+                except RuntimeError as exc:     # refused its own key: a failure
+                    T.rec("sign", False, case, str(exc))
+                    continue
                 problems = []
                 if v.padded and len(sig) != v.padded_len:
                     problems.append(f"length {len(sig)}, padded variant must be "

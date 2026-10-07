@@ -5258,6 +5258,53 @@ def test_fndsa_secret_keys_match_their_public_keys():
         assert F.poly_mul([x % F.Q for x in f], h, logn) != [x % F.Q for x in g2]
 
 
+@pytest.mark.parametrize("key,logn", [("pqclean/falcon-512/testvectors", 9),
+                                      ("pqclean/falcon-1024/testvectors", 10)])
+def test_fndsa_secret_keys_solve_the_ntru_equation_exactly(key, logn):
+    """f G - g F = q with G recomputed, and both Gram-Schmidt norms below
+    1.17^2 q, in exact arithmetic, on the pinned PQClean keys. Each check
+    must also fail when its condition does."""
+    import gzip, json
+    from fractions import Fraction
+    from pq_verify import fndsa as F
+    from pq_verify.fndsa_audit import decode_secret_key, ntru_checks, BOUND_SQ, KEY_CHECKS
+    assert BOUND_SQ == Fraction(117, 100) ** 2 * 12289
+    with gzip.open(F.BUNDLE, "rt") as fh:
+        sk = bytes.fromhex(json.load(fh)[key].split()[1])
+    f, g, F_ = decode_secret_key(sk, logn)
+    res = ntru_checks(f, g, F_, logn)
+    assert [r[0] for r in res] == list(KEY_CHECKS)
+    assert all(ok for _, ok, _ in res), res
+    F2 = list(F_)
+    F2[3] -= 1                                   # off by one: no longer a solution
+    assert ntru_checks(f, g, F2, logn)[0][1] is False
+    n = 1 << logn
+    one, x = [1] + [0] * (n - 1), [0, 1] + [0] * (n - 2)
+    # f = 1, g = x: ||(g, -f)||^2 = 2, but D = 2, so the second norm is q^2 / 2
+    tiny = ntru_checks(one, x, [0] * n, logn)
+    assert tiny[1][1] is True and tiny[2][1] is False and tiny[2][2] == "75509760.5000"
+    # f = g = 5 (1 + x + ... ): the first norm alone is over
+    big = ntru_checks([5] * n, [5] * n, [0] * n, logn)
+    assert big[1][1] is False
+
+
+def test_curve_supersingular_rule_is_exact():
+    """j = 0 is supersingular iff p = 2 mod 3, j = 1728 iff p = 3 mod 4
+    (Deuring); any other j only when the trace is 0. The old rule flagged
+    every j = 0 or 1728 curve."""
+    import pq_verify.core as core
+
+    def flagged(a, b, p):
+        with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
+            r = core.audit_curve({}, a, b, p)
+        return any(f["description"].startswith("Supersingular") for f in r.findings)
+    for c in [(0, 1, 17), (0, 1, 23), (1, 0, 19), (1, 0, 23), (1, 1, 17),
+              (1, 0, 1000000000000091)]:
+        assert flagged(*c), c
+    for c in [(0, 1, 97), (0, 1, 7), (1, 0, 17), (1, 0, 97), (1, 4, 31)]:
+        assert not flagged(*c), c
+
+
 def test_fndsa_audit_cli_inputs_and_report(tmp_path):
     from pq_verify.report import to_json_fndsa_audit
     code, out = _cli("--fndsa-symbol", "verify=x", "--fndsa")

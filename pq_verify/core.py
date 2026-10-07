@@ -1200,8 +1200,13 @@ def audit_curve(engines, a, b, p):
     # j-invariant
     j_inv = (-1728 * pow(4*a, 3, p) * pow(disc, p-2, p)) % p if p > 2 else 0
     r.add_test('j-invariant', True, f'j={j_inv}')
-    if j_inv == 0 or j_inv == 1728 % p:
-        r.add_finding('HIGH', f'Supersingular j={j_inv}')
+    # Supersingular (embedding degree <= 2, so MOV/Frey-Ruck applies). The
+    # j-invariant alone decides nothing: for p > 3, j = 0 is supersingular
+    # iff p = 2 mod 3 and j = 1728 iff p = 3 mod 4 (Deuring); any other j is
+    # decided below from the exact point count (trace = 0).
+    supersingular = p > 3 and ((j_inv == 0 and p % 3 == 2)
+                               or (j_inv == 1728 % p and p % 4 == 3))
+    count_trace = None
 
     # CUBIC (if p \u2261 1 mod 3)
     if lib_c and p % 3 == 1:
@@ -1256,6 +1261,7 @@ def audit_curve(engines, a, b, p):
             elif pow(rhs, (p-1)//2, p) == 1:
                 n += 2
         trace = p + 1 - n
+        count_trace = trace
         if trace == 1 or n == p:
             r.add_finding('CRITICAL',
                 f'Anomalous curve: #E={n}=p, trace=1 (Smart attack vulnerable)')
@@ -1276,6 +1282,7 @@ def audit_curve(engines, a, b, p):
                        'curve singular \u2014 trace count not applicable')
         else:
             _t = p + 1 - _n
+            count_trace = _t
             if _t == 1 or _n == p:
                 r.add_finding('CRITICAL',
                     f'Anomalous curve: #E={_n}=p, trace=1 (Smart attack vulnerable)')
@@ -1292,6 +1299,11 @@ def audit_curve(engines, a, b, p):
     else:
         r.add_test('Anomalous-trace check', True,
                    'p > 10\u00b9\u2074: SEA algorithm needed for crypto-size primes')
+
+    if supersingular or (p > 3 and count_trace == 0):
+        why = (f'p\u2261{p % 3} mod 3' if j_inv == 0 and supersingular else
+               f'p\u2261{p % 4} mod 4' if supersingular else 'trace 0')
+        r.add_finding('HIGH', f'Supersingular: j={j_inv}, {why} (MOV/Frey-R\u00fcck transfer)')
 
     # ECC POINT VALIDATION
     if lib_c:
@@ -1533,6 +1545,9 @@ def coq_check(path, theorems=None, timeout=120):
 # being realigned toward. The headline names the PQC count; the rest is
 # reported beside it, never folded in.
 #   (name prefix, track, realignment target or None)
+_NO_PQC_CURVES = ('no PQC target: classical curve-parameter screening; hybrid KEMs are '
+                  'checked by --verify-hybrid, which does not use these engines')
+_NO_PQC_YET = 'no PQC target yet'
 ENGINE_TRACKS = (
     ('Z_3329 (Kyber)',         'pqc', None),
     ('Z_8380417 (Dilithium)',  'pqc', None),
@@ -1563,15 +1578,15 @@ ENGINE_TRACKS = (
     ('GF(2)',                  'classical', 'HQC: quasi-cyclic arithmetic over GF(2)[x]/(x^n - 1)'),
     ('Stress: GF(2)',          'classical', 'HQC / Classic McEliece'),
     ('AES S-box Affine',       'classical', 'GF(2^m) arithmetic for Classic McEliece and HQC Reed-Solomon'),
-    ('Cubic B(a,b) + ECC',     'classical', 'the ECDH half of hybrid KEMs (X25519MLKEM768, ...)'),
-    ('Curve ',                 'classical', 'the ECDH half of hybrid KEMs'),
-    ('SafeCurves Database',    'classical', 'curve validation for hybrid KEMs'),
+    ('Cubic B(a,b) + ECC',     'classical', _NO_PQC_CURVES),
+    ('Curve ',                 'classical', _NO_PQC_CURVES),
+    ('SafeCurves Database',    'classical', _NO_PQC_CURVES),
     ('Conformity Gradient',    'research', 'correctness checks for NTT/FFT side-channel countermeasures'),
     ('CFL Front-End',          'research', 'standards constraints as SAT/QBF obligations'),
     ('DQBF Pipeline',          'research', 'standards constraints as SAT/QBF obligations'),
     ('C CFL Pipeline',         'research', 'standards constraints as SAT/QBF obligations'),
-    ('Engine 6',               'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
-    ('Stress: Engine 6',       'research', 'mod-p Hasse-Witt test vectors for isogeny schemes (SQIsign)'),
+    ('Engine 6',               'research', _NO_PQC_YET),
+    ('Stress: Engine 6',       'research', _NO_PQC_YET),
 )
 
 TRACK_TITLES = {'pqc': 'PQC (FIPS 203/204/205)', 'harness': 'harness integrity',
@@ -1962,13 +1977,21 @@ def audit_adversarial(engines):
         if crit: caught += 1
     r.add_test(f'B1: Singular curves', caught == total, f'{caught}/{total} CRITICAL flagged')
 
-    c2 = 0; t2 = 0
-    for a, b, p in [(0,1,17),(0,1,97),(1,0,17),(1,0,97)]:
-        ar = audit_curve(engines, a, b, p)
-        high = any(f['severity'] in ('HIGH','CRITICAL') for f in ar.findings)
-        t2 += 1
-        if high: c2 += 1
-    r.add_test(f'B2: Supersingular curves', c2 == t2, f'{c2}/{t2} HIGH+ flagged')
+    # Supersingular: j = 0 with p = 2 mod 3, j = 1728 with p = 3 mod 4, j = 8
+    # mod 17 (neither: found by the point count), and j = 1728 mod a prime
+    # above 10^15, where no count runs and Deuring's rule alone decides.
+    # Controls: j = 0 and 1728 curves that are ordinary (y^2 = x^3 + 1 mod 97
+    # has 84 points, y^2 = x^3 + x mod 17 and mod 97 have 16 and 80) must not
+    # be flagged.
+    def _ss(a, b, p):
+        return any(f['severity'] == 'HIGH' and f['description'].startswith('Supersingular')
+                   for f in audit_curve(engines, a, b, p).findings)
+    pos = [(0,1,17),(0,1,23),(1,0,19),(1,0,23),(1,1,17),(1,0,1000000000000091)]
+    neg = [(0,1,97),(0,1,7),(1,0,17),(1,0,97)]
+    c2 = sum(_ss(*c) for c in pos)
+    f2 = sum(_ss(*c) for c in neg)
+    r.add_test(f'B2: Supersingular curves', c2 == len(pos) and f2 == 0,
+               f'{c2}/{len(pos)} flagged, {f2}/{len(neg)} ordinary j=0/1728 controls flagged')
 
     c3 = 0; t3 = 0
     for a, b, p in [(1,6,8380417),(1,55,8380417)]:
@@ -2131,7 +2154,9 @@ def audit_safecurves(engines):
         sevs = set(f['severity'] for f in ar.findings)
         actual = 'CRITICAL' if 'CRITICAL' in sevs else ('HIGH' if 'HIGH' in sevs else
                  ('MEDIUM' if 'MEDIUM' in sevs else 'OK'))
-        ok = sev_rank.get(actual, 0) >= sev_rank.get(expected, 0)
+        # 'OK' is a negative control: it must be exact, or it passes always.
+        ok = (actual == 'OK') if expected == 'OK' else \
+            sev_rank.get(actual, 0) >= sev_rank.get(expected, 0)
         r.add_test(f'{label}', ok, f'expected={expected} actual={actual}')
     return r
 
@@ -6530,7 +6555,9 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
         print(f"  This audits the vendor's OWN keygen/encaps/decaps against")
         print(f"  NIST's published vectors, including the invalid keys it")
-        print(f"  must refuse. It is not a side-channel review.")
+        print(f"  must refuse. " + ("Constant-time: branches and addresses only, not "
+                                   "timing or power." if constant_time else
+                                   "It is not a side-channel review."))
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,

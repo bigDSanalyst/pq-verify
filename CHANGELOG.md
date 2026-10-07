@@ -5,6 +5,42 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-10-07
+
+### Fixed — supersingular curves, and engine targets that overclaimed
+
+- **Every j = 0 and j = 1728 curve was reported supersingular.** The rule is
+  exact only with the prime: for p > 3, j = 0 is supersingular iff
+  p ≡ 2 mod 3 and j = 1728 iff p ≡ 3 mod 4 (Deuring); any other j only when
+  the trace is 0, which the exact point count now decides. Three of the four
+  "supersingular" curves in the adversarial suite's B2 were ordinary
+  (y² = x³ + 1 mod 97 has 84 points; y² = x³ + x mod 17 and mod 97 have 16
+  and 80), so B2 passed by sharing the check's mistake. B2 now holds six
+  supersingular curves (including j = 8 mod 17, found only by the count, and
+  j = 1728 mod a prime above 10¹⁵, decided by the rule alone) and must leave
+  four ordinary j = 0 / 1728 controls unflagged.
+- **SafeCurves' "ordinary curve" control could not fail**: it passed at any
+  severity of at least OK. An OK expectation is now exact.
+- **Engine targets no longer claim what they do not do.** The curve engines
+  were listed as heading toward "the ECDH half of hybrid KEMs"; X25519 is
+  neither j = 0 nor j = 1728, and hybrids are checked by `--verify-hybrid`,
+  which does not use these engines. Engine 6 was listed as heading toward
+  "mod-p Hasse–Witt test vectors for SQIsign", a route that does not exist.
+  Both now say they have no PQC target.
+
+### Added — exact FN-DSA key checks (`--audit-fndsa`, draft track)
+
+- **keyGen checks that every secret key is a valid Falcon key**: G is
+  recomputed (`g·F/f mod q`, centred, |G| ≤ 127) and `f·G − g·F = q` must
+  hold in ℤ[x]/(xⁿ+1); both Gram–Schmidt norms must be below 1.17²·q:
+  `‖(g, −f)‖²` and `q²·[1/(f f* + g g*)]₀`, the latter an exact rational
+  through the field-norm tower. No floating point. The third polynomial in
+  the secret key, decoded and discarded until now, is F (it was named G).
+- A mutant whose key generator stores an F that does not solve the NTRU
+  equation is caught; PQClean passes at both sets (keyGen 30/30).
+- A library that refuses to sign with its own key is now a sign failure,
+  not a crash of the audit.
+
 ### Added — constant-time audit (`--constant-time`)
 
 - **`--audit-kem PATH SET --constant-time`** runs the vendor's own Encaps
@@ -27,8 +63,6 @@ versioning](https://semver.org/spec/v2.0.0.html).
   `poly_tomsg`; `memcmp` in the FO re-encryption check), pass every
   correctness stage including the accumulated cases and are caught here. CI
   installs valgrind and requires all of it (`tools/vendor_audit.py`).
-
-## [2.11.0] — 2026-10-07
 
 ### Added — accumulated vectors
 

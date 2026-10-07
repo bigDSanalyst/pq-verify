@@ -111,6 +111,18 @@ pq-verify --audit-dsa build/libmldsa65.so ML-DSA-65       # the whole signature 
 pq-verify --audit-hbs build/libhashsigs.so                # LMS/XMSS, via a pqv_hbs adapter
 ```
 
+**The minimal audit.** If you run one command against an ML-KEM library,
+run this one: NIST, Wycheproof and CCTV vectors, the FIPS 203 input checks,
+10 000 accumulated cases and the constant-time check, with a JSON report
+bound to the library's SHA-256, and (the default) a nonzero exit on any
+finding:
+
+```bash
+pq-verify --audit-kem build/libmlkem768.so ML-KEM-768 --constant-time --json report.json
+```
+
+For ML-DSA, the same with `--audit-dsa` (no `--constant-time` yet).
+
 For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
 a build with the transform inlined — ask it the questions instead:
 
@@ -290,11 +302,18 @@ PQC evidence.
 |---|---|---|---|
 | **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](#draft-track-fn-dsa-fips-206)) |
 | Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
-| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts, SafeCurves | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields), the ECDH half of **hybrid KEMs** |
-| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | mod-p Hasse–Witt test vectors for isogeny schemes (SQIsign); correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations |
+| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts (singular, anomalous and supersingular curves), SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
+| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations. Engine 6 has no PQC target yet |
 
 "Being realigned toward" is a direction, not a capability: until an engine
 checks a post-quantum implementation, it is reported under its own track.
+
+The research track holds two different kinds of work, and neither is
+evidence about an implementation. **Infrastructure:** the CFL/DQBF pipeline,
+which turns standards constraints into SAT/QBF obligations and could carry
+PQC checks once they are written as such. **Analysis:** the conformity
+gradient D(t) and Engine 6, mathematics over ℂ with no post-quantum target
+yet.
 
 ### Accumulated vectors: 10 000 random cases, one digest
 
@@ -310,6 +329,12 @@ ML-KEM digests turn out to be the FIPS 203 draft
 ([details](pq_verify/accumulated.py)). `--accumulated 0` skips them.
 
 ### Any language: Crucible-protocol harnesses
+
+**A harness result is not bound to a library.** pq-verify hashes the
+harness executable, not the library behind it, so a harness audit says what
+*something answering through that harness* computes. It is not
+artifact-bound evidence about a specific binary, of the kind a CMVP-style
+review needs; for that, load the library (`--audit-kem`, `--audit-dsa`).
 
 `pq-verify --audit-harness './harness-go-stdlib' ML-KEM-768` audits an
 implementation in any language through a harness speaking
@@ -339,9 +364,11 @@ not one of the 1566 ACVP vectors, and never part of a FIPS 203/204/205 verdict.
 the same way, through its own entry points (the NIST API as PQClean exports
 it, or liboqs's `OQS_SIG_falcon_*`): the pinned signatures verify, every
 malformed input is refused, its keys are canonical and match their secret
-keys, and its signatures verify under pq-verify's verifier with no nonce
-reused. PQClean's Falcon passes; seven planted bugs in its source each fail
-the audit in CI ([AUDITS.md](AUDITS.md)).
+keys, every secret key solves the NTRU equation `f·G − g·F = q` and meets
+both Gram–Schmidt bounds (checked in exact integer and rational arithmetic),
+and its signatures verify under pq-verify's verifier with no nonce reused.
+PQClean's Falcon passes; eight planted bugs in its source each fail the audit
+in CI ([AUDITS.md](AUDITS.md)).
 
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
