@@ -5,6 +5,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-10-07
+
 ### Changed — read before upgrading
 
 - **Failing results now fail the exit status by default.** `0` verified, `1` a
@@ -35,7 +37,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
   without a track fails the test suite.
 - **macOS (Apple silicon) is tested in CI**: Mach-O symbols (`nm -gU`), dyld's
   image list for the loaded-object binding, portable engine flags (`-lrt`
-  dropped on macOS, `-march=native` retried without, C++ engines built as
+  dropped on macOS, `-march=native` retried as `-mcpu=native`
+  before building untuned, with the flags each engine got recorded in
+  `core.ENGINE_FLAGS`; C++ engines built as
   C++17). Engine 6 build failures are now DEGRADED with the compiler's
   message and their checks recorded as skipped, rather than vanishing from
   the count.

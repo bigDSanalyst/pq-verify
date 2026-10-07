@@ -658,7 +658,10 @@ Install: `pip install "pq-verify[full]"` — or download the wheel from
   `kyber-py` and `dilithium-py` both require `>=3.9`. `requires-python` and the
   code are held together mechanically — a module that stops parsing at the
   declared floor fails the suite, and widening the floor fails it too.
-- gcc and g++ (the C/C++ engines compile at runtime)
+- gcc and g++ (the C/C++ engines compile at runtime); on macOS, Xcode's
+  command-line tools (Apple clang) — every engine still builds with
+  `-march=native`, falling back to `-mcpu=native`
+- Linux (x86-64) or macOS (Apple silicon); both run the full suite in CI
 
 **For the full 160/160 self-suite and the 1566/1566 ACVP claim:**
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
