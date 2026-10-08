@@ -6264,7 +6264,7 @@ _KEM_SYMBOL_PATTERNS = {
 _KEM_INTERNAL_MARKERS = ('indcpa', 'cpapke', 'kpke')
 
 
-def _resolve_kem_symbols(exported, param_set, explicit=None):
+def _resolve_kem_symbols(exported, param_set, explicit=None, prefix=None):
     """Pick keypair/encaps/decaps from a library's exported symbols.
 
     Returns ({role: symbol or None}, {role: [candidates]} for any role with
@@ -6272,7 +6272,9 @@ def _resolve_kem_symbols(exported, param_set, explicit=None):
     binding produces a false finding against a correct library.
     """
     import re as _re
+    from .symbols import with_prefix
     explicit = explicit or {}
+    exported = with_prefix(exported, prefix)
     level = param_set.rsplit('-', 1)[-1]
     found, ambiguous = {}, {}
     for role, pat in _KEM_SYMBOL_PATTERNS.items():
@@ -6295,7 +6297,7 @@ def _resolve_kem_symbols(exported, param_set, explicit=None):
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
                        decaps=None, prompt_dir=None, vector_dir=None, live=False,
                        verbose=True, edge=True, accumulated=10_000,
-                       constant_time=False):
+                       constant_time=False, prefix=None):
     """Audit a THIRD-PARTY ML-KEM implementation end to end against NIST's vectors.
 
     This is the scheme-level counterpart to pqverify_scan (which audits the NTT
@@ -6347,14 +6349,13 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
 
     found, ambiguous = _resolve_kem_symbols(
         exported, param_set,
-        {'keypair': keypair, 'encaps': encaps, 'decaps': decaps})
+        {'keypair': keypair, 'encaps': encaps, 'decaps': decaps}, prefix=prefix)
     kp, en, de = found['keypair'], found['encaps'], found['decaps']
     if ambiguous:
-        print(f"  Cannot audit {so_path}: more than one candidate for")
-        for role, cands in ambiguous.items():
-            print(f"    {role}: {', '.join(cands)}")
-        print(f"    Name the symbol explicitly (--kem-{next(iter(ambiguous))} "
-              f"or {next(iter(ambiguous))}=) rather than let pq-verify guess.")
+        from .symbols import ambiguity_message
+        print(ambiguity_message(so_path, ambiguous, _KEM_SYMBOL_PATTERNS,
+                                f"--kem-{next(iter(ambiguous))} or "
+                                f"{next(iter(ambiguous))}="))
         DEGRADED['skipped_checks'].append(f'KEM audit ({param_set})')
         return None
     missing = [n for n, v in (('keypair_derand', kp), ('enc_derand', en),

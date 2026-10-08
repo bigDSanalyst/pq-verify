@@ -2755,7 +2755,7 @@ def test_vendor_rows_are_pinned_to_full_commits():
     for row in rows:
         assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
         assert set(row["expected"]) == set(mod.STAGES), row["library"]
-        assert row["build"] in ("mlkem-native", "pqclean"), row["library"]
+        assert row["build"] in ("mlkem-native", "pqclean", "liboqs"), row["library"]
         assert set(row["edge"]) == set(row["sets"]), row["library"]
         for ps in row["sets"]:
             assert set(row["edge"][ps]) == set(mod.EDGE_STAGES), (row["library"], ps)
@@ -5680,3 +5680,167 @@ def test_ct_vendor_rows_and_mutants_are_well_formed():
         assert set(row["ct"]) == set(row["sets"])
         for m in row.get("ct_mutants", []):
             assert m["set"] in row["sets"] and set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
+
+
+# ----------------------------------------------------------------------
+# liboqs: its public ML-DSA API, its RNG hook, and choosing an implementation
+# ----------------------------------------------------------------------
+
+_OQS_KEEP = []
+
+
+def _oqs_shim(tmp_path, *flags):
+    """tests/data/oqs_mldsa_shim.c: liboqs's OQS_SIG_ml_dsa_44_* API and RNG
+    hook over dilithium-py. A callback that raises would return 0 (success)
+    through ctypes, so every one catches and refuses."""
+    import ctypes as C, shutil, subprocess
+    D = pytest.importorskip("dilithium_py.ml_dsa").ML_DSA_44
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"liboqsshim{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
+                    *(f"-D{f}" for f in flags),
+                    str(root / "tests" / "data" / "oqs_mldsa_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    U8, SZ, PSZ = C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_size_t)
+
+    @C.CFUNCTYPE(C.c_int, U8, U8, U8)
+    def kp(pk, sk, seed):
+        try:
+            p, s = D._keygen_internal(C.string_at(seed, 32))
+            C.memmove(pk, p, len(p))
+            C.memmove(sk, s, len(s))
+            return 0
+        except Exception:
+            return -1
+
+    @C.CFUNCTYPE(C.c_int, U8, PSZ, U8, SZ, U8, SZ, U8, U8)
+    def sg(sig, siglen, m, ml, ctx, cl, rnd, sk):
+        try:
+            pre = bytes([0, cl]) + C.string_at(ctx, cl)
+            s = D._sign_internal(C.string_at(sk, 2560), pre + C.string_at(m, ml),
+                                 C.string_at(rnd, 32))
+            C.memmove(sig, s, len(s))
+            siglen[0] = len(s)
+            return 0
+        except Exception:
+            return -1
+
+    @C.CFUNCTYPE(C.c_int, U8, SZ, U8, SZ, U8, SZ, U8)
+    def vf(m, ml, sig, sl, ctx, cl, pk):
+        try:
+            pre = bytes([0, cl]) + C.string_at(ctx, cl)
+            ok = D._verify_internal(C.string_at(pk, 1312), pre + C.string_at(m, ml),
+                                    C.string_at(sig, sl))
+            return 0 if ok else -1
+        except Exception:
+            return -1
+    lib.pqvtest_oqs_register(kp, sg, vf)
+    _OQS_KEEP.extend([lib, kp, sg, vf])
+    return str(so)
+
+
+def _oqs_audit(so, **kw):
+    from pq_verify.dsa_audit import pqverify_audit_dsa
+    out = io.StringIO()
+    with _isolated_degraded(), contextlib.redirect_stdout(out):
+        r = pqverify_audit_dsa(so, "ML-DSA-44", verbose=True, edge=False, **kw)
+    return r, out.getvalue()
+
+
+def test_oqs_public_mldsa_api_is_audited_byte_exactly_through_its_rng_hook(tmp_path):
+    """liboqs's message-first verify, its *_with_ctx_str variants, and its
+    own RNG hook supplying NIST's seeds: keyGen and pure sigGen byte-exact,
+    and the 100 accumulated cases reproduce CCTV's digest."""
+    import ctypes as C
+    so = _oqs_shim(tmp_path)
+    r, out = _oqs_audit(so, accumulated=100)
+    assert r["verified"], r["failures"]
+    # the deterministic hook is handed back: liboqs used afterwards in the
+    # same process must not draw from an empty queue (zeros)
+    assert C.CDLL(so).pqvtest_rng_is_custom() == 0
+    assert "calling convention: oqs" in out and "OQS_randombytes_custom_algorithm" in out
+    d = r["detail"]
+    assert d["keyGen"] == (25, 25) and d["accumulated"] == (1, 1)
+    assert d["sigGenPure"][1] > 0 and d["sigGenPure"][0] == d["sigGenPure"][1]
+    assert d["sigVerPure"][1] > 0 and d["sigVerPure"][0] == d["sigVerPure"][1]
+    for stage in ("sigGenInternal", "sigGenPreHash", "sigGenMu", "sigVerInternal",
+                  "sigVerPreHash", "sigVerMu"):
+        assert stage in r["not_applicable"], stage      # never passed
+    assert r["via"]["sigVerPure"] == "OQS_SIG_ml_dsa_44_verify_with_ctx_str"
+    assert not r["rng"]
+
+
+def test_oqs_wrapper_that_drops_the_context_is_caught(tmp_path):
+    r, _ = _oqs_audit(_oqs_shim(tmp_path, "PQVTEST_DROP_CTX"), accumulated=0)
+    p, t = r["detail"]["sigGenPure"]
+    assert not r["verified"] and t and p < t
+
+
+def test_oqs_keypair_drawing_the_wrong_amount_of_randomness_is_caught(tmp_path):
+    r, _ = _oqs_audit(_oqs_shim(tmp_path, "PQVTEST_OVERDRAW"), accumulated=0)
+    assert not r["verified"]
+    assert r["detail"]["keyGen"][0] == 0
+    assert any("drew 48 random byte(s), FIPS 204 calls for 32" in x for x in r["rng"])
+
+
+def test_two_implementations_are_refused_until_one_is_named(tmp_path):
+    """liboqs exports its OQS_* API and the backends behind it. pq-verify
+    lists the implementations -- also when auto-detection alone would have
+    mixed them (a backend's keypair_internal is unique) -- --symbol-prefix
+    picks one, and a binding the caller names across both is refused."""
+    from pq_verify.dsa_audit import VendorDSA
+    so = _oqs_shim(tmp_path, "PQVTEST_SECOND_IMPL")
+    r, out = _oqs_audit(so, accumulated=0)
+    assert r is None
+    assert "--symbol-prefix OQS_SIG_ml_dsa_44_" in out
+    assert "--symbol-prefix PQCP_MLDSA_NATIVE_MLDSA44_C_" in out
+    r, _ = _oqs_audit(so, accumulated=0, prefix="OQS_SIG_ml_dsa_44_")
+    assert r["verified"], r["failures"]
+    with pytest.raises(ValueError, match="mixes liboqs's public API"):
+        VendorDSA(so, "ML-DSA-44", symbols={"keypair": "OQS_SIG_ml_dsa_44_keypair",
+                                            "verify": "PQCP_MLDSA_NATIVE_MLDSA44_C_verify"})
+
+
+def test_mldsa_native_v1_is_told_from_v2_by_its_signed_message_api():
+    """mldsa-native before 2.0.0 (as liboqs 0.16 vendors it) passes signature
+    lengths; 2.0.0 made them fixed-size and dropped _sign/_open. Binding one
+    with the other's argument order crashes or tests nothing."""
+    from pq_verify.dsa_audit import bound_abi
+    ns = "PQCP_MLDSA_NATIVE_MLDSA65_C_"
+    v2 = [ns + s for s in ("keypair_internal", "signature_internal", "verify_internal",
+                           "signature_extmu", "verify_extmu")]
+    sym = {"keypair_seed": ns + "keypair_internal", "sign_internal": ns + "signature_internal",
+           "verify_internal": ns + "verify_internal", "rng": None}
+    assert bound_abi(sym, v2) == "mldsa-native"
+    assert bound_abi(sym, v2 + [ns + "sign", ns + "open"]) == "mldsa-native-v1"
+    # another namespace's _open says nothing about this one
+    assert bound_abi(sym, v2 + ["OTHER_open"]) == "mldsa-native"
+
+
+def test_kem_symbol_prefix_picks_one_implementation():
+    from pq_verify.core import _resolve_kem_symbols, _KEM_SYMBOL_PATTERNS
+    from pq_verify.symbols import implementation_prefixes
+    exported = [f"{p}{s}" for p in ("OQS_KEM_ml_kem_768_",) for s in
+                ("keypair_derand", "encaps_derand", "decaps")]
+    exported += [f"PQCP_MLKEM_NATIVE_MLKEM768_{b}_{s}" for b in ("C", "X86_64")
+                 for s in ("keypair_derand", "enc_derand", "dec")]
+    found, amb = _resolve_kem_symbols(exported, "ML-KEM-768")
+    assert set(amb) == {"keypair", "encaps", "decaps"} and not any(found.values())
+    assert implementation_prefixes(amb, _KEM_SYMBOL_PATTERNS) == [
+        "OQS_KEM_ml_kem_768_", "PQCP_MLKEM_NATIVE_MLKEM768_C_",
+        "PQCP_MLKEM_NATIVE_MLKEM768_X86_64_"]
+    found, amb = _resolve_kem_symbols(exported, "ML-KEM-768",
+                                      prefix="PQCP_MLKEM_NATIVE_MLKEM768_C_")
+    assert not amb and found == {"keypair": "PQCP_MLKEM_NATIVE_MLKEM768_C_keypair_derand",
+                                 "encaps": "PQCP_MLKEM_NATIVE_MLKEM768_C_enc_derand",
+                                 "decaps": "PQCP_MLKEM_NATIVE_MLKEM768_C_dec"}
+
+
+def test_symbol_prefix_needs_an_audit():
+    from pq_verify.cli import main
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert main(["--acvp", "--symbol-prefix", "OQS_"]) == 2
+    assert "--symbol-prefix does nothing without" in out.getvalue()

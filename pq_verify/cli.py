@@ -241,7 +241,13 @@ def build_parser():
                         "(default 3600; 6 h with --audit-hbs-full; 0 = never). "
                         "Each audit runs in a child process, so a hang or a crash "
                         "is reported instead of taking pq-verify down with it")
-    p.add_argument("--dsa-abi", choices=("pqcrystals", "mldsa-native"),
+    p.add_argument("--symbol-prefix", metavar="PREFIX",
+                   help="with --audit-kem, --audit-dsa or --audit-fndsa: consider only "
+                        "symbols starting with PREFIX, for a library that exports "
+                        "more than one implementation (liboqs: OQS_KEM_ml_kem_768_ "
+                        "for its public API, PQCP_MLKEM_NATIVE_MLKEM768_X86_64_ for "
+                        "one backend). An ambiguity within it is still refused")
+    p.add_argument("--dsa-abi", choices=("pqcrystals", "mldsa-native", "mldsa-native-v1", "oqs"),
                    help="with --audit-dsa: the calling convention, when "
                         "auto-detection from the symbol names is wrong")
     p.add_argument("--dsa-symbol", action="append", default=[], metavar="ROLE=SYM",
@@ -312,6 +318,8 @@ def main(argv=None):
     for _flag, _set, _needs in (
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
+            ("--symbol-prefix", args.symbol_prefix,
+             args.audit_kem or args.audit_dsa or args.audit_fndsa),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
             ("--constant-time", args.constant_time, args.audit_kem),
@@ -329,6 +337,7 @@ def main(argv=None):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
+                       "--symbol-prefix": "--audit-kem, --audit-dsa or --audit-fndsa",
                        "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
                        "--constant-time": "--audit-kem",
                        "--fresh-key": "--emit-prompt or --verify-response",
@@ -515,7 +524,7 @@ def main(argv=None):
                 args, "pq_verify.core", "pqverify_audit_kem", _p, _ps,
                 keypair=args.kem_keypair, encaps=args.kem_encaps,
                 decaps=args.kem_decaps, accumulated=_acc_n(_ps),
-                constant_time=args.constant_time)
+                constant_time=args.constant_time, prefix=args.symbol_prefix)
             _bound = _bind_loaded(kem_artifact, _loaded)
             kem_reason = kem_reason or _bound
             if kem_reason:
@@ -553,7 +562,8 @@ def main(argv=None):
         try:
             dsa_result, _loaded, dsa_reason = _isolated(
                 args, "pq_verify.dsa_audit", "pqverify_audit_dsa", _p, _ps,
-                abi=args.dsa_abi, symbols=_syms, accumulated=_acc_n(_ps), **_vsrc)
+                abi=args.dsa_abi, symbols=_syms, accumulated=_acc_n(_ps),
+                prefix=args.symbol_prefix, **_vsrc)
             _bound = _bind_loaded(dsa_artifact, _loaded)
             dsa_reason = dsa_reason or _bound
             if dsa_reason:
@@ -589,7 +599,7 @@ def main(argv=None):
         try:
             fna_result, _loaded, fna_reason = _isolated(
                 args, "pq_verify.fndsa_audit", "pqverify_audit_fndsa", _p, _ps,
-                symbols=_syms)
+                symbols=_syms, prefix=args.symbol_prefix)
             _bound = _bind_loaded(fna_artifact, _loaded)
             fna_reason = fna_reason or _bound
             if fna_reason:

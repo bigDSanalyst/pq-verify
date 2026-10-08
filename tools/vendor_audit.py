@@ -34,6 +34,7 @@ EXIT  0 every row reproduces   1 a row differs   2 a library could not be built
 import argparse
 import contextlib
 import io
+import itertools
 import json
 import os
 import shutil
@@ -55,12 +56,12 @@ DSA_STAGES = ("keyGen", "sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGen
               "sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu")
 DSA_EDGE_STAGES = ("edge:sigVerify", "edge:sigGen", "edge:edgeLength")
 ACC_STAGES = ("accumulated",)        # pq_verify/accumulated.py, every scheme
-DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa")
+DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa", "liboqs")
 HBS_BEGIN, HBS_END = "<!-- vendor-audits-hbs:begin -->", "<!-- vendor-audits-hbs:end -->"
 HBS_BUILDS = ("hash-sigs", "xmss-reference")
 HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
 FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audits-fndsa:end -->"
-FNDSA_BUILDS = ("pqclean-falcon",)
+FNDSA_BUILDS = ("pqclean-falcon", "liboqs")
 FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
@@ -85,6 +86,53 @@ def load_hbs_table(path=TABLE):
 
 # ─────────────────────────────── build ───────────────────────────────
 
+# liboqs: one shared library for every parameter set, configured as
+# distributions ship it -- OQS_DIST_BUILD compiles every backend in and picks
+# one at run time by CPU -- with only the algorithms audited here.
+LIBOQS_ALGS = ("KEM_ml_kem_512;KEM_ml_kem_768;KEM_ml_kem_1024;"
+               "SIG_ml_dsa_44;SIG_ml_dsa_65;SIG_ml_dsa_87;"
+               "SIG_falcon_512;SIG_falcon_1024;SIG_falcon_padded_512;SIG_falcon_padded_1024")
+_LIBOQS_BUILT = {}
+_LIBOQS_MUTANTS = itertools.count()
+
+
+def build_liboqs(src, out_dir, tag=""):
+    """The pinned tree is built once and shared by every row and set. A
+    mutant (tag) is always rebuilt, to a path of its own: every liboqs row
+    mutates the same tree path and numbers its mutants from 0, so a cache
+    keyed on either would hand one row's mutant to another."""
+    key = str(src)
+    if not tag and key in _LIBOQS_BUILT:
+        return _LIBOQS_BUILT[key]
+    if tag:
+        tag = f"{tag}-{next(_LIBOQS_MUTANTS)}"
+    bdir = Path(out_dir) / f"liboqs-build{tag}"
+    if bdir.exists():
+        shutil.rmtree(bdir)
+    subprocess.run(["cmake", "-S", str(src), "-B", str(bdir), "-DBUILD_SHARED_LIBS=ON",
+                    "-DOQS_USE_OPENSSL=OFF", "-DOQS_BUILD_ONLY_LIB=ON", "-DOQS_DIST_BUILD=ON",
+                    "-DCMAKE_BUILD_TYPE=Release", f"-DOQS_MINIMAL_BUILD={LIBOQS_ALGS}"],
+                   check=True, capture_output=True)
+    subprocess.run(["cmake", "--build", str(bdir), "-j", str(os.cpu_count() or 2)],
+                   check=True, capture_output=True)
+    lib = next(p for p in sorted((bdir / "lib").glob("liboqs.so*")) if not p.is_symlink())
+    # A distinct path per build: the loader hands back a library already
+    # loaded from the same path, which would audit the first build every time.
+    so = Path(out_dir) / f"liboqs{tag}.so"
+    shutil.copy2(lib, so)
+    if tag:
+        shutil.rmtree(bdir, ignore_errors=True)
+    else:
+        _LIBOQS_BUILT[key] = str(so)
+    return str(so)
+
+
+def prefix_for(row, param_set, mutant=None):
+    """The row's --symbol-prefix for one parameter set ({level} filled in),
+    or None: a library exporting several implementations names one."""
+    t = (mutant or {}).get("prefix") or row.get("prefix")
+    return t.format(level=param_set.rsplit("-", 1)[1]) if t else None
+
 def fetch(url, commit, dest):
     """Exactly `commit`, nothing newer: fetch that object and check it out."""
     run = lambda *a: subprocess.run(a, cwd=dest, check=True, capture_output=True)
@@ -100,6 +148,8 @@ def fetch(url, commit, dest):
 
 def build(recipe, src, param_set, out_dir, tag=""):
     """Compile one parameter set of a library to a shared object."""
+    if recipe == "liboqs":
+        return build_liboqs(src, out_dir, tag)
     level = param_set.rsplit("-", 1)[1]
     so = Path(out_dir) / f"{recipe}{level}{tag}.so"
     cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared"]
@@ -121,7 +171,10 @@ def build(recipe, src, param_set, out_dir, tag=""):
 
 
 def build_dsa(recipe, src, param_set, out_dir, tag=""):
-    """Compile one ML-DSA parameter set, linked with the randomness harness."""
+    """Compile one ML-DSA parameter set, linked with the randomness harness
+    (liboqs: its own RNG hook supplies the randomness instead)."""
+    if recipe == "liboqs":
+        return build_liboqs(src, out_dir, tag)
     level = param_set.rsplit("-", 1)[1]
     so = Path(out_dir) / f"{recipe}{level}{tag}.so"
     cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared"]
@@ -199,6 +252,8 @@ def build_fndsa(recipe, src, param_set, out_dir, tag=""):
     """Compile one FN-DSA (Falcon) parameter set. Signing draws its nonce
     and seeds from the system RNG: FN-DSA signing is audited for validity,
     not byte-for-byte, so no randomness harness is linked."""
+    if recipe == "liboqs":
+        return build_liboqs(src, out_dir, tag)
     n = param_set.rsplit("-", 1)[1]
     so = Path(out_dir) / f"{recipe}{n}{tag}.so"
     src = Path(src)
@@ -216,11 +271,11 @@ def build_fndsa(recipe, src, param_set, out_dir, tag=""):
 
 # ─────────────────────────────── audit ───────────────────────────────
 
-def audit_dsa(so, param_set):
+def audit_dsa(so, param_set, prefix=None):
     sys.path.insert(0, str(REPO))
     from pq_verify.dsa_audit import pqverify_audit_dsa
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_dsa(so, param_set, verbose=False)
+        r = pqverify_audit_dsa(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
@@ -239,24 +294,24 @@ def audit_hbs(so):
             "failing": sorted(f"{f['stage']}: {f['case']}" for f in r["failures"])}
 
 
-def audit_fndsa(so, param_set):
+def audit_fndsa(so, param_set, prefix=None):
     sys.path.insert(0, str(REPO))
     from pq_verify.fndsa_audit import pqverify_audit_fndsa
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_fndsa(so, param_set, verbose=False)
+        r = pqverify_audit_fndsa(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
             "not_applicable": r["not_applicable_total"]}
 
 
-def audit_ct(so, param_set):
+def audit_ct(so, param_set, prefix=None):
     """The --constant-time stages alone: {stage: [p, t]} and the leaks."""
     sys.path.insert(0, str(REPO))
     from pq_verify.ct_audit import run_kem
     from pq_verify.core import _resolve_kem_symbols
     from pq_verify.symbols import exported_functions
-    f, _ = _resolve_kem_symbols(exported_functions(so), param_set)
+    f, _ = _resolve_kem_symbols(exported_functions(so), param_set, prefix=prefix)
     r = run_kem(so, param_set, f["keypair"], f["encaps"], f["decaps"])
     return ({"ct:" + k: list(v) for k, v in r["stages"].items()},
             {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()})
@@ -279,7 +334,8 @@ def check_ct(rows, workdir):
             fetch(row["url"], row["commit"], src)
         for ps in row["sets"]:
             label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
-            got, leaks = audit_ct(build(row["build"], src, ps, workdir), ps)
+            got, leaks = audit_ct(build(row["build"], src, ps, workdir), ps,
+                                  prefix_for(row, ps))
             if got == row["ct"][ps]:
                 print(f"  ok     {label}: no secret-dependent branch or access, as recorded")
                 continue
@@ -293,7 +349,7 @@ def check_ct(rows, workdir):
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
-            got, leaks = audit_ct(so, m["set"])
+            got, leaks = audit_ct(so, m["set"], prefix_for(row, m["set"], m))
             missed = [s for s in m["fails"] if got.get(s, [0, 0])[0] == got.get(s, [0, 0])[1]]
             if missed:
                 failures += 1
@@ -307,11 +363,11 @@ def check_ct(rows, workdir):
     return 0
 
 
-def audit(so, param_set):
+def audit(so, param_set, prefix=None):
     sys.path.insert(0, str(REPO))
     from pq_verify.core import pqverify_audit_kem
     with contextlib.redirect_stdout(io.StringIO()):
-        r = pqverify_audit_kem(so, param_set, verbose=False)
+        r = pqverify_audit_kem(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
     return {k: list(v) for k, v in r["detail"].items()}
@@ -342,7 +398,7 @@ def check_all(rows, workdir):
             except subprocess.CalledProcessError as e:
                 print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
                 return 2
-            got = audit(so, ps)
+            got = audit(so, ps, prefix_for(row, ps))
             if got == want:
                 p, t = total(got)
                 print(f"  ok     {label}: {p}/{t}, as recorded")
@@ -355,6 +411,25 @@ def check_all(rows, workdir):
             for s in STAGES + EDGE_STAGES + ("accumulated",):
                 if got.get(s) != want.get(s):
                     print(f"         {s:8s} recorded {want.get(s)}  now {got.get(s)}")
+        for i, m in enumerate(row.get("mutants", [])):
+            label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build(row["build"], msrc, m["set"], workdir, tag=f"-kemmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got = audit(so, m["set"], prefix_for(row, m["set"], m))
+            missed = [f"{st} {p}/{t}" for st in m["fails"]
+                      for p, t in [(got or {}).get(st, (0, 0))] if not (t and p < t)]
+            if got is not None and not missed:
+                print(f"  caught {label}: fails "
+                      f"{', '.join(sorted(s for s, (p, t) in got.items() if p < t))}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: the audit did not fail "
+                  + (", ".join(missed) if got else "(could not audit it)")
+                  + ". pq-verify cannot see this bug class.")
     if failures:
         print(f"\n  {failures} row(s) differ. pq-verify's behaviour changed against a "
               f"pinned library and pinned vectors: fix the regression, or, if the "
@@ -381,7 +456,7 @@ def check_dsa(rows, workdir):
             except subprocess.CalledProcessError as e:
                 print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
                 return 2
-            got = audit_dsa(so, ps)
+            got = audit_dsa(so, ps, prefix_for(row, ps))
             want = {"results": row["results"][ps],
                     "not_applicable": row["not_applicable"][ps], "rng": []}
             if got == want:
@@ -409,11 +484,11 @@ def check_dsa(rows, workdir):
                 # A distinct file per mutant: the dynamic loader hands back an
                 # already-loaded library for a path it has seen, so reusing a
                 # name would audit the first mutant every time.
-                so = build_dsa(row["build"], msrc, m["set"], workdir, tag=f"-mut{i}")
+                so = build_dsa(row["build"], msrc, m["set"], workdir, tag=f"-dsamut{i}")
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
-            got = audit_dsa(so, m["set"])
+            got = audit_dsa(so, m["set"], prefix_for(row, m["set"], m))
             missed = []
             for stage in m["fails"]:
                 if stage == "rng":
@@ -547,7 +622,7 @@ def check_fndsa(rows, workdir):
             except subprocess.CalledProcessError as e:
                 print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
                 return 2
-            got = audit_fndsa(so, ps)
+            got = audit_fndsa(so, ps, prefix_for(row, ps))
             want = {"results": row["results"][ps],
                     "not_applicable": row["not_applicable"][ps]}
             if got == want:
@@ -570,11 +645,11 @@ def check_fndsa(rows, workdir):
             label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
             try:
                 msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
-                so = build_fndsa(row["build"], msrc, m["set"], workdir, tag=f"-mut{i}")
+                so = build_fndsa(row["build"], msrc, m["set"], workdir, tag=f"-fnmut{i}")
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
-            got = audit_fndsa(so, m["set"])
+            got = audit_fndsa(so, m["set"], prefix_for(row, m["set"], m))
             missed = [f"{st} {p}/{t}" for st in m["fails"]
                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
                       if not (t and p < t)]
@@ -603,15 +678,18 @@ def edge_total(row):
 
 def markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck "
-             "| dkCheck | Edge cases | Accumulated | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| dkCheck | Edge cases | Accumulated | Constant time | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         e = row["expected"]
+        ct = row.get("ct", {})
+        cp, cq = (sum(v[i] for ps in ct for v in ct[ps].values()) for i in (0, 1))
+        nm = len(row.get("mutants", [])) + len(row.get("ct_mutants", []))
         p, t = total(e)
         ep, et = edge_total(row)
         acc = row.get("accumulated", {})
         ap, at = (sum(acc[ps][i] for ps in acc) for i in (0, 1))
-        ok = p == t and ep == et and ap == at
+        ok = p == t and ep == et and ap == at and cp == cq
         verdict = "**VERIFIED**" if ok else "findings"
         sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
         cells = [f"{e[s][0]}/{e[s][1]}" for s in STAGES]
@@ -619,6 +697,7 @@ def markdown(rows):
                      f"({row['url']}/commit/{row['commit']}) ({row['date']}) "
                      f"| {sets} | " + " | ".join(cells) +
                      f" | {ep:,}/{et:,} | {f'{ap}/{at}' if at else '—'} "
+                     f"| {f'{cp}/{cq}' if cq else '—'} | {f'{nm}/{nm}' if nm else '—'} "
                      f"| {p}/{t} + {ep:,}/{et:,}{f' + {ap}/{at}' if at else ''} {verdict} |")
     return "\n".join(lines)
 
