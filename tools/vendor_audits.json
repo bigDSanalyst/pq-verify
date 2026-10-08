@@ -37,6 +37,7 @@
       "url": "https://github.com/pq-code-package/mlkem-native",
       "commit": "fc269bc2d1068486625a3775310c2c1f28d74732",
       "date": "2026-09-27",
+      "note": "rejects all 10 invalid keys inside enc/dec",
       "build": "mlkem-native",
       "sets": [
         "ML-KEM-512",
@@ -65,7 +66,6 @@
           10
         ]
       },
-      "note": "rejects all 10 invalid keys inside enc/dec",
       "edge": {
         "ML-KEM-512": {
           "edgeValid": [
@@ -162,6 +162,7 @@
       "url": "https://github.com/PQClean/PQClean",
       "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
       "date": "2026-08-04",
+      "note": "enc/dec return 0 for every invalid key: no rejection path (all 2,931 CCTV/Wycheproof invalid eks and 6 invalid dks accepted)",
       "build": "pqclean",
       "sets": [
         "ML-KEM-512",
@@ -190,7 +191,6 @@
           10
         ]
       },
-      "note": "enc/dec return 0 for every invalid key: no rejection path (all 2,931 CCTV/Wycheproof invalid eks and 6 invalid dks accepted)",
       "edge": {
         "ML-KEM-512": {
           "edgeValid": [
@@ -311,6 +311,420 @@
           "replace": "    fail = __builtin_memcmp(ct, cmp, KYBER_CIPHERTEXTBYTES) != 0;",
           "fails": [
             "ct:decaps"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — OQS API",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "public API (OQS_KEM_ml_kem_*), as an application calls it; dispatches to mlkem-native's x86-64 or C backend by CPU",
+      "build": "liboqs",
+      "prefix": "OQS_KEM_ml_kem_{level}_",
+      "sets": [
+        "ML-KEM-512",
+        "ML-KEM-768",
+        "ML-KEM-1024"
+      ],
+      "expected": {
+        "keyGen": [
+          25,
+          25
+        ],
+        "encaps": [
+          25,
+          25
+        ],
+        "decaps": [
+          10,
+          10
+        ],
+        "ekCheck": [
+          10,
+          10
+        ],
+        "dkCheck": [
+          10,
+          10
+        ]
+      },
+      "edge": {
+        "ML-KEM-512": {
+          "edgeValid": [
+            459,
+            459
+          ],
+          "edgeEk": [
+            883,
+            883
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-768": {
+          "edgeValid": [
+            461,
+            461
+          ],
+          "edgeEk": [
+            892,
+            892
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-1024": {
+          "edgeValid": [
+            463,
+            463
+          ],
+          "edgeEk": [
+            1156,
+            1156
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        }
+      },
+      "accumulated": {
+        "ML-KEM-512": [
+          1,
+          1
+        ],
+        "ML-KEM-768": [
+          1,
+          1
+        ],
+        "ML-KEM-1024": [
+          1,
+          1
+        ]
+      },
+      "ct": {
+        "ML-KEM-512": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-768": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-1024": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "the wrapper reports success when Encaps refuses the key",
+          "set": "ML-KEM-768",
+          "file": "src/kem/ml_kem/kem_ml_kem_768.c",
+          "find": "return (OQS_STATUS) PQCP_MLKEM_NATIVE_MLKEM768_X86_64_enc_derand(ciphertext, shared_secret, public_key, seed);",
+          "replace": "PQCP_MLKEM_NATIVE_MLKEM768_X86_64_enc_derand(ciphertext, shared_secret, public_key, seed);\n\t\treturn OQS_SUCCESS;",
+          "fails": [
+            "ekCheck"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — mlkem-native C backend",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "portable C backend: what a CPU without AVX2/BMI2 runs",
+      "build": "liboqs",
+      "prefix": "PQCP_MLKEM_NATIVE_MLKEM{level}_C_",
+      "sets": [
+        "ML-KEM-512",
+        "ML-KEM-768",
+        "ML-KEM-1024"
+      ],
+      "expected": {
+        "keyGen": [
+          25,
+          25
+        ],
+        "encaps": [
+          25,
+          25
+        ],
+        "decaps": [
+          10,
+          10
+        ],
+        "ekCheck": [
+          10,
+          10
+        ],
+        "dkCheck": [
+          10,
+          10
+        ]
+      },
+      "edge": {
+        "ML-KEM-512": {
+          "edgeValid": [
+            459,
+            459
+          ],
+          "edgeEk": [
+            883,
+            883
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-768": {
+          "edgeValid": [
+            461,
+            461
+          ],
+          "edgeEk": [
+            892,
+            892
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-1024": {
+          "edgeValid": [
+            463,
+            463
+          ],
+          "edgeEk": [
+            1156,
+            1156
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        }
+      },
+      "accumulated": {
+        "ML-KEM-512": [
+          1,
+          1
+        ],
+        "ML-KEM-768": [
+          1,
+          1
+        ],
+        "ML-KEM-1024": [
+          1,
+          1
+        ]
+      },
+      "ct": {
+        "ML-KEM-512": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-768": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-1024": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "the C backend skips the FIPS 203 §7.3 hash check on dk",
+          "set": "ML-KEM-768",
+          "file": "src/kem/ml_kem/mlkem-native_ml-kem-768_ref/mlkem/src/kem.c",
+          "find": "ret = mlk_kem_check_sk(sk, context);",
+          "replace": "ret = 0;",
+          "fails": [
+            "dkCheck"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — mlkem-native x86-64 backend",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "AVX2 assembly backend",
+      "build": "liboqs",
+      "prefix": "PQCP_MLKEM_NATIVE_MLKEM{level}_X86_64_",
+      "sets": [
+        "ML-KEM-512",
+        "ML-KEM-768",
+        "ML-KEM-1024"
+      ],
+      "expected": {
+        "keyGen": [
+          25,
+          25
+        ],
+        "encaps": [
+          25,
+          25
+        ],
+        "decaps": [
+          10,
+          10
+        ],
+        "ekCheck": [
+          10,
+          10
+        ],
+        "dkCheck": [
+          10,
+          10
+        ]
+      },
+      "edge": {
+        "ML-KEM-512": {
+          "edgeValid": [
+            459,
+            459
+          ],
+          "edgeEk": [
+            883,
+            883
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-768": {
+          "edgeValid": [
+            461,
+            461
+          ],
+          "edgeEk": [
+            892,
+            892
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        },
+        "ML-KEM-1024": {
+          "edgeValid": [
+            463,
+            463
+          ],
+          "edgeEk": [
+            1156,
+            1156
+          ],
+          "edgeDk": [
+            2,
+            2
+          ]
+        }
+      },
+      "accumulated": {
+        "ML-KEM-512": [
+          1,
+          1
+        ],
+        "ML-KEM-768": [
+          1,
+          1
+        ],
+        "ML-KEM-1024": [
+          1,
+          1
+        ]
+      },
+      "ct": {
+        "ML-KEM-512": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-768": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "ML-KEM-1024": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "the x86-64 backend skips the FIPS 203 §7.2 modulus check on ek",
+          "set": "ML-KEM-768",
+          "file": "src/kem/ml_kem/mlkem-native_ml-kem-768_x86_64/mlkem/src/kem.c",
+          "find": "ret = mlk_kem_check_pk(pk, context);",
+          "replace": "ret = 0;",
+          "fails": [
+            "ekCheck"
           ]
         }
       ]
@@ -868,6 +1282,529 @@
           ]
         }
       ]
+    },
+    {
+      "library": "liboqs 0.16.0 — OQS API",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "public API (OQS_SIG_ml_dsa_*); randomness through liboqs's own OQS_randombytes_custom_algorithm hook; it has no internal, pre-hash or external-μ entry points",
+      "build": "liboqs",
+      "prefix": "OQS_SIG_ml_dsa_{level}_",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            75,
+            75
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            85,
+            85
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            76,
+            76
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 150,
+        "ML-DSA-65": 159,
+        "ML-DSA-87": 159
+      },
+      "mutants": [
+        {
+          "name": "sign_with_ctx_str drops the context",
+          "set": "ML-DSA-65",
+          "file": "src/sig/ml_dsa/sig_ml_dsa_65.c",
+          "find": "PQCP_MLDSA_NATIVE_MLDSA65_X86_64_signature(signature, signature_len, message, message_len, ctx_str, ctx_str_len, secret_key)",
+          "replace": "PQCP_MLDSA_NATIVE_MLDSA65_X86_64_signature(signature, signature_len, message, message_len, ctx_str, 0, secret_key)",
+          "fails": [
+            "sigGenPure"
+          ]
+        },
+        {
+          "name": "verify_with_ctx_str drops the context",
+          "set": "ML-DSA-65",
+          "file": "src/sig/ml_dsa/sig_ml_dsa_65.c",
+          "find": "PQCP_MLDSA_NATIVE_MLDSA65_X86_64_verify(signature, signature_len, message, message_len, ctx_str, ctx_str_len, public_key)",
+          "replace": "PQCP_MLDSA_NATIVE_MLDSA65_X86_64_verify(signature, signature_len, message, message_len, ctx_str, 0, public_key)",
+          "fails": [
+            "sigVerPure"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — mldsa-native C backend",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "mldsa-native's v1 API as liboqs vendors it (signature lengths passed)",
+      "build": "liboqs",
+      "prefix": "PQCP_MLDSA_NATIVE_MLDSA{level}_C_",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            82,
+            82
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            101,
+            101
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            92,
+            92
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 8,
+        "ML-DSA-65": 8,
+        "ML-DSA-87": 8
+      },
+      "mutants": [
+        {
+          "name": "the C backend's hint decoder accepts a repeated index",
+          "set": "ML-DSA-65",
+          "file": "src/sig/ml_dsa/mldsa-native_ml-dsa-65_ref/mldsa/src/packing.c",
+          "find": "packed_hints[j] <= packed_hints[j - 1]",
+          "replace": "packed_hints[j] < packed_hints[j - 1]",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — mldsa-native x86-64 backend",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "mldsa-native's v1 API, AVX2 backend",
+      "build": "liboqs",
+      "prefix": "PQCP_MLDSA_NATIVE_MLDSA{level}_X86_64_",
+      "sets": [
+        "ML-DSA-44",
+        "ML-DSA-65",
+        "ML-DSA-87"
+      ],
+      "results": {
+        "ML-DSA-44": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            173,
+            173
+          ],
+          "edge:sigGen": [
+            82,
+            82
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            203,
+            203
+          ],
+          "edge:sigGen": [
+            101,
+            101
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "keyGen": [
+            25,
+            25
+          ],
+          "sigGenPure": [
+            30,
+            30
+          ],
+          "sigGenPreHash": [
+            30,
+            30
+          ],
+          "sigGenMu": [
+            30,
+            30
+          ],
+          "sigGenInternal": [
+            30,
+            30
+          ],
+          "sigVerPure": [
+            15,
+            15
+          ],
+          "sigVerPreHash": [
+            15,
+            15
+          ],
+          "sigVerMu": [
+            15,
+            15
+          ],
+          "sigVerInternal": [
+            15,
+            15
+          ],
+          "edge:sigVerify": [
+            234,
+            234
+          ],
+          "edge:sigGen": [
+            92,
+            92
+          ],
+          "edge:edgeLength": [
+            3,
+            3
+          ],
+          "accumulated": [
+            1,
+            1
+          ]
+        }
+      },
+      "not_applicable": {
+        "ML-DSA-44": 8,
+        "ML-DSA-65": 8,
+        "ML-DSA-87": 8
+      },
+      "mutants": [
+        {
+          "name": "the x86-64 backend's hint decoder accepts a repeated index",
+          "set": "ML-DSA-65",
+          "file": "src/sig/ml_dsa/mldsa-native_ml-dsa-65_x86_64/mldsa/src/packing.c",
+          "find": "packed_hints[j] <= packed_hints[j - 1]",
+          "replace": "packed_hints[j] < packed_hints[j - 1]",
+          "fails": [
+            "edge:sigVerify"
+          ]
+        }
+      ]
     }
   ],
   "hbs_audits": [
@@ -1225,6 +2162,140 @@
           "fails": [
             "keyGen",
             "sign"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — Falcon",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "OQS_SIG_falcon_* (compressed signatures); PQClean's Falcon inside, AVX2 or clean by CPU",
+      "build": "liboqs",
+      "prefix": "OQS_SIG_falcon_{level}_",
+      "sets": [
+        "FN-DSA-512",
+        "FN-DSA-1024"
+      ],
+      "results": {
+        "FN-DSA-512": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            65,
+            65
+          ],
+          "keyGen": [
+            15,
+            15
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        },
+        "FN-DSA-1024": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            70,
+            70
+          ],
+          "keyGen": [
+            15,
+            15
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        }
+      },
+      "not_applicable": {
+        "FN-DSA-512": 15,
+        "FN-DSA-1024": 15
+      },
+      "mutants": [
+        {
+          "name": "the verify wrapper reports success whatever Falcon returns",
+          "set": "FN-DSA-512",
+          "file": "src/sig/falcon/sig_falcon_512.c",
+          "find": "return (OQS_STATUS) PQCLEAN_FALCON512_AVX2_crypto_sign_verify(signature, signature_len, message, message_len, public_key);",
+          "replace": "PQCLEAN_FALCON512_AVX2_crypto_sign_verify(signature, signature_len, message, message_len, public_key);\n\t\treturn OQS_SUCCESS;",
+          "fails": [
+            "reject"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — Falcon (padded)",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "OQS_SIG_falcon_padded_* (fixed-length signatures)",
+      "build": "liboqs",
+      "prefix": "OQS_SIG_falcon_padded_{level}_",
+      "sets": [
+        "FN-DSA-512",
+        "FN-DSA-1024"
+      ],
+      "results": {
+        "FN-DSA-512": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            65,
+            65
+          ],
+          "keyGen": [
+            15,
+            15
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        },
+        "FN-DSA-1024": {
+          "verify": [
+            7,
+            7
+          ],
+          "reject": [
+            70,
+            70
+          ],
+          "keyGen": [
+            15,
+            15
+          ],
+          "sign": [
+            24,
+            24
+          ]
+        }
+      },
+      "not_applicable": {
+        "FN-DSA-512": 15,
+        "FN-DSA-1024": 15
+      },
+      "mutants": [
+        {
+          "name": "the padded verify wrapper reports success whatever Falcon returns",
+          "set": "FN-DSA-512",
+          "file": "src/sig/falcon/sig_falcon_padded_512.c",
+          "find": "return (OQS_STATUS) PQCLEAN_FALCONPADDED512_AVX2_crypto_sign_verify(signature, signature_len, message, message_len, public_key);",
+          "replace": "PQCLEAN_FALCONPADDED512_AVX2_crypto_sign_verify(signature, signature_len, message, message_len, public_key);\n\t\treturn OQS_SUCCESS;",
+          "fails": [
+            "reject"
           ]
         }
       ]

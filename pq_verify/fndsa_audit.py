@@ -70,9 +70,11 @@ def _is_falcon(name):
     return "falcon" in n or "fndsa" in n or "fn_dsa" in n or n.startswith("crypto_sign")
 
 
-def resolve_symbols(exported, param_set, explicit=None):
+def resolve_symbols(exported, param_set, explicit=None, prefix=None):
     """{role: symbol or None}, {role: [candidates]} for ambiguous roles."""
+    from .symbols import with_prefix
     explicit = explicit or {}
+    exported = with_prefix(exported, prefix)
     n = str(1 << SETS[param_set])
     other = "1024" if n == "512" else "512"
     found, ambiguous = {}, {}
@@ -95,7 +97,7 @@ def _buf(b):
 
 
 class VendorFNDSA:
-    def __init__(self, so_path, param_set, symbols=None):
+    def __init__(self, so_path, param_set, symbols=None, prefix=None):
         import os
         self.path = os.path.abspath(so_path)
         self.name = os.path.basename(so_path)
@@ -104,7 +106,7 @@ class VendorFNDSA:
         _, self.n, _, self.pk_len, self.padded_len, self.max_sig = F.PARAMS[self.logn]
         self.lib = _ct.CDLL(self.path)
         self.sym, self.ambiguous = resolve_symbols(exported_symbols(self.path),
-                                                   param_set, symbols)
+                                                   param_set, symbols, prefix)
         names = [s for s in self.sym.values() if s]
         self.abi = "oqs" if any(s.lower().startswith("oqs_") for s in names) else "nist"
         self.padded = any("padded" in s.lower() for s in names)
@@ -429,7 +431,8 @@ def run(v):
     return T
 
 
-def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True):
+def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True,
+                         prefix=None):
     """Audit a third-party FN-DSA library; see the module docstring.
 
     Returns None when it cannot be audited at all (an ambiguous symbol, or no
@@ -437,13 +440,10 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
     'not_applicable' {stage: (count, reason)}, 'via', 'failures'.
     """
     from .core import DEGRADED
-    v = VendorFNDSA(so_path, param_set, symbols=symbols)
+    v = VendorFNDSA(so_path, param_set, symbols=symbols, prefix=prefix)
     if v.ambiguous:
-        print(f"  Cannot audit {v.path}: more than one candidate for")
-        for role, cands in v.ambiguous.items():
-            print(f"    {role}: {', '.join(cands)}")
-        print("    Name the symbol explicitly (--fndsa-symbol ROLE=SYMBOL) rather "
-              "than let pq-verify guess.")
+        from .symbols import ambiguity_message
+        print(ambiguity_message(v.path, v.ambiguous, _ROLES, "--fndsa-symbol ROLE=SYMBOL"))
         DEGRADED["skipped_checks"].append(f"FN-DSA audit ({param_set})")
         return None
     if not v.has("verify"):

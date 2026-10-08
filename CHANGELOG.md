@@ -5,6 +5,46 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — liboqs, audited per implementation
+
+- **liboqs 0.16.0 is pinned and re-audited in CI** (`5a1a854`, built as
+  distributions ship it: CMake, `OQS_DIST_BUILD`). Its public `OQS_*` API and
+  each backend behind it are audited separately, because the public API runs
+  only the backend the CPU selects. ML-KEM: 4,569/4,569 per implementation,
+  constant time included. ML-DSA: 1,068/1,068 through the public API,
+  1,512/1,512 through each mldsa-native backend. Falcon (draft track):
+  227/227, padded and not. Nine planted bugs, in liboqs's wrappers and in
+  each backend, are all caught. No defect was found in liboqs.
+- **`--symbol-prefix PREFIX`** (with `--audit-kem`, `--audit-dsa`,
+  `--audit-fndsa`; `prefix=` in the Python API) audits one implementation of
+  a library that exports several. An ambiguous binding is still refused, and
+  the refusal now lists the implementations to choose between.
+- **liboqs's ML-DSA API** (`--dsa-abi oqs`, detected from the symbols bound):
+  message-first verify, the `*_with_ctx_str` variants, and randomness through
+  liboqs's own `OQS_randombytes_custom_algorithm` hook, so keyGen and pure
+  sigGen are byte-exact with no special build, and a call drawing the wrong
+  amount of randomness is a finding.
+- **mldsa-native before 2.0.0** (`--dsa-abi mldsa-native-v1`, as liboqs
+  vendors it), which passes signature lengths; told apart from 2.0.0 by the
+  signed-message API 2.0.0 removed.
+- The ML-KEM vendor table gains Constant time and Mutants caught columns.
+
+### Fixed — found by auditing liboqs
+
+- **mldsa-native's v1 backends crashed the ML-DSA audit**: pq-verify knew
+  only 2.0.0's fixed-size convention. Reported CANNOT VERIFY, never passed.
+- **Explicitly named `OQS_SIG_ml_dsa_*` symbols would have been called with
+  mldsa-native's argument order.** The convention now follows the symbols
+  bound, and a binding mixing liboqs's API with a backend's is refused.
+- **An explicitly named `sign` or `verify` entry point was silently
+  replaced** when a context-taking variant was also found. An explicit
+  binding now always stands.
+- **The ML-DSA audit left liboqs's RNG hook installed** when called from
+  Python, so liboqs used afterwards in the same process drew zeros. The hook
+  is now installed only while seeds are queued and handed back when the audit
+  ends. The command line was never affected (each audit runs in a child
+  process).
+
 ## [2.11.0] — 2026-10-07
 
 ### Fixed — supersingular curves, and engine targets that overclaimed

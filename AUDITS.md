@@ -24,6 +24,10 @@ commands given; nothing here is asserted from memory.
 | *(negative control)* | ML-KEM & ML-DSA | symbol audit | **correctly FAILS** |
 | mlkem-native | ML-KEM-512/768/1024 | full scheme + invalid keys | **80/80 VERIFIED** |
 | PQClean `clean` | ML-KEM-512/768/1024 | full scheme + invalid keys | 70/80 — accepts all 10 invalid keys |
+| liboqs 0.16.0, `OQS_*` API and each backend | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases + constant time | **4,569/4,569 VERIFIED** per implementation |
+| liboqs 0.16.0, `OQS_*` API | ML-DSA-44/65/87 | full scheme through the public API | **1,068/1,068 VERIFIED** |
+| liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
+| liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
 
 No arithmetic discrepancies were found in any implementation. The one finding
 is behavioural: PQClean's ML-KEM API accepts keys NIST marks invalid (see
@@ -108,6 +112,85 @@ gcc -c -fPIC stub.c -o stub.o && gcc -shared -o libmlkem768.so *.o
 ntt = pqverify_load_so('libmlkem768.so', 'PQCP_MLKEM_NATIVE_MLKEM768_poly_ntt')
 pqverify_scan(ntt)
 ```
+
+---
+
+## liboqs 0.16.0 — full scheme, per implementation
+
+The symbol audit above checks one NTT. This one drives liboqs end to end, as
+distributions ship it: [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183)
+(the 0.16.0 release, 2026-07-09), built with CMake, `OQS_DIST_BUILD=ON` (every
+backend compiled in, one chosen at run time by CPU), `BUILD_SHARED_LIBS=ON`,
+`OQS_USE_OPENSSL=OFF`, and only ML-KEM, ML-DSA and Falcon enabled.
+
+**One library, several implementations.** That build exports liboqs's public
+API and, beside it, each backend it dispatches to:
+
+| Scheme | Public API | Backends exported |
+|---|---|---|
+| ML-KEM | `OQS_KEM_ml_kem_{512,768,1024}_*` | mlkem-native C and x86-64 (`PQCP_MLKEM_NATIVE_MLKEM768_{C,X86_64}_*`) |
+| ML-DSA | `OQS_SIG_ml_dsa_{44,65,87}_*` | mldsa-native C and x86-64, with its full internal API |
+| Falcon | `OQS_SIG_falcon{,_padded}_{512,1024}_*` | none (PQClean's code is not exported) |
+
+pq-verify refuses to choose between them and lists them;
+`--symbol-prefix` names one. Each is audited separately, because the public
+API runs only the backend the CPU selects: on a machine with AVX2 the C
+backend is never exercised through it, and on one without, the x86-64 one
+never is.
+
+**What can be checked through each:**
+
+- *ML-KEM*, all three: every NIST vector, the FIPS 203 key checks, the
+  Wycheproof/CCTV edge cases and 10 000 accumulated cases per set, and the
+  constant-time check on the public API and the C backend.
+- *ML-DSA through `OQS_SIG_ml_dsa_*`*: its verify takes the message first,
+  and its context variants are `*_sign_with_ctx_str` / `*_verify_with_ctx_str`;
+  pq-verify calls them in that order (the `oqs` convention). Its randomness
+  comes through liboqs's own documented hook,
+  `OQS_randombytes_custom_algorithm`, so keyGen and pure sigGen are byte-exact
+  against NIST with no special build, and a call drawing more or fewer bytes
+  than FIPS 204 specifies is a finding. The API has no internal, pre-hash or
+  external-μ entry points: those vectors are not applicable (468 across the
+  three sets), never passed.
+- *ML-DSA through each mldsa-native backend*: the full scheme, internal,
+  pure, pre-hash and external μ.
+- *Falcon*: as for PQClean, except the signed-message `open` API and
+  wrong-length keys, which liboqs's API cannot express.
+
+**Mutants**, nine, one planted bug each, every one caught in CI. In liboqs's
+own wrapper layer: ML-KEM's wrapper reporting success when Encaps refuses an
+invalid key (fails ekCheck); ML-DSA's `sign_with_ctx_str` and
+`verify_with_ctx_str` dropping the context (fail pure sigGen and sigVer);
+Falcon's verify wrappers, padded and not, reporting success whatever the
+verifier returns (fail reject). In each backend, through its own binding:
+the C backend skipping FIPS 203's hash check on dk (fails dkCheck), the
+x86-64 one skipping the modulus check on ek (fails ekCheck), and either
+mldsa-native backend accepting a repeated hint index (fails Wycheproof's
+verify vectors) -- the last proving the audit sees bugs through the v1
+calling convention, not only that it runs. The wrapper mutants sit on the
+x86-64 path, which CI's runner (AVX2) takes.
+
+**What auditing liboqs found in pq-verify** (all fixed with this audit; no
+defect was found in liboqs):
+
+- The mldsa-native that liboqs vendors predates mldsa-native 2.0.0 and passes
+  signature lengths (`size_t *siglen`), where 2.0.0 made them fixed-size. pq-
+  verify knew only the 2.0.0 convention, so the backends crashed the audit
+  (reported CANNOT VERIFY, never passed). It now tells them apart by the
+  signed-message API (`_sign`, `_open`) that 2.0.0 removed.
+- Naming `OQS_SIG_ml_dsa_*` entry points explicitly would have bound them
+  with mldsa-native's argument order. The convention now follows the
+  symbols actually bound, and a binding mixing liboqs's API with a backend's
+  is refused.
+- An explicitly named `verify` or `sign` was silently replaced when a
+  context-taking variant was also found. An explicit binding now always
+  stands.
+- Used from Python in one process, the ML-DSA audit left liboqs's RNG hook
+  installed, so liboqs used afterwards drew zeros (Falcon signing in the same
+  process repeated its nonce, which the sign stage caught). The hook is now
+  installed only while seeds are queued and handed back (liboqs's `system`
+  RNG) when the audit ends. The command line was never affected: each audit
+  runs in a child process.
 
 ---
 
@@ -218,10 +301,13 @@ row beside the old one, so the table records when a library's behaviour
 changed. A test holds this table equal to the pinned file.
 
 <!-- vendor-audits:begin -->
-| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Accumulated | Result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 3/3 | 70/80 + 1,383/4,320 + 3/3 findings |
+| Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Accumulated | Constant time | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | — | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 3/3 | 6/6 | 3/3 | 70/80 + 1,383/4,320 + 3/3 findings |
+| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
+| liboqs 0.16.0 — mlkem-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
+| liboqs 0.16.0 — mlkem-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
 <!-- vendor-audits:end -->
 
 Reproduce every row: `python3 tools/vendor_audit.py`.
@@ -293,6 +379,9 @@ only the seed-taking internal functions.
 | mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 3/3 | 30 | 3/3 | 1,506/1,506 **VERIFIED** |
 | pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 198 | 6/6 | 1,338/1,338 **VERIFIED** |
 | PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 468 | 1/1 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 468 | 2/2 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
 <!-- vendor-audits-dsa:end -->
 
 All three are byte-exact on every interface they expose. They differ in
@@ -514,6 +603,8 @@ liboqs takes a key length, so the library would read past the buffer.
 | Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Not applicable | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|
 | PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 14 | 8/8 | 243/243 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 30 | 1/1 | 227/227 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 30 | 1/1 | 227/227 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit

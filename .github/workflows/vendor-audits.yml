@@ -3,9 +3,14 @@ name: Vendor audits (pinned)
 # Rebuilds every third-party ML-KEM, ML-DSA, LMS/HSS, XMSS and FN-DSA (draft)
 # library in tools/vendor_audits.json at its pinned commit and re-runs
 # --audit-kem / --audit-dsa / --audit-hbs / --audit-fndsa against the pinned NIST and Wycheproof vectors. Every input is
-# pinned, so a failure means pq-verify's own behaviour changed. Each ML-DSA
-# row's mutants (one planted bug each) must FAIL the audit; one that passes
-# is a bug class pq-verify cannot see.
+# pinned, so a failure means pq-verify's own behaviour changed. Each row's
+# mutants (one planted bug each) must FAIL the audit; one that passes is a
+# bug class pq-verify cannot see.
+#
+# liboqs is built once (CMake, OQS_DIST_BUILD, as distributions ship it) and
+# audited per implementation: its public OQS_* API and each backend behind
+# it. Its mutants sit on the x86-64 code path, which the runner's CPU
+# (AVX2/BMI2) takes; on a CPU without it they would be reported MISSED.
 #
 # Runs on changes to the code that decides audit results, and weekly so a
 # toolchain or runner change that alters a result is noticed too.
@@ -22,6 +27,7 @@ on:
       - "tests/data/mldsa_shim.c"
       - "tests/data/hbs_shim.c"
       - "tests/data/fndsa_shim.c"
+      - "tests/data/oqs_mldsa_shim.c"
       - "constraints-reference.txt"
       - ".github/workflows/vendor-audits.yml"
   push:
@@ -48,8 +54,8 @@ jobs:
           python-version: "3.12"
       - name: System dependencies
         # hash-sigs and xmss-reference hash with OpenSSL; valgrind runs the
-        # ML-KEM rows' constant-time stages
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind
+        # ML-KEM rows' constant-time stages; CMake builds liboqs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind cmake
       - name: Install
         run: |
           python -m pip install --upgrade pip

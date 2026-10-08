@@ -123,6 +123,22 @@ pq-verify --audit-kem build/libmlkem768.so ML-KEM-768 --constant-time --json rep
 
 For ML-DSA, the same with `--audit-dsa` (no `--constant-time` yet).
 
+**liboqs.** A library can hold more than one implementation: liboqs exports
+its public `OQS_*` API and, beside it, every backend it dispatches to
+(mlkem-native's and mldsa-native's portable C and x86-64 code). pq-verify
+refuses to guess between them, lists them, and audits the one you name:
+
+```bash
+pq-verify --audit-kem   liboqs.so ML-KEM-768 --symbol-prefix OQS_KEM_ml_kem_768_ --constant-time
+pq-verify --audit-dsa   liboqs.so ML-DSA-65  --symbol-prefix OQS_SIG_ml_dsa_65_
+pq-verify --audit-fndsa liboqs.so FN-DSA-512 --symbol-prefix OQS_SIG_falcon_512_   # draft track
+```
+
+The public API is what your application calls; a backend's prefix
+(`PQCP_MLKEM_NATIVE_MLKEM768_C_`, for one) audits the code a CPU without
+AVX2 runs. liboqs 0.16.0 passes all of it, per implementation, rebuilt and
+re-audited in CI ([AUDITS.md](AUDITS.md)).
+
 For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
 a build with the transform inlined — ask it the questions instead:
 
@@ -256,6 +272,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 
 | Implementation | What was audited | Result |
 |---|---|---|
+| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time) and ML-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 9 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,512/1,512 through each backend; every mutant caught |
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 80/80 each; edge cases 4,320/4,320 |
@@ -277,7 +294,9 @@ independently computed FIPS reference.
 point for it, and reports any interface the API lacks as not applicable, never
 as a pass. Linked with pq-verify's randomness harness
 (`pq_verify/harness/pqv_randombytes.c`), the randomised `keypair()` and
-`signature()` users actually call are audited byte-exactly too. Each pinned
+`signature()` users actually call are audited byte-exactly too; liboqs needs
+no special build, because its own hook (`OQS_randombytes_custom_algorithm`)
+supplies NIST's seeds, and pq-verify hands the hook back when it is done. Each pinned
 library also carries **mutants**, one planted bug each, which CI requires the
 audit to fail. Two of them, a verifier that accepts a repeated hint index and
 one that skips the ‖z‖ bound, pass every NIST vector; only the Wycheproof

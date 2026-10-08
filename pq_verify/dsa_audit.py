@@ -28,11 +28,27 @@ byte-exactly:
     a call that draws more randomness than FIPS 204 calls for, or less.
 Never ship a build linked with the harness: it is deterministic by design.
 
-Two calling conventions are recognised, by symbol name:
+Three calling conventions are recognised, by symbol name:
   pqcrystals    pq-crystals/dilithium ref and PQClean: signatures carry a
                 length (size_t *siglen / size_t siglen)
-  mldsa-native  pq-code-package/mldsa-native: fixed-size signatures, an
-                external-mu flag, a native HashML-DSA API
+  mldsa-native  pq-code-package/mldsa-native v2 (2.0.0, 2026-08, and
+                later): fixed-size signatures, an external-mu flag, a native
+                HashML-DSA API
+  mldsa-native-v1
+                the same API before 2.0.0, as liboqs 0.16 vendors it: every
+                signature argument carries its length (size_t *siglen /
+                size_t siglen). Told apart by the NIST signed-message entry
+                points (_sign, _open) that 2.0.0 removed
+  oqs           liboqs's public API, OQS_SIG_ml_dsa_*: the message comes
+                first in verify (m, mlen, sig, siglen, pk), and the context
+                variants are *_sign_with_ctx_str / *_verify_with_ctx_str.
+                Its randomness is supplied through liboqs's own documented
+                hook, OQS_randombytes_custom_algorithm, so keyGen and pure
+                sigGen are byte-exact against NIST without a special build.
+The convention follows the entry points actually bound: liboqs also exports
+mldsa-native's own API for each backend, and binding OQS_* symbols with
+mldsa-native's argument order would test nothing. A binding that mixes
+liboqs's public API with any other entry point is refused.
 """
 import ctypes as _ct
 import os as _os
@@ -59,9 +75,9 @@ _ROLES = {
     'keypair':         r'(?:^|_)keypair$',
     'sign_internal':   r'_signature_internal$',
     'verify_internal': r'_verify_internal$',
-    'sign_ctx':        r'_signature_ctx$',
-    'verify_ctx':      r'_verify_ctx$',
-    'sign':            r'_signature$',
+    'sign_ctx':        r'(?:_signature_ctx|_sign_with_ctx_str)$',
+    'verify_ctx':      r'(?:_verify_ctx|_verify_with_ctx_str)$',
+    'sign':            r'(?:_signature|^oqs_sig_ml_dsa_\d+_sign)$',
     'verify':          r'_verify$',
     'sign_mu':         r'_signature_extmu$',
     'verify_mu':       r'_verify_extmu$',
@@ -91,7 +107,7 @@ def exported_symbols(so_path):
     return exported_functions(so_path)
 
 
-def resolve_symbols(exported, param_set, explicit=None):
+def resolve_symbols(exported, param_set, explicit=None, prefix=None):
     """{role: symbol or None}, {role: [candidates]} for ambiguous roles.
 
     A library exporting several parameter sets (liboqs) names each one, so
@@ -99,7 +115,10 @@ def resolve_symbols(exported, param_set, explicit=None):
     never guessed: a wrong binding is a false finding against a correct
     library.
     """
+    from .symbols import with_prefix
     explicit = explicit or {}
+    rng = 'pqv_rng_set' if 'pqv_rng_set' in exported else None   # never prefixed
+    exported = with_prefix(exported, prefix)
     tokens = _LEVEL_TOKENS[param_set]
     found, ambiguous = {}, {}
     for role, pat in _ROLES.items():
@@ -115,12 +134,36 @@ def resolve_symbols(exported, param_set, explicit=None):
             ambiguous[role] = sorted(cands)
     # PQClean exports crypto_sign_signature (no context) next to
     # crypto_sign_signature_ctx; the context-taking one is FIPS 204's API.
+    # An entry point named explicitly is never dropped.
     for ctx_role, plain in (('sign_ctx', 'sign'), ('verify_ctx', 'verify')):
-        if found.get(ctx_role):
+        if found.get(ctx_role) and not explicit.get(plain):
             found[plain] = None
             ambiguous.pop(plain, None)
-    found['rng'] = 'pqv_rng_set' if 'pqv_rng_set' in exported else None
+    found['rng'] = rng
     return found, ambiguous
+
+
+def bound_abi(sym, exported):
+    """The convention of the entry points actually bound. liboqs exports
+    its OQS_* API and mldsa-native's beside it; each needs its own argument
+    order, and one binding must not mix them."""
+    bound = [s for r, s in sym.items() if s and r != 'rng']
+    oqs = [s for s in bound if s.startswith('OQS_SIG_')]
+    if oqs and len(oqs) != len(bound):
+        raise ValueError("the binding mixes liboqs's public API (OQS_SIG_*) with "
+                         f"other entry points: {sorted(bound)}; choose one "
+                         "implementation (--symbol-prefix)")
+    if oqs:
+        return 'oqs'
+    abi = detect_abi(exported)
+    if abi == 'mldsa-native':
+        # v1 exports the signed-message API (crypto_sign / _open) beside the
+        # rest, in the same namespace; 2.0.0 removed it.
+        for role, name in sym.items():
+            m = _re.search(_ROLES[role], name.lower()) if name and role in _ROLES else None
+            if m and m.start() > 0 and name[:m.start()] + '_open' in exported:
+                return 'mldsa-native-v1'
+    return abi
 
 
 def detect_abi(exported):
@@ -135,12 +178,70 @@ def _buf(b):
     return _ct.c_char_p(bytes(b))
 
 
+class _HarnessRNG:
+    """pq-verify's randombytes harness linked into the library."""
+
+    def __init__(self, lib):
+        self.lib = lib
+        lib.pqv_rng_overrun.restype = _ct.c_size_t
+        lib.pqv_rng_unused.restype = _ct.c_size_t
+
+    def queue(self, data):
+        if self.lib.pqv_rng_set(_buf(data), _ct.c_size_t(len(data))) != 0:
+            raise RuntimeError("pqv_rng_set refused the seed")
+
+    def overrun(self):
+        return self.lib.pqv_rng_overrun()
+
+    def unused(self):
+        return self.lib.pqv_rng_unused()
+
+
+class _OQSRNG:
+    """liboqs's documented RNG hook, OQS_randombytes_custom_algorithm: every
+    random byte the library draws comes from the queue, and a draw past its
+    end (zeros) is counted, as the harness counts it.
+
+    The hook is process-wide and deterministic, so it is installed only when
+    the first seed is queued and always handed back (release: liboqs's
+    "system" RNG) when the audit ends. Left in place, a caller using liboqs
+    in the same process afterwards would draw zeros."""
+    _CB = _ct.CFUNCTYPE(None, _ct.POINTER(_ct.c_uint8), _ct.c_size_t)
+
+    def __init__(self, lib):
+        self.lib, self.q, self.over, self.installed = lib, b"", 0, False
+        self._cb = self._CB(self._draw)          # kept alive with the object
+
+    def release(self):
+        if self.installed:
+            self.lib.OQS_randombytes_switch_algorithm(_ct.c_char_p(b"system"))
+            self.installed = False
+
+    def _draw(self, buf, n):
+        take = self.q[:n]
+        self.q = self.q[n:]
+        self.over += n - len(take)
+        _ct.memmove(buf, take + bytes(n - len(take)), n)
+
+    def queue(self, data):
+        if not self.installed:
+            self.lib.OQS_randombytes_custom_algorithm(self._cb)
+            self.installed = True
+        self.q, self.over = bytes(data), 0
+
+    def overrun(self):
+        return self.over
+
+    def unused(self):
+        return len(self.q)
+
+
 class VendorDSA:
     """One parameter set of a vendor ML-DSA library, behind FIPS 204's
     algorithms. Methods raise NotApplicable when no entry point can express
     the call, VendorError when the library refuses it."""
 
-    def __init__(self, so_path, param_set, abi=None, symbols=None):
+    def __init__(self, so_path, param_set, abi=None, symbols=None, prefix=None):
         self.path = _os.path.abspath(_os.path.expanduser(so_path))
         if not _os.path.exists(self.path):
             raise FileNotFoundError(self.path)
@@ -150,21 +251,31 @@ class VendorDSA:
         self.pk_n, self.sk_n, self.sig_n = DSA_SIZES[param_set]
         self.lib = _ct.CDLL(self.path)
         exported = exported_symbols(self.path)
-        self.abi = abi or detect_abi(exported)
-        if self.abi not in ('pqcrystals', 'mldsa-native'):
+        self.sym, self.ambiguous = resolve_symbols(exported, param_set, symbols, prefix)
+        self.abi = abi or bound_abi(self.sym, exported)
+        if self.abi not in ('pqcrystals', 'mldsa-native', 'mldsa-native-v1', 'oqs'):
             raise ValueError(f"unknown ABI {self.abi!r}")
-        self.sym, self.ambiguous = resolve_symbols(exported, param_set, symbols)
         self.name = _os.path.basename(self.path)
         self.rng_findings = []
         self._fn = {}
         for role, s in self.sym.items():
-            if s:
+            if s and role != 'rng':
                 f = getattr(self.lib, s)
                 f.restype = _ct.c_int
                 self._fn[role] = f
+        self._rng = None
         if self.sym.get('rng'):
-            self.lib.pqv_rng_overrun.restype = _ct.c_size_t
-            self.lib.pqv_rng_unused.restype = _ct.c_size_t
+            self._rng = _HarnessRNG(self.lib)
+        elif self.abi == 'oqs' and 'OQS_randombytes_custom_algorithm' in exported:
+            self.sym['rng'] = 'OQS_randombytes_custom_algorithm'
+            self._rng = _OQSRNG(self.lib)
+        if self._rng:
+            self._fn['rng'] = self._rng
+
+    def close(self):
+        """Hand back anything the audit took over (liboqs's RNG hook)."""
+        if isinstance(self._rng, _OQSRNG):
+            self._rng.release()
 
     # ---- capability --------------------------------------------------------
 
@@ -191,10 +302,10 @@ class VendorDSA:
             'verify_prehash': ('verify_prehash' if r('verify_prehash') else
                                'verify_internal' if r('verify_internal') else None),
             'sign_mu': ('sign_mu' if r('sign_mu') and rng else
-                        'sign_internal' if r('sign_internal') and self.abi == 'mldsa-native'
+                        'sign_internal' if r('sign_internal') and self.abi.startswith('mldsa-native')
                         else None),
             'verify_mu': ('verify_mu' if r('verify_mu') else
-                          'verify_internal' if r('verify_internal') and self.abi == 'mldsa-native'
+                          'verify_internal' if r('verify_internal') and self.abi.startswith('mldsa-native')
                           else None),
         }
         return table[op]
@@ -206,12 +317,11 @@ class VendorDSA:
     # ---- randomness --------------------------------------------------------
 
     def _queue(self, data):
-        if self.lib.pqv_rng_set(_buf(data), _ct.c_size_t(len(data))) != 0:
-            raise RuntimeError("pqv_rng_set refused the seed")
+        self._rng.queue(data)
 
     def _drained(self, what, want):
-        over = self.lib.pqv_rng_overrun()
-        left = self.lib.pqv_rng_unused()
+        over = self._rng.overrun()
+        left = self._rng.unused()
         if over or left:
             self.rng_findings.append(
                 f"{what}: drew {want + over - left} random byte(s), FIPS 204 "
@@ -265,6 +375,12 @@ class VendorDSA:
                                            _ct.c_size_t(len(m)), _buf(pre),
                                            _ct.c_size_t(len(pre)), _buf(rnd), _buf(sk))
             return self._finish(rc, sig, siglen, False)
+        if self.abi == 'mldsa-native-v1':
+            rc = self._fn['sign_internal'](sig, _ct.byref(siglen), _buf(m),
+                                           _ct.c_size_t(len(m)), _buf(pre),
+                                           _ct.c_size_t(len(pre)), _buf(rnd), _buf(sk),
+                                           _ct.c_int(0))
+            return self._finish(rc, sig, siglen, False)
         rc = self._fn['sign_internal'](sig, _buf(m), _ct.c_size_t(len(m)), _buf(pre),
                                        _ct.c_size_t(len(pre)), _buf(rnd), _buf(sk),
                                        _ct.c_int(0))
@@ -280,8 +396,16 @@ class VendorDSA:
         if role is None:
             raise NotApplicable("no pure signing entry point")
         sig, siglen = self._sig_out()
+        if self.abi == 'oqs' and role == 'sign' and ctx:
+            raise NotApplicable("OQS_SIG_*_sign takes no context; a non-empty one "
+                                "needs *_sign_with_ctx_str")
         self._queue(rnd)
-        if self.abi == 'pqcrystals':
+        if self.abi == 'oqs':
+            ctx_args = (_buf(ctx), _ct.c_size_t(len(ctx))) if role == 'sign_ctx' else ()
+            rc = self._fn[role](sig, _ct.byref(siglen), _buf(m), _ct.c_size_t(len(m)),
+                                *ctx_args, _buf(sk))
+            fixed = False
+        elif self.abi in ('pqcrystals', 'mldsa-native-v1'):
             rc = self._fn[role](sig, _ct.byref(siglen), _buf(m), _ct.c_size_t(len(m)),
                                 _buf(ctx), _ct.c_size_t(len(ctx)), _buf(sk))
             fixed = False
@@ -306,24 +430,28 @@ class VendorDSA:
         if alg is None:
             raise NotApplicable(f"{hash_alg} has no MLD_PREHASH constant")
         sig, siglen = self._sig_out()
-        rc = self._fn[role](sig, _buf(ph), _ct.c_size_t(len(ph)), _buf(ctx),
-                            _ct.c_size_t(len(ctx)), _buf(rnd), _buf(sk), _ct.c_int(alg))
-        return self._finish(rc, sig, siglen, True)
+        v1 = self.abi == 'mldsa-native-v1'
+        rc = self._fn[role](sig, *((_ct.byref(siglen),) if v1 else ()), _buf(ph),
+                            _ct.c_size_t(len(ph)), _buf(ctx), _ct.c_size_t(len(ctx)),
+                            _buf(rnd), _buf(sk), _ct.c_int(alg))
+        return self._finish(rc, sig, siglen, not v1)
 
     def sign_mu(self, mu, rnd, sk):
         role = self.via('sign_mu')
         sig, siglen = self._sig_out()
+        v1 = self.abi == 'mldsa-native-v1'
+        sl = (_ct.byref(siglen),) if v1 else ()
         if role == 'sign_mu':
             self._queue(rnd)
-            rc = self._fn[role](sig, _buf(mu), _buf(sk))
-            out = self._finish(rc, sig, siglen, True)
+            rc = self._fn[role](sig, *sl, _buf(mu), _buf(sk))
+            out = self._finish(rc, sig, siglen, not v1)
             if not self._drained(role, len(rnd)):
                 raise VendorError("signing drew the wrong amount of randomness")
             return out
         if role == 'sign_internal':
-            rc = self._fn[role](sig, _buf(mu), _ct.c_size_t(len(mu)), _buf(b''),
+            rc = self._fn[role](sig, *sl, _buf(mu), _ct.c_size_t(len(mu)), _buf(b''),
                                 _ct.c_size_t(0), _buf(rnd), _buf(sk), _ct.c_int(1))
-            return self._finish(rc, sig, siglen, True)
+            return self._finish(rc, sig, siglen, not v1)
         raise NotApplicable("no external-mu signing entry point")
 
     def _sig_arg(self, sig):
@@ -347,6 +475,9 @@ class VendorDSA:
         if self.abi == 'pqcrystals':
             rc = f(s, _ct.c_size_t(len(sig)), _buf(m), _ct.c_size_t(len(m)), _buf(pre),
                    _ct.c_size_t(len(pre)), p)
+        elif self.abi == 'mldsa-native-v1':
+            rc = f(s, _ct.c_size_t(len(sig)), _buf(m), _ct.c_size_t(len(m)), _buf(pre),
+                   _ct.c_size_t(len(pre)), p, _ct.c_int(0))
         else:
             rc = f(s, _buf(m), _ct.c_size_t(len(m)), _buf(pre), _ct.c_size_t(len(pre)),
                    p, _ct.c_int(0))
@@ -361,7 +492,13 @@ class VendorDSA:
         if role is None:
             raise NotApplicable("no pure verification entry point")
         f, s, p = self._fn[role], self._sig_arg(sig), self._pk_arg(pk)
-        if self.abi == 'pqcrystals':
+        if self.abi == 'oqs':
+            if role == 'verify' and ctx:
+                raise NotApplicable("OQS_SIG_*_verify takes no context; a non-empty "
+                                    "one needs *_verify_with_ctx_str")
+            ctx_args = (_buf(ctx), _ct.c_size_t(len(ctx))) if role == 'verify_ctx' else ()
+            rc = f(_buf(m), _ct.c_size_t(len(m)), s, _ct.c_size_t(len(sig)), *ctx_args, p)
+        elif self.abi in ('pqcrystals', 'mldsa-native-v1'):
             rc = f(s, _ct.c_size_t(len(sig)), _buf(m), _ct.c_size_t(len(m)), _buf(ctx),
                    _ct.c_size_t(len(ctx)), p)
         else:
@@ -379,17 +516,20 @@ class VendorDSA:
         alg = _MLDSA_NATIVE_PREHASH.get(hash_alg)
         if alg is None:
             raise NotApplicable(f"{hash_alg} has no MLD_PREHASH constant")
-        rc = self._fn[role](self._sig_arg(sig), _buf(ph), _ct.c_size_t(len(ph)),
+        sl = (_ct.c_size_t(len(sig)),) if self.abi == 'mldsa-native-v1' else ()
+        rc = self._fn[role](self._sig_arg(sig), *sl, _buf(ph), _ct.c_size_t(len(ph)),
                             _buf(ctx), _ct.c_size_t(len(ctx)), self._pk_arg(pk),
                             _ct.c_int(alg))
         return rc == 0
 
     def verify_mu(self, mu, sig, pk):
         role = self.via('verify_mu')
+        sl = (_ct.c_size_t(len(sig)),) if self.abi == 'mldsa-native-v1' else ()
         if role == 'verify_mu':
-            return self._fn[role](self._sig_arg(sig), _buf(mu), self._pk_arg(pk)) == 0
+            return self._fn[role](self._sig_arg(sig), *sl, _buf(mu),
+                                  self._pk_arg(pk)) == 0
         if role == 'verify_internal':
-            return self._fn[role](self._sig_arg(sig), _buf(mu), _ct.c_size_t(len(mu)),
+            return self._fn[role](self._sig_arg(sig), *sl, _buf(mu), _ct.c_size_t(len(mu)),
                                   _buf(b''), _ct.c_size_t(0), self._pk_arg(pk),
                                   _ct.c_int(1)) == 0
         raise NotApplicable("no external-mu verification entry point")
@@ -553,7 +693,7 @@ _OP_OF_STAGE = {
 
 def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
                        prompt_dir=None, vector_dir=None, live=False, verbose=True,
-                       edge=True, accumulated=10_000):
+                       edge=True, accumulated=10_000, prefix=None):
     """Audit a third-party ML-DSA library end to end; see the module docstring.
 
     Returns None when the library cannot be audited at all (an ambiguous
@@ -561,16 +701,21 @@ def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
     'detail' {stage: (p, t)}, 'not_applicable' {stage: (count, reason)},
     'via' {stage: symbol}, 'failures', 'rng' findings and 'edge'.
     """
+    v = VendorDSA(so_path, param_set, abi=abi, symbols=symbols, prefix=prefix)
+    try:
+        return _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge,
+                          accumulated)
+    finally:
+        v.close()
+
+
+def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumulated):
     from .core import (DEGRADED, _load_vector_json, _pkg_dir, _vector_label,
                        _ACVP_BASE)
     import json as _j
-    v = VendorDSA(so_path, param_set, abi=abi, symbols=symbols)
     if v.ambiguous:
-        print(f"  Cannot audit {v.path}: more than one candidate for")
-        for role, cands in v.ambiguous.items():
-            print(f"    {role}: {', '.join(cands)}")
-        print("    Name the symbol explicitly (--dsa-symbol ROLE=SYMBOL) rather "
-              "than let pq-verify guess.")
+        from .symbols import ambiguity_message
+        print(ambiguity_message(v.path, v.ambiguous, _ROLES, "--dsa-symbol ROLE=SYMBOL"))
         DEGRADED['skipped_checks'].append(f'DSA audit ({param_set})')
         return None
     if not any(v.via(op) for op in set(_OP_OF_STAGE.values())):
@@ -604,7 +749,11 @@ def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
         print("=" * 68)
         print(f"  THIRD-PARTY ML-DSA AUDIT — {param_set}")
         print(f"  library : {v.name}   (calling convention: {v.abi})")
-        print(f"  harness : {'pqv_randombytes linked: randomised APIs audited' if v.has('rng') else 'not linked: seed-taking APIs only'}")
+        _rng = ("liboqs's OQS_randombytes_custom_algorithm hook: randomised APIs audited"
+                if isinstance(v._rng, _OQSRNG) else
+                "pqv_randombytes linked: randomised APIs audited" if v.has('rng') else
+                "not linked: seed-taking APIs only")
+        print(f"  harness : {_rng}")
         print(f"  vectors : {_vector_label(_local, *dirs)}")
         print("=" * 68)
 
