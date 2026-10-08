@@ -5694,7 +5694,7 @@ def _oqs_shim(tmp_path, *flags):
     hook over dilithium-py. A callback that raises would return 0 (success)
     through ctypes, so every one catches and refuses."""
     import ctypes as C, shutil, subprocess
-    from dilithium_py.ml_dsa import ML_DSA_44 as D
+    D = pytest.importorskip("dilithium_py.ml_dsa").ML_DSA_44
     if not shutil.which("gcc"):
         pytest.skip("gcc not available")
     root = pathlib.Path(__file__).resolve().parent.parent
