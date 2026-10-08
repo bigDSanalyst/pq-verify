@@ -5,6 +5,21 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — the README is for using pq-verify
+
+- **README.md is cut from 851 to about 550 lines**, by moving what is not
+  needed to run an audit into two new files; nothing was removed and no claim
+  changed. **ARCHITECTURE.md**: the full "Proven" list, the engine tracks, the
+  six field-native engines and the specification front-end, the pinned
+  vectors, the Python API, the evidence model in depth (scope, fresh
+  questions, LMS key reuse, coverage) and the side-channel report fields.
+  **HYBRID.md**: RFC 10024 composition in full.
+- "What a result is bound to" now follows the Quick start, so a reader meets
+  what a result does and does not show before anything else.
+- The documentation guards (documented flags exist, referenced files exist,
+  links and anchors resolve, the 160-check and ACVP figures match what is
+  measured, the RFC 10024 table matches the registry) cover both new files.
+
 ### Added — liboqs, audited per implementation
 
 - **liboqs 0.16.0 is pinned and re-audited in CI** (`5a1a854`, built as

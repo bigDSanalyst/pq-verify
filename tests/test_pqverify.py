@@ -1292,8 +1292,8 @@ def _docs_text():
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
     return {p.name: p.read_text() for p in
-            [root / "README.md", root / "QUICKSTART.md",
-             root / "pq_verify" / "core.py", root / "pq_verify" / "__init__.py",
+            [root / "README.md", root / "QUICKSTART.md", root / "ARCHITECTURE.md",
+             root / "HYBRID.md", root / "pq_verify" / "core.py", root / "pq_verify" / "__init__.py",
              root / "pq_verify" / "cli.py"]}
 
 
@@ -1963,7 +1963,7 @@ import pathlib as _pathlib
 import re as _re
 
 _REPO = _pathlib.Path(__file__).resolve().parent.parent
-_DOCS = ("README.md", "QUICKSTART.md")
+_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md")
 
 
 def _doc_text(name):
@@ -1995,7 +1995,8 @@ def test_every_documented_flag_exists(doc):
             continue
         used.update(_re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]+)",
                                 line.split("#")[0]))
-    assert used, f"{doc} shows no pq-verify command line at all"
+    if doc in ("README.md", "QUICKSTART.md"):
+        assert used, f"{doc} shows no pq-verify command line at all"
     unknown = sorted(f for f in used if f not in known)
     assert not unknown, f"{doc} documents flags the CLI does not have: {unknown}"
 
@@ -2031,13 +2032,14 @@ def test_documented_python_floor_matches_the_package(doc):
             f"{doc} claims Python {claimed}+, pyproject.toml declares {floor}+")
 
 
-def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented():
-    """The README prints the RFC 10024 table; it has to be this table."""
-    text = _doc_text("README.md")
+@pytest.mark.parametrize("doc", ("README.md", "HYBRID.md"))
+def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented(doc):
+    """README and HYBRID.md print the RFC 10024 table; it has to be this table."""
+    text = _doc_text(doc)
     for name, g in GROUPS.items():
-        assert name in text, f"README does not mention {name}"
+        assert name in text, f"{doc} does not mention {name}"
         assert f"0x{g['codepoint']:04X}" in text, (
-            f"README does not give the codepoint for {name}")
+            f"{doc} does not give the codepoint for {name}")
 
 
 def test_internal_doc_links_resolve():
@@ -2049,7 +2051,7 @@ def test_internal_doc_links_resolve():
     """
     import pathlib as _pl
     files = ("README.md", "QUICKSTART.md", "SECURITY.md", "CHANGELOG.md",
-             "AUDITS.md")
+             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md")
     present = {n: _pl.Path(_REPO / n) for n in files
                if (_REPO / n).exists()}
     if not present:
@@ -2491,7 +2493,8 @@ def test_install_hints_do_not_recommend_breaking_system_packages():
     --break-system-packages is advice to damage them. The extra exists."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
-    for f in [*(root / "pq_verify").glob("*.py"), root / "README.md"]:
+    for f in [*(root / "pq_verify").glob("*.py"), root / "README.md",
+              root / "ARCHITECTURE.md", root / "HYBRID.md"]:
         assert "--break-system-packages" not in f.read_text(), f.name
 
 
@@ -3742,9 +3745,11 @@ def test_slhdsa_counts_match_the_docs():
     kg = _load_bundle()["SLH-DSA-keyGen-FIPS205/prompt.json"]
     n["keyGen"] = sum(len(g["tests"]) for g in kg["testGroups"])
     assert n == {"keyGen": 120, "sigVer": 504, "sigGen": 624}
-    readme = _docs_text()["README.md"]
+    docs = _docs_text()
+    readme = docs["README.md"]
     assert "SLH--DSA%20ACVP-1248%2F1248" in readme
-    assert "1566/1566" in readme and "2190/2190" in readme
+    assert "1566/1566" in readme
+    assert "2190/2190" in docs["ARCHITECTURE.md"]      # the Python API table
     assert 855 + n["keyGen"] + n["sigVer"] + 87 == 1566        # + NIST LMS
     assert 1566 + n["sigGen"] == 2190
 

@@ -32,7 +32,6 @@ Layers of an audit:
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
 | **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
 | **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
-
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
 Plus per-layer algebraic protection allocation: which NTT layers are worth
@@ -43,40 +42,25 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
 
 ---
 
-## Proven (all tested on commodity hardware, Google Colab CPU)
+## Proven
 
-- **160/160** self-test across 6 field-native engines, 6 phases, of which
-  **54 verify PQC directly** (FIPS 203/204/205 NTTs, zetas, parameters,
-  Freivalds, Coq) and 13 check the harness itself; the other 93 are classical
-  and research engines being realigned toward post-quantum work (see
-  [Engines and where they are heading](#engines-and-where-they-are-heading)) —
-  in an environment with every optional dependency present. Where one is missing the
-  dependent check reports as `⊘ SKIPPED`, is excluded from the ratio, and names
-  what it needed. It is never counted as a pass, and never as a failure either
-- **240/240** NIST ACVP ML-KEM vectors — keyGen + encaps + decaps byte-exact, KeyCheck bool-exact
-- **1248/1248** NIST ACVP SLH-DSA vectors, all 12 parameter sets — keyGen 120 byte-exact,
-  sigVer 504 verdict-exact (valid, modified message / R / FORS / hypertree, one byte
-  short or long), sigGen 624 byte-exact, deterministic and with NIST's randomness;
-  internal, pure and pre-hash interfaces over twelve hash functions. sigGen takes
-  about 30 min, so it is `--slhdsa-siggen` and a weekly CI job
-- **LMS/HSS and XMSS/XMSS^MT** (RFC 8554, RFC 8391, SP 800-208; CNSA 2.0's
-  firmware-signing schemes), pq-verify's own implementation of all four
-  SP 800-208 hash families: NIST's 87 LMS ACVP vectors in `--acvp-all`, and
-  `--lms-xmss` over every other pinned source: ACVP-format LMS and XMSS
-  vectors for every family, liboqs's XMSS^MT and HSS KATs, and RFC 8554's own
-  test cases. Every signature is verified; key generation and signing are
-  byte-exact up to a hash budget (`--lms-xmss-full`: every height-10 tree), and
-  what the budget skips is reported as not run, never as passed
-- **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
-- **Non-circular KAT** 100/100 against the independent FIPS reference
-- Calibrated lattice estimator: reproduces lattice-estimator exactly (Kyber-512 β=406/118.6 bits)
-- **Proofs for every input** (`pq-verify --proofs`, Coq): the FIPS 203 and
-  FIPS 204 forward NTT equal the CRT map they are defined to compute, for
-  every 256-coefficient input; `montgomery_reduce`, `barrett_reduce` and
-  `reduce32` are congruent and within bound for every input in range. Each
-  theorem must print `Closed under the global context` (no axioms, no
-  `Admitted`), not just exit 0. Per-run certificates use the same, proved,
-  NTT definition
+- **160/160** self-test across 6 field-native engines, of which **54 verify
+  PQC directly**; the others check the harness itself or are classical and
+  research engines, never counted as PQC evidence
+  ([how the checks are tracked](ARCHITECTURE.md#engines-and-where-they-are-heading)).
+  A check whose optional dependency is missing reports `⊘ SKIPPED`, never a
+  pass and never a failure
+- **NIST ACVP**, every vector passing: ML-KEM 240/240, ML-DSA 615/615,
+  SLH-DSA 1248/1248 across all 12 parameter sets (sigGen opt-in,
+  `--slhdsa-siggen`), LMS 87/87
+- **LMS/HSS and XMSS/XMSS^MT** (SP 800-208, CNSA 2.0's firmware-signing
+  schemes) against every other pinned source, `--lms-xmss`
+- **Proofs for every input** (`pq-verify --proofs`, Coq) of the FIPS 203 and
+  FIPS 204 NTTs and their modular reductions
+
+All of it on commodity hardware (Google Colab CPU); each item in full, with
+the native full-KEM, non-circular KAT and lattice-estimator results, is in
+[ARCHITECTURE.md](ARCHITECTURE.md#proven-in-detail).
 
 ---
 
@@ -148,14 +132,11 @@ pq-verify --emit-prompt ML-DSA-65 --prompt-out prompt.json   # 205 questions, no
 pq-verify --verify-response response.json                    # byte-exact, per test case
 ```
 
-**This route is weaker than `--audit-so`, and the report says so.** A passing
-response shows that whoever produced it computes the standard correctly for
-those inputs. It does not show *which binary did it* — there is no signature
-over the computation and no binding to code. So the result carries
-`artifact: none — vendor-supplied response` where a loaded library would carry
-its SHA-256. Use it when the alternative is no verification at all, not when
-you can point at a file. See [What a result is bound
-to](#what-a-result-is-bound-to).
+**This route is weaker than `--audit-so`, and the report says so:** a passing
+response shows the standard was computed correctly, not *which binary* computed
+it, so the result carries `artifact: none` ([below](#what-a-result-is-bound-to)).
+Use it when the alternative is no verification at all, not when you can point
+at a file.
 
 Nothing in production negotiates bare ML-KEM. To check the part ACVP cannot
 see — how the two halves of a hybrid key agreement are put together:
@@ -168,27 +149,60 @@ pq-verify --verify-hybrid hybrid.json                        # RFC 10024 composi
 
 `DEMO.ipynb` runs the same thing in Colab if you prefer a notebook.
 
-<details>
-<summary>Other install routes</summary>
+The Python API, and the other install routes, are in
+[ARCHITECTURE.md](ARCHITECTURE.md#public-api).
 
-```python
-exec(open('pq_verify/core.py').read())   # 160-check self-suite + loads the API
+---
 
-pqverify_acvp()                    # full NIST ACVP, all parameter sets
-pqverify_params('ML-KEM-1024')     # parameter security check
-pqverify_kem(k=4)                  # native full-KEM at Level 5
+## What a result is bound to
+
+Every report states its binding as a field, not as prose:
+
+| Path | `artifact` |
+|------|-----------|
+| `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
+| `--verify-response` | `none — vendor-supplied response` |
+| `--verify-hybrid` | `none — vendor-supplied transcript` |
+| `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
+
+The binding is recorded independently of the verdict, because they are
+different facts. A library that exposes no derandomised entry points is
+`artifact: sha256 <hash>` (the file was read) with status `CANNOT VERIFY` (no
+vector was ever driven through it). In SARIF the hash is emitted as the run's
+`artifacts[].hashes.sha-256`, which is where a security platform already looks
+for "this exact file was analysed".
+
+**Isolation and what actually ran.** Each `--audit-*` runs in a child process
+(`--audit-timeout`, default one hour). A library that crashes on a test vector
+or hangs is reported — `CANNOT VERIFY`, with the signal or the limit — instead
+of taking pq-verify and its report down with it, and the code under audit does
+not share memory with the code that decides its verdict. The child records
+every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
+sha256), so the binding covers the vendor library *and* what it pulled in — a
+libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
+`LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). If
+the audited file changes during the run, the verdict is `CANNOT VERIFY`.
+
+**Never ship a test build.** The randomness harness and the pqv_hbs adapters
+make a library deterministic and stateless on purpose. `pq-verify
+--check-no-harness lib.so` exits 1 if either is present; put it in the release
+job of anything audited this way.
+
+**Ask fresh questions.** NIST's published questions have published answers:
+NIST ships `expectedResults.json` beside every prompt, and so does this
+package. A response to them that matches shows only that the answers were
+obtained.
+For an audit through `--emit-prompt`, pose questions derived from a seed only
+you hold:
+
+```bash
+pq-verify --emit-prompt ML-DSA-65 --fresh-key audit.key      # send the prompt, keep the key
+pq-verify --verify-response response.json --fresh-key audit.key
 ```
 
-To audit your own compiled library:
-
-```python
-ntt = pqverify_load_so('/path/to/your_library.so', 'ntt_symbol')
-pqverify_scan(ntt)                 # full audit + KAT + leakage
-```
-
-See `vendor_audit_template.py` for the complete "give us your .so → get a JSON report" workflow.
-
-</details>
+How fresh questions are derived and checked, LMS key-reuse detection, the
+`scope` field, and how incomplete or unanswerable runs are reported:
+[ARCHITECTURE.md](ARCHITECTURE.md#what-a-result-is-bound-to-in-depth).
 
 ---
 
@@ -290,49 +304,13 @@ vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
 `--audit-dsa` for ML-DSA. The NTT-level rows check the transform against an
 independently computed FIPS reference.
 
-`--audit-dsa` sends each FIPS 204 interface through the library's own entry
-point for it, and reports any interface the API lacks as not applicable, never
-as a pass. Linked with pq-verify's randomness harness
-(`pq_verify/harness/pqv_randombytes.c`), the randomised `keypair()` and
-`signature()` users actually call are audited byte-exactly too; liboqs needs
-no special build, because its own hook (`OQS_randombytes_custom_algorithm`)
-supplies NIST's seeds, and pq-verify hands the hook back when it is done. Each pinned
-library also carries **mutants**, one planted bug each, which CI requires the
-audit to fail. Two of them, a verifier that accepts a repeated hint index and
-one that skips the ‖z‖ bound, pass every NIST vector; only the Wycheproof
-stage catches them.
-
-Where no entry point can be loaded at all — an HSM, a sealed binary — `--emit-prompt` / `--verify-response` asks the questions instead and
-checks the answers byte-exact. That result is not artifact-bound, and the
-report says so rather than implying otherwise; see
-[What a result is bound to](#what-a-result-is-bound-to).
+Every pinned library also carries **mutants**, one planted bug each, which CI
+requires the audit to fail; how `--audit-dsa` reaches each FIPS 204 interface,
+and randomised APIs, is in [ARCHITECTURE.md](ARCHITECTURE.md#how---audit-dsa-reaches-each-interface).
 
 ---
 
-## Engines and where they are heading
-
-Every self-suite check is labelled with a track, printed per track in the
-summary and recorded in the JSON report (`track`, `realigns_to`, `tracks`).
-Only the PQC track verifies what a FIPS 203/204/205 implementation computes;
-the others are exact checks of other things, and none of them is counted as
-PQC evidence.
-
-| Track | Checks | What it verifies today | Being realigned toward |
-|---|---|---|---|
-| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](#draft-track-fn-dsa-fips-206)) |
-| Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
-| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts (singular, anomalous and supersingular curves), SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
-| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations. Engine 6 has no PQC target yet |
-
-"Being realigned toward" is a direction, not a capability: until an engine
-checks a post-quantum implementation, it is reported under its own track.
-
-The research track holds two different kinds of work, and neither is
-evidence about an implementation. **Infrastructure:** the CFL/DQBF pipeline,
-which turns standards constraints into SAT/QBF obligations and could carry
-PQC checks once they are written as such. **Analysis:** the conformity
-gradient D(t) and Engine 6, mathematics over ℂ with no post-quantum target
-yet.
+## More audit modes
 
 ### Accumulated vectors: 10 000 random cases, one digest
 
@@ -396,237 +374,13 @@ and lives in one section of `pq_verify/fndsa.py`. Signing — floating-point FFT
 and a Gaussian sampler, where Falcon implementations actually go wrong — is
 not checked until the final standard's vectors exist.
 
-## Architecture — six field-native engines
-
-pq-verify does not encode cryptographic arithmetic as generic boolean SAT and
-hand it to a solver. It verifies each operation **in the field the algorithm
-actually works in**. Kyber's NTT is checked in Z₃₃₂₉ directly; Dilithium's in
-Z₈₃₈₀₄₁₇. That is what "field-native" means, and it is why the checks are exact
-rather than an encoding of an encoding.
-
-Six C/C++ engines are compiled at runtime from sources embedded in `core.py` —
-no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
-
-| Engine | Field | What it verifies |
-|---|---|---|
-| **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space basis** computation (256 vars / 200 eqs → ~56 free; particular solution and basis vectors verified against the system) |
-| **Z₃₃₂₉** | ML-KEM | Kyber NTT butterflies, Montgomery arithmetic, Freivalds verification |
-| **Z₈₃₈₀₄₁₇** | ML-DSA | Dilithium NTT butterflies — the *complete* 8-layer transform, 32-bit Freivalds |
-| **Cubic + ECC** | — | B(a,b) decomposition, elliptic curve point validation, BSGS |
-| **Conformity** | — | D(t) stability on curve families — *research framework, not a security check* |
-| **Period / Gauss-Manin** | — | Amari-Schwarzian, ranks 2/4/4/8 — *research framework, not a security check* |
-
-The two schemes differ structurally and the tool distinguishes them: ML-KEM's ζ
-has order n, so 2n does not divide q−1 and the transform is **incomplete** —
-seven layers, last one deleted. ML-DSA's ζ has order 2n, so the transform is
-**complete** — eight layers. A verifier that assumes one shape silently
-mis-verifies the other.
-
-### Specification front-end
-
-Alongside the engines, a pipeline turns a formal specification into field
-constraints:
-
-```
-CFL spec → lexer → parser → FOL → QBF → field router → engine dispatch
-XML module → DQBF (Henkin dependency sets) → Tseitin linearization → GF(2)
-```
-
-The router picks the correct engine from the constraint structure — XOR-dense
-systems route to GF(2), ring arithmetic to the Z_q engines. Both paths are
-exercised in the self-suite (CFL 6/6, DQBF 7/7).
-
----
-
-## Public API
-
-| Function | Purpose |
-|----------|---------|
-| `main()` | 160-check self-suite |
-| `pqverify_acvp()` | Full NIST ACVP end-to-end ML-KEM (240/240, all groups) |
-| `pqverify_mldsa_acvp()` | Full NIST ACVP end-to-end ML-DSA (615/615, FIPS 204) |
-| `pqverify_slhdsa_acvp()` | NIST ACVP SLH-DSA (FIPS 205, all 12 parameter sets): keyGen 120 + sigVer 504; `siggen=True` adds 624 byte-exact signatures |
-| `pqverify_acvp_all()` | ML-KEM + ML-DSA + SLH-DSA keyGen/sigVer + LMS (1566/1566) offline; `slhdsa_siggen=True` adds sigGen → 2190/2190; `slhdsa=False, lms=False` → 855/855 |
-| `pqverify_lms_acvp()` | NIST ACVP LMS (87/87, SP 800-208) |
-| `pqverify_hbs(full=False)` | LMS/HSS + XMSS/XMSS^MT against every pinned non-NIST source, every SP 800-208 family |
-| `pqverify_params(set)` | Parameter security: primal-uSVP + sparse hybrid |
-| `pqverify_kem(k=4)` | Native algebraic full-KEM verification |
-| `pqverify_kat(ntt, k=4)` | Non-circular KAT vs FIPS definition |
-| `pqverify_load_so(path, sym)` | Load NTT from a compiled .so |
-| `pqverify_scan(target)` | Auto-discover + audit NTT functions |
-| `pqverify_audit_kem(path, set)` | A vendor's own ML-KEM keygen/encaps/decaps vs NIST + Wycheproof/CCTV |
-| `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface |
-| `pqverify_audit_hbs(path)` | A vendor's own LMS/HSS or XMSS library (pqv_hbs adapter) vs every pinned vector + malformed signatures, and its own key-state handling: no leaf issued twice, state durable before release, refusal once exhausted |
-| `pqverify_leakage()` | Per-layer protection-allocation table |
-| `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |
-| `verify_response(file)` | Check a response byte-exact against the pinned answers |
-| `available_parameter_sets()` | Parameter sets the pinned bundle can pose questions for |
-| `emit_hybrid_prompt(group)` | Write what to supply for a hybrid group (RFC 10024) |
-| `verify_hybrid(file)` | Check a hybrid transcript's composition against RFC 10024 |
-| `HYBRID_GROUPS` | The pinned registry: codepoints, component order, lengths |
-
----
-
-## Deterministic by default
-
-pq-verify ships with a **frozen, versioned snapshot of NIST's ACVP vectors** bundled
-inside the package (gzipped: ~8 MB, plus a ~39 MB archive of SLH-DSA signature
-vectors that is opened only when an SLH-DSA suite runs). By default it verifies
-against those — so:
-
-- **the same input gives the same result, every run, forever**
-- **it works with no network** — air-gapped, offline, no GitHub reachability needed
-- **NIST editing their published files cannot change or break your result**
-
-That last point is not hypothetical: NIST periodically regenerates these vectors and
-has changed the ML-KEM `encapDecap` schema (the `keyFormat` seed/expanded split) more
-than once. A tool that fetches live gives different answers on different days. This one
-does not.
-
-```python
-pqverify_acvp_all()              # pinned bundle, offline, deterministic  → 1566/1566
-pqverify_acvp_all(live=True)     # opt in: fetch NIST's current vectors instead
-pqverify_acvp_all(vector_dir=d)  # or point at your own local vector set
-```
-
-Vector provenance and per-file sha256 are recorded in `pq_verify/vectors/MANIFEST.json`.
-A scheduled GitHub Action watches upstream and opens an issue when NIST changes
-something, so re-pinning is a deliberate, reviewed act rather than a live dependency.
-
-## Verifying a release
-
-Releases are built by `.github/workflows/release.yml` on GitHub's runners, from
-a reviewed commit, after the full suite and all 1566 NIST ACVP vectors pass on
-Python 3.9 through 3.13. Each artifact carries **SLSA build provenance** and an
-attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
-says:
-
-```bash
-gh attestation verify pq_verify-2.11.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
-```
-
-That tells you which workflow built the file, from which commit, on whose
-runners — not that we assert it, but that GitHub signed it. Provenance cannot
-be added to an artifact after the fact, which is why a release built anywhere
-else can never have it.
-
-The SBOM is short: **pq-verify has no unconditional runtime dependencies.**
-`kyber-py`, `dilithium-py`, `sympy` and `slh-dsa` are optional extras used to
-cross-check against independent implementations; the package itself installs
-with none of them.
-
----
-
-## What a result is bound to
-
-Every report states its binding as a field, not as prose:
-
-| Path | `artifact` |
-|------|-----------|
-| `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
-| `--verify-response` | `none — vendor-supplied response` |
-| `--verify-hybrid` | `none — vendor-supplied transcript` |
-| `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
-
-The binding is recorded independently of the verdict, because they are
-different facts. A library that exposes no derandomised entry points is
-`artifact: sha256 <hash>` (the file was read) with status `CANNOT VERIFY` (no
-vector was ever driven through it). In SARIF the hash is emitted as the run's
-`artifacts[].hashes.sha-256`, which is where a security platform already looks
-for "this exact file was analysed".
-
-**Isolation and what actually ran.** Each `--audit-*` runs in a child process
-(`--audit-timeout`, default one hour). A library that crashes on a test vector
-or hangs is reported — `CANNOT VERIFY`, with the signal or the limit — instead
-of taking pq-verify and its report down with it, and the code under audit does
-not share memory with the code that decides its verdict. The child records
-every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
-sha256), so the binding covers the vendor library *and* what it pulled in — a
-libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
-`LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). If
-the audited file changes during the run, the verdict is `CANNOT VERIFY`.
-
-The audit assumes the library is not adversarial toward the audit itself: a
-binary built to recognise pq-verify could behave differently under test. That
-is the limit of any black-box test; the prompt/response path and a build you
-control are the answers to it.
-
-**Scope is part of the verdict.** `--audit-dsa` and `--audit-hbs` reports carry
-`scope`: how many cases ran, how many were not applicable (the library exports
-no entry point, or its adapter declares a parameter set unsupported) and how
-many were not run (sampled or over budget). `VERIFIED` with
-`scope.complete: false` means every check that ran passed, not that every
-check ran; `--require-full-coverage` fails it.
-
-**Never ship a test build.** The randomness harness and the pqv_hbs adapters
-make a library deterministic and stateless on purpose. `pq-verify
---check-no-harness lib.so` exits 1 if either is present; put it in the release
-job of anything audited this way.
-
-NIST's published questions have published answers: NIST ships
-`expectedResults.json` beside every prompt, and so does this package. A response
-to them that matches shows only that the answers were obtained. For an audit,
-pose **fresh** questions:
-
-```bash
-pq-verify --emit-prompt ML-DSA-65 --fresh-key audit.key      # send the prompt, keep the key
-pq-verify --verify-response response.json --fresh-key audit.key
-```
-
-The seed (256 bits from the OS) goes only to `audit.key`, created `0600` and
-never overwritten. Every input is derived from it with SHAKE256; the prompt is
-in NIST's ACVP layout — same suites, groups and field names, every interface
-(pure, pre-hash, external mu, internal; deterministic and hedged), boundary
-context lengths, implicit-rejection ciphertexts, invalid keys and invalid
-signatures — so an ACVP harness answers it unchanged. Verification re-derives
-the questions, confirms their `promptId` matches the one issued, and computes
-every expected answer at that moment. ML-KEM, ML-DSA, all twelve SLH-DSA
-sets and every SP 800-208 LMS pairing (`LMS_SHA256_M32_H10/LMOTS_SHA256_N32_W4`
-and so on) are supported.
-
-LMS is where black-box testing matters most: firmware-signing keys live in
-HSMs that will not export a key or sign at a chosen leaf. Its sigGen questions
-are answered the way ACVP asks — the responder signs with **its own key** and
-reports the public key — so each signature is verified under that key rather
-than compared, and **no leaf may sign twice under one key anywhere in the
-response**: a one-time key used twice is reported, from outside the box. keyGen
-and sigVer questions are posed where pq-verify can build the tree (up to about
-3 million hash calls); larger sets, such as height 20, get sigGen alone.
-
-A passing fresh response proves the responder computed the standard correctly
-on inputs nobody had seen. Neither kind proves **which binary did it**: there
-is no signature over the computation and no binding to code — the responder
-could run a reference implementation instead of the product. So the report says
-`artifact: none` rather than implying otherwise, and a reader can tell the two
-kinds of result apart without reading a footnote.
-
-The same discipline applies to coverage. A response answering 3 of 205
-questions reports `3 of 205 asked`, groups nobody answered print `NOT RUN`
-rather than `FAIL`, and the verdict is `INCOMPLETE` — never `3/3 PASS`.
-
-And to pq-verify's own suite, which is where it was missing longest. A check
-that could not run — `coqc` absent, `sympy` absent — prints `⊘`, stays out of
-the ratio, and registers the dependency it needed, so `integrity_report()` can
-never announce full coverage over a check that did not happen.
-Answering a different question set (`promptId` mismatch) is `CANNOT VERIFY`,
-which is reported separately from verified-and-failed: `PQV000` for an absent
-check, `PQV006` for an answer that is genuinely wrong.
-
-`--fail-on-finding` exits non-zero for all of it — findings, `INCOMPLETE`,
-`CANNOT VERIFY`, a KEM audit that could not run, and an ACVP suite short of
-its full count. A run that did not verify does not pass a CI gate.
-
 ---
 
 ## Hybrid key agreement (RFC 10024)
 
-Nothing in production negotiates bare ML-KEM. Every deployment that has turned
-post-quantum TLS on runs a **hybrid** group, and `X25519MLKEM768` is what
-Chrome, Firefox, OpenSSL, BoringSSL and the large CDNs agree on today.
-
-The ML-KEM half of that handshake is covered by `--acvp` and `--audit-kem`.
-The **composition** is not — and the composition is where the bugs are,
-because RFC 10024 does not use one order:
+Nothing in production negotiates bare ML-KEM: post-quantum TLS runs a
+**hybrid** group, and ACVP never sees how its two halves are concatenated.
+RFC 10024 does not use one order:
 
 | Group | Codepoint | Key share | Shared secret |
 |---|---|---|---|
@@ -638,53 +392,12 @@ The first row is reversed relative to its own name. The RFC says so itself,
 and calls it historical. So an implementation can pass **every ACVP vector
 byte-for-byte** and still be wrong, because ACVP never sees the concatenation.
 
-The failure is silent in the worst way: two peers that make the same mistake
-interoperate happily with each other and with nobody else, and the peer that
-got it right sees only a `decrypt_error` with no indication of which side is
-at fault.
-
-```bash
-pq-verify --emit-hybrid-prompt list          # the groups this build knows
-pq-verify --emit-hybrid-prompt X25519MLKEM768 --prompt-out hybrid.json
-pq-verify --verify-hybrid hybrid.json
-```
-
-What gets checked, from one handshake's wire bytes:
-
-- every length against the value RFC 10024 pins for that group
-- the encapsulation key against the FIPS 203 §7.2 check the RFC makes a
-  **MUST** for the server — validated here against NIST's own 20 labelled
-  `encapsulationKeyCheck` cases, so it agrees with NIST rather than with itself
-- the ECDHE share as an uncompressed point on the curve (RFC 9846 §4.3.8.2)
-- the X25519 all-zero shared-secret check, which the RFC also makes a MUST
-- when you supply an ephemeral private scalar, the ECDHE shared secret
-  **recomputed** and compared byte-for-byte at the offset the group pins
-- and, when you supply the client's ephemeral ML-KEM decapsulation key, the
-  ciphertext in the server share **decapsulated** and the result compared
-  byte-for-byte with the ML-KEM half of the combined secret. Without the key,
-  nothing ties the ciphertext to the secret, so that check is `NOT CHECKED`
-  and the result is `PARTIAL`, never `VERIFIED`
-
-When a check fails, pq-verify tests the other order explicitly:
-
-```
-**FAIL**  clientShare ML-KEM-768 encapsulation key (FIPS 203 §7.2)
-          there is no valid encapsulation key at offset 0, but there IS one
-          at the offset the other order gives — the components are
-          concatenated the wrong way round. RFC 10024 pins
-          kem_ek ‖ ecdh_pub for X25519MLKEM768
-```
-
-That is a root cause, not a mismatch. The discriminator is sound rather than
-heuristic: random bytes pass the FIPS 203 §7.2 check with probability below
-2⁻¹⁴⁰, so "a valid encapsulation key is sitting at the other offset" is not a
-coincidence.
-
-Private keys are optional and should be ephemeral test keys, never production
-ones. A field you cannot supply is reported as `NOT CHECKED` and stays out of the ratio; a check that does not exist for a
-group — X25519 has no structural share check, and inventing one would report a
-check that did not happen — is reported as `N/A` and does not hold the verdict
-at `PARTIAL`.
+`--verify-hybrid` checks one handshake's wire bytes: every length, the FIPS 203
+§7.2 encapsulation-key check, the ECDHE point, the X25519 all-zero check and,
+given ephemeral test keys, both halves of the shared secret recomputed. When a
+check fails it tests the other order and names the root cause. Commands are in
+the [Quick start](#quick-start); what is checked, and how, is in
+[HYBRID.md](HYBRID.md).
 
 ---
 
@@ -717,62 +430,55 @@ every output correct, are caught in CI. It does **not** see instruction
 timing -- KyberSlash's secret division -- so the report lists the library's
 division instructions for a reviewer instead; it cannot check key generation
 (the public matrix seed is derived from the secret seed); and it measures
-nothing physical. The report records exactly that:
-
-```json
-"side_channel": {
-  "measured": false,
-  "constant_time_checked": {
-    "operations": ["decaps", "encaps"],
-    "scope": "secret-dependent branches and memory addresses in this binary, by Valgrind memcheck taint; not instruction timing (division), power, EM or microarchitecture, and not key generation",
-    "leak_free": true
-  }
-}
-```
-
-Without the flag, nothing is claimed:
-
-
-```json
-"side_channel": {
-  "measured": false,
-  "summary": "not measured — execution time, power and electromagnetic behaviour were not observed"
-}
-```
-
-`--leakage` is not an exception to this. It computes, from the NTT's algebraic
-structure, how much of the secret each butterfly layer would determine *if*
-that layer's intermediates were exposed — a design input for allocating
-masking. It does not observe execution and makes no claim that this
-implementation leaks those values. Establishing that requires leakage
-assessment against the deployed binary on the deployed hardware.
+nothing physical. The report records exactly that scope, and without the flag
+claims nothing ([the report fields](ARCHITECTURE.md#side-channel-report-fields)).
+`--leakage` is not an exception: it is a design input computed from the NTT's
+structure, not an observation of execution.
 
 ---
 
-## What's in this package
+## Verifying a release
 
-```
-pq_verify/
-  __init__.py              Public API
-  core.py                  The stack (6 field-native engines)
-  cli.py                   Command-line interface
-  response.py              Prompt/response verification for un-loadable builds
-  hybrid.py                RFC 10024 hybrid key-agreement composition
-  fndsa.py                 FN-DSA (Falcon) verification, FIPS 206 draft track
-  report.py                Native JSON + SARIF 2.1.0 output
-tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
-pyproject.toml             Build config + console-script entry point
-dist/
-  pq_verify-2.11.0-py3-none-any.whl    Installable wheel
-  pq_verify-2.11.0.tar.gz              Source distribution
-DEMO.ipynb                 One-click Colab demo → 1566/1566
-vendor_audit_template.py   Drop-in .so audit → JSON report
-sample_report.json         Example output (what your auditors receive)
-README.md / QUICKSTART.md / LICENSE / CITATION.cff
+Releases are built by `.github/workflows/release.yml` on GitHub's runners, from
+a reviewed commit, after the full suite and all 1566 NIST ACVP vectors pass on
+Python 3.9 through 3.13. Each artifact carries **SLSA build provenance** and an
+attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
+says:
+
+```bash
+gh attestation verify pq_verify-2.11.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
-Install: `pip install "pq-verify[full]"` — or download the wheel from
-[Releases](https://github.com/bigDSanalyst/pq-verify/releases).
+That tells you which workflow built the file, from which commit, on whose
+runners — not that we assert it, but that GitHub signed it. Provenance cannot
+be added to an artifact after the fact, which is why a release built anywhere
+else can never have it.
+
+The SBOM is short: **pq-verify has no unconditional runtime dependencies.**
+`kyber-py`, `dilithium-py`, `sympy` and `slh-dsa` are optional extras used to
+cross-check against independent implementations; the package itself installs
+with none of them.
+
+---
+
+## How it works
+
+[ARCHITECTURE.md](ARCHITECTURE.md) holds what is not needed to run an audit:
+
+- [Engines and where they are heading](ARCHITECTURE.md#engines-and-where-they-are-heading):
+  the PQC, harness, classical and research tracks, and why only the first is
+  PQC evidence
+- [The six field-native engines](ARCHITECTURE.md#architecture--six-field-native-engines)
+  and the [specification front-end](ARCHITECTURE.md#specification-front-end)
+- [Deterministic by default](ARCHITECTURE.md#deterministic-by-default): the
+  pinned NIST vectors and how they are re-pinned
+- [The Python API](ARCHITECTURE.md#public-api)
+- [What a result is bound to, in depth](ARCHITECTURE.md#what-a-result-is-bound-to-in-depth)
+  and the [side-channel report fields](ARCHITECTURE.md#side-channel-report-fields)
+- [What's in this package](ARCHITECTURE.md#whats-in-this-package)
+
+Third-party audit results, build commands and every planted bug are in
+[AUDITS.md](AUDITS.md); hybrid composition in [HYBRID.md](HYBRID.md).
 
 ---
 
