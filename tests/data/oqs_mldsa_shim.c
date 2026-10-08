@@ -79,6 +79,12 @@ int OQS_SIG_ml_dsa_44_verify(const uint8_t *m, size_t mlen, const uint8_t *sig, 
 int PQCP_MLDSA_NATIVE_MLDSA44_C_keypair(uint8_t *pk, uint8_t *sk) {
     return OQS_SIG_ml_dsa_44_keypair(pk, sk);
 }
+/* unique to this implementation: auto-detection binds it beside the OQS
+   context functions, which must be reported as an ambiguity, not a crash */
+int PQCP_MLDSA_NATIVE_MLDSA44_C_keypair_internal(uint8_t *pk, uint8_t *sk,
+                                                const uint8_t *seed) {
+    return KP(pk, sk, seed);
+}
 int PQCP_MLDSA_NATIVE_MLDSA44_C_verify(const uint8_t *sig, size_t siglen, const uint8_t *m,
                                        size_t mlen, const uint8_t *ctx, size_t ctxlen,
                                        const uint8_t *pk) {

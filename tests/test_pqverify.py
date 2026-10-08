@@ -5788,8 +5788,9 @@ def test_oqs_keypair_drawing_the_wrong_amount_of_randomness_is_caught(tmp_path):
 
 def test_two_implementations_are_refused_until_one_is_named(tmp_path):
     """liboqs exports its OQS_* API and the backends behind it. pq-verify
-    lists the implementations; --symbol-prefix picks one, and a binding that
-    mixes liboqs's API with a backend's is refused."""
+    lists the implementations -- also when auto-detection alone would have
+    mixed them (a backend's keypair_internal is unique) -- --symbol-prefix
+    picks one, and a binding the caller names across both is refused."""
     from pq_verify.dsa_audit import VendorDSA
     so = _oqs_shim(tmp_path, "PQVTEST_SECOND_IMPL")
     r, out = _oqs_audit(so, accumulated=0)

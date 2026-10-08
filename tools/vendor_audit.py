@@ -34,6 +34,7 @@ EXIT  0 every row reproduces   1 a row differs   2 a library could not be built
 import argparse
 import contextlib
 import io
+import itertools
 import json
 import os
 import shutil
@@ -92,12 +93,19 @@ LIBOQS_ALGS = ("KEM_ml_kem_512;KEM_ml_kem_768;KEM_ml_kem_1024;"
                "SIG_ml_dsa_44;SIG_ml_dsa_65;SIG_ml_dsa_87;"
                "SIG_falcon_512;SIG_falcon_1024;SIG_falcon_padded_512;SIG_falcon_padded_1024")
 _LIBOQS_BUILT = {}
+_LIBOQS_MUTANTS = itertools.count()
 
 
 def build_liboqs(src, out_dir, tag=""):
-    key = (str(src), tag)
-    if key in _LIBOQS_BUILT:
+    """The pinned tree is built once and shared by every row and set. A
+    mutant (tag) is always rebuilt, to a path of its own: every liboqs row
+    mutates the same tree path and numbers its mutants from 0, so a cache
+    keyed on either would hand one row's mutant to another."""
+    key = str(src)
+    if not tag and key in _LIBOQS_BUILT:
         return _LIBOQS_BUILT[key]
+    if tag:
+        tag = f"{tag}-{next(_LIBOQS_MUTANTS)}"
     bdir = Path(out_dir) / f"liboqs-build{tag}"
     if bdir.exists():
         shutil.rmtree(bdir)
@@ -112,7 +120,10 @@ def build_liboqs(src, out_dir, tag=""):
     # loaded from the same path, which would audit the first build every time.
     so = Path(out_dir) / f"liboqs{tag}.so"
     shutil.copy2(lib, so)
-    _LIBOQS_BUILT[key] = str(so)
+    if tag:
+        shutil.rmtree(bdir, ignore_errors=True)
+    else:
+        _LIBOQS_BUILT[key] = str(so)
     return str(so)
 
 

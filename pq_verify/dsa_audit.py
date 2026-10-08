@@ -143,6 +143,10 @@ def resolve_symbols(exported, param_set, explicit=None, prefix=None):
     return found, ambiguous
 
 
+class MixedBinding(ValueError):
+    """Entry points of liboqs's public API bound next to another's."""
+
+
 def bound_abi(sym, exported):
     """The convention of the entry points actually bound. liboqs exports
     its OQS_* API and mldsa-native's beside it; each needs its own argument
@@ -150,7 +154,7 @@ def bound_abi(sym, exported):
     bound = [s for r, s in sym.items() if s and r != 'rng']
     oqs = [s for s in bound if s.startswith('OQS_SIG_')]
     if oqs and len(oqs) != len(bound):
-        raise ValueError("the binding mixes liboqs's public API (OQS_SIG_*) with "
+        raise MixedBinding("the binding mixes liboqs's public API (OQS_SIG_*) with "
                          f"other entry points: {sorted(bound)}; choose one "
                          "implementation (--symbol-prefix)")
     if oqs:
@@ -252,8 +256,21 @@ class VendorDSA:
         self.lib = _ct.CDLL(self.path)
         exported = exported_symbols(self.path)
         self.sym, self.ambiguous = resolve_symbols(exported, param_set, symbols, prefix)
-        self.abi = abi or bound_abi(self.sym, exported)
-        if self.abi not in ('pqcrystals', 'mldsa-native', 'mldsa-native-v1', 'oqs'):
+        try:
+            self.abi = abi or bound_abi(self.sym, exported)
+        except MixedBinding:
+            named = [s for s in (symbols or {}).values() if s]
+            if any(s.startswith('OQS_SIG_') for s in named) and \
+                    not all(s.startswith('OQS_SIG_') for s in named):
+                raise                       # the caller named both: an error
+            # Auto-detection reached into two implementations (a liboqs build
+            # with one backend): an ambiguity, reported as one -- never audited.
+            for role, s in self.sym.items():
+                if s and role != 'rng' and not (symbols or {}).get(role):
+                    self.ambiguous.setdefault(role, [s])
+            self.abi = None
+        if self.abi is not None and self.abi not in (
+                'pqcrystals', 'mldsa-native', 'mldsa-native-v1', 'oqs'):
             raise ValueError(f"unknown ABI {self.abi!r}")
         self.name = _os.path.basename(self.path)
         self.rng_findings = []
