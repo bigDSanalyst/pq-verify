@@ -2300,5 +2300,271 @@
         }
       ]
     }
+  ],
+  "mceliece_audits": [
+    {
+      "library": "PQClean clean",
+      "url": "https://github.com/PQClean/PQClean",
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "note": "Classic McEliece round 4 reference (SUPERCOP-20221025), NIST API",
+      "build": "pqclean-mceliece",
+      "sets": [
+        "mceliece348864",
+        "mceliece348864f",
+        "mceliece460896",
+        "mceliece460896f",
+        "mceliece6688128",
+        "mceliece6688128f",
+        "mceliece6960119",
+        "mceliece6960119f",
+        "mceliece8192128",
+        "mceliece8192128f"
+      ],
+      "results": {
+        "mceliece348864": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece348864f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6960119": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece6960119f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece8192128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece8192128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        }
+      },
+      "not_applicable": {
+        "mceliece348864": 0,
+        "mceliece348864f": 0,
+        "mceliece460896": 0,
+        "mceliece460896f": 0,
+        "mceliece6688128": 0,
+        "mceliece6688128f": 0,
+        "mceliece6960119": 0,
+        "mceliece6960119f": 0,
+        "mceliece8192128": 0,
+        "mceliece8192128f": 0
+      },
+      "mutants": [
+        {
+          "name": "the decoder accepts any weight whose syndrome matches",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/decrypt.c",
+          "find": "check ^= SYS_T;",
+          "replace": "check ^= w;",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "implicit rejection hashes the decoder's output instead of s",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/operations.c",
+          "find": "*x++ = (~m & s[i]) | (m & e[i]);",
+          "replace": "*x++ = e[i];",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "implicit rejection hashes with prefix 1",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/operations.c",
+          "find": "*x++ = m & 1;",
+          "replace": "*x++ = 1;",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "keypair stores a zero rejection string s",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/operations.c",
+          "find": "memcpy(skp, rp, SYS_N / 8);",
+          "replace": "memset(skp, 0, SYS_N / 8);",
+          "fails": [
+            "keyGen"
+          ]
+        },
+        {
+          "name": "encapsulation hashes with prefix 0",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/operations.c",
+          "find": "unsigned char one_ec[ 1 + SYS_N / 8 + SYND_BYTES ] = {1};",
+          "replace": "unsigned char one_ec[ 1 + SYS_N / 8 + SYND_BYTES ] = {0};",
+          "fails": [
+            "encaps"
+          ]
+        },
+        {
+          "name": "the f variant's private key records no pivots",
+          "set": "mceliece348864f",
+          "file": "crypto_kem/mceliece348864f/clean/operations.c",
+          "find": "store8(sk + 32, pivots);",
+          "replace": "store8(sk + 32, 0xFFFFFFFF);",
+          "fails": [
+            "keyGen"
+          ]
+        },
+        {
+          "name": "decapsulation ignores the ciphertext's padding bits",
+          "set": "mceliece6960119",
+          "file": "crypto_kem/mceliece6960119/clean/operations.c",
+          "find": "padding_ok = check_c_padding(c);",
+          "replace": "padding_ok = 0;",
+          "fails": [
+            "padding"
+          ]
+        },
+        {
+          "name": "encapsulation ignores the public key's padding bits",
+          "set": "mceliece6960119",
+          "file": "crypto_kem/mceliece6960119/clean/operations.c",
+          "find": "padding_ok = check_pk_padding(pk);",
+          "replace": "padding_ok = 0;",
+          "fails": [
+            "padding"
+          ]
+        }
+      ]
+    }
   ]
 }

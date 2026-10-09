@@ -57,7 +57,7 @@ from pq_verify.core import _VECTOR_BUNDLES, _bundle_name      # noqa: E402
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
 PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
                "edge:manifest", "references:edge", "hbs:manifest",
-               "fndsa:manifest")
+               "fndsa:manifest", "mceliece:manifest")
 STABLE_DAYS = 14          # NIST has reverted files within a day; wait this long
 REFERENCES = ("kyber-py", "dilithium-py", "slh-dsa")
 SUITES = {                # the runner for each vector directory prefix
@@ -326,6 +326,28 @@ def check_fndsa_manifest(repo=REPO):
     return Check("fndsa:manifest", OK, f"FN-DSA vectors (draft track): {len(m['files'])} files "
                  f"match FNDSA_MANIFEST.json and PQClean "
                  f"{m['sources']['pqclean']['commit'][:7]}'s META.yml")
+
+
+def check_mceliece_manifest(repo=REPO):
+    """The Classic McEliece KAT bundle matches MCELIECE_MANIFEST.json, which
+    records the nistkat-sha256 PQClean publishes for each set, offline. That
+    the entries are the KATs is proved by pq-verify --mceliece."""
+    import pin_mceliece_vectors as P
+    v = Path(repo) / "pq_verify" / "vectors"
+    bundle, manifest = v / "mceliece_kat.json.gz", v / "MCELIECE_MANIFEST.json"
+    if not bundle.exists() or not manifest.exists():
+        return Check("mceliece:manifest", BLOCK,
+                     "the Classic McEliece bundle or its manifest is missing",
+                     fix="python3 tools/pin_mceliece_vectors.py")
+    problems = P.verify(bundle, manifest)
+    if problems:
+        return Check("mceliece:manifest", BLOCK, f"{len(problems)} problem(s) with the "
+                     "Classic McEliece KAT bundle", "\n".join(problems[:10]),
+                     "python3 tools/pin_mceliece_vectors.py")
+    m = json.loads(manifest.read_text())
+    return Check("mceliece:manifest", OK, f"Classic McEliece KATs (not FIPS): "
+                 f"{len(m['published_nistkat_sha256'])} sets match MCELIECE_MANIFEST.json "
+                 f"(PQClean {m['source']['commit'][:7]})")
 
 
 def check_reference_edges():
@@ -665,6 +687,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
     checks.append(check_edge_manifest(repo))
     checks.append(check_hbs_manifest(repo))
     checks.append(check_fndsa_manifest(repo))
+    checks.append(check_mceliece_manifest(repo))
     if not skip_edge:
         checks.append(check_reference_edges())
     up, moved = check_upstream_state(manifest, baseline, history)

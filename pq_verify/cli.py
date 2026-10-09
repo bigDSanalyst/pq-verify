@@ -7,6 +7,7 @@ pq-verify command-line interface.
     pq-verify --acvp-all           ML-KEM + ML-DSA + SLH-DSA + LMS (1566 vectors)
     pq-verify --lms-xmss           LMS/HSS + XMSS/XMSS^MT, every SP 800-208 family
     pq-verify --fndsa              FN-DSA (Falcon) verification, FIPS 206 draft track
+    pq-verify --mceliece           Classic McEliece reference vs the KATs (not FIPS)
     pq-verify --slhdsa-siggen      SLH-DSA sigGen, 624 signatures (~30 min)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
@@ -15,6 +16,7 @@ pq-verify command-line interface.
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
+    pq-verify --audit-mceliece PATH SET  audit a Classic McEliece library (not FIPS)
     pq-verify --audit-harness CMD SET  audit through a Crucible-protocol harness
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
@@ -154,6 +156,11 @@ def build_parser():
                         "sha256), the encodings a verifier must reject, and the NTT "
                         "mod 12289 on the native Z_q engine. Not part of any FIPS "
                         "203/204/205 result")
+    p.add_argument("--mceliece", action="store_true",
+                   help="Classic McEliece (round 4; NOT a FIPS standard): pq-verify's "
+                        "reference regenerates each pinned KAT's public key from its "
+                        "private key, and the rebuilt KAT must hash to the value "
+                        "PQClean publishes; all ten parameter sets")
     p.add_argument("--slhdsa-acvp", action="store_true",
                    help="NIST ACVP SLH-DSA (FIPS 205) alone: keyGen and sigVer, "
                         "all 12 parameter sets (624 vectors)")
@@ -209,6 +216,13 @@ def build_parser():
                         "malformed ones are refused, its keys are canonical and "
                         "match their secret keys, its signatures verify under "
                         "pq-verify's verifier and never reuse a nonce")
+    p.add_argument("--audit-mceliece", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="NOT A FIPS STANDARD: audit a Classic McEliece library in PATH "
+                        "through its own entry points, e.g. --audit-mceliece lib.so "
+                        "mceliece348864. Its keys regenerated from their own seed, its "
+                        "ciphertexts decoded, ciphertexts built against its key "
+                        "(weight t, t-1, t+1, random, another key's) decapsulated to "
+                        "the exact expected key, padding refused")
     p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
                    help="audit an ML-KEM or ML-DSA implementation in any language "
                         "through a harness speaking Crucible's JSON-line protocol "
@@ -226,6 +240,9 @@ def build_parser():
                         "CCTV's accumulated cases (seeded random keygen/encaps/decaps or "
                         "keygen/sign, hashed and compared with CCTV's published digest). "
                         "Default 10000; 100 for a quick ML-DSA run; 0 to skip")
+    p.add_argument("--mceliece-symbol", action="append", default=[], metavar="ROLE=SYM",
+                   help="with --audit-mceliece: bind ROLE (keypair, enc, dec) to SYM; "
+                        "repeatable")
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
@@ -242,7 +259,8 @@ def build_parser():
                         "Each audit runs in a child process, so a hang or a crash "
                         "is reported instead of taking pq-verify down with it")
     p.add_argument("--symbol-prefix", metavar="PREFIX",
-                   help="with --audit-kem, --audit-dsa or --audit-fndsa: consider only "
+                   help="with --audit-kem, --audit-dsa, --audit-fndsa or --audit-mceliece: "
+                        "consider only "
                         "symbols starting with PREFIX, for a library that exports "
                         "more than one implementation (liboqs: OQS_KEM_ml_kem_768_ "
                         "for its public API, PQCP_MLKEM_NATIVE_MLKEM768_X86_64_ for "
@@ -319,7 +337,8 @@ def main(argv=None):
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--symbol-prefix", args.symbol_prefix,
-             args.audit_kem or args.audit_dsa or args.audit_fndsa),
+             args.audit_kem or args.audit_dsa or args.audit_fndsa or args.audit_mceliece),
+            ("--mceliece-symbol", args.mceliece_symbol, args.audit_mceliece),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
             ("--constant-time", args.constant_time, args.audit_kem),
@@ -333,11 +352,13 @@ def main(argv=None):
             ("--fresh-count", args.fresh_count, args.fresh_key),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
-             or args.audit_fndsa or args.audit_harness)):
+             or args.audit_fndsa or args.audit_mceliece or args.audit_harness)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
-                       "--symbol-prefix": "--audit-kem, --audit-dsa or --audit-fndsa",
+                       "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-fndsa or "
+                                          "--audit-mceliece",
+                       "--mceliece-symbol": "--audit-mceliece",
                        "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
                        "--constant-time": "--audit-kem",
                        "--fresh-key": "--emit-prompt or --verify-response",
@@ -407,7 +428,8 @@ def main(argv=None):
             return 0 if args.no_fail else 1
         if not any(getattr(args, a, None) for a in (
                 "acvp", "mldsa_acvp", "acvp_all", "slhdsa_acvp", "slhdsa_siggen",
-                "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "proofs", "edge_cases",
+                "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "mceliece", "proofs",
+                "edge_cases", "audit_mceliece",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
                 "audit_harness",
@@ -422,6 +444,11 @@ def main(argv=None):
     if getattr(args, "fndsa", False):
         from .fndsa import pqverify_fndsa
         fndsa_result = pqverify_fndsa()
+        ran_task = True
+    mce_result = None
+    if getattr(args, "mceliece", False):
+        from .mceliece import pqverify_mceliece
+        mce_result = pqverify_mceliece()
         ran_task = True
     proofs_result = None
     if getattr(args, "proofs", False):
@@ -608,6 +635,43 @@ def main(argv=None):
         except OSError as exc:
             fna_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {fna_reason}")
+    mca_result = mca_ran = mca_reason = mca_artifact = None
+    if getattr(args, "audit_mceliece", None):
+        from .mceliece import SETS as _MC_SETS
+        from .mceliece_audit import _ROLES as _MC_ROLES
+        _p, _ps = args.audit_mceliece
+        if _ps not in _MC_SETS:
+            print(f"  unknown parameter set {_ps!r} for --audit-mceliece — known: "
+                  f"{', '.join(_MC_SETS)}")
+            return 2
+        _syms = {}
+        for item in args.mceliece_symbol:
+            role, _, sym = item.partition("=")
+            if role not in _MC_ROLES or not sym:
+                print(f"  bad --mceliece-symbol {item!r}: use ROLE=SYMBOL with ROLE one "
+                      f"of {', '.join(_MC_ROLES)}")
+                return 2
+            _syms[role] = sym
+        mca_ran = _ps
+        ran_task = True
+        try:
+            mca_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {mca_artifact['summary']}")
+        try:
+            mca_result, _loaded, mca_reason = _isolated(
+                args, "pq_verify.mceliece_audit", "pqverify_audit_mceliece", _p, _ps,
+                symbols=_syms, prefix=args.symbol_prefix)
+            _bound = _bind_loaded(mca_artifact, _loaded)
+            mca_reason = mca_reason or _bound
+            if mca_reason:
+                mca_result = None
+                print(f"  cannot verify: {mca_reason}")
+        except OSError as exc:
+            mca_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {mca_reason}")
     har_result = har_artifact = None
     if getattr(args, "audit_harness", None):
         import shlex as _shlex
@@ -841,6 +905,30 @@ def main(argv=None):
                   f"--require-full-coverage was set")
             exit_code = 1
 
+    if mca_ran is not None:
+        from .report import to_json_mceliece_audit
+        doc = to_json_mceliece_audit(mca_result, artifact=mca_artifact, param_set=mca_ran,
+                                     library=args.audit_mceliece[0], reason=mca_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-mceliece"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_mceliece[0]}:{mca_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=mca_artifact)
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: Classic McEliece audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print(f"  FAILING: Classic McEliece audit scope is partial and "
+                  f"--require-full-coverage was set")
+            exit_code = 1
+
     if response_result is not None:
         doc = to_json_response(response_result)
         if json_doc is None:
@@ -908,6 +996,16 @@ def main(argv=None):
             json_doc, reported = doc, "--lms-xmss"
         if gate and not doc["verified"]:
             print(f"  FAILING: LMS/XMSS {doc['status']} "
+                  f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
+            exit_code = 1
+
+    if mce_result is not None:
+        from .report import to_json_mceliece
+        doc = to_json_mceliece(mce_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--mceliece"
+        if gate and not doc["verified"]:
+            print(f"  FAILING: Classic McEliece {doc['status']} "
                   f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
             exit_code = 1
 

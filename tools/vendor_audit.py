@@ -63,6 +63,9 @@ HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
 FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audits-fndsa:end -->"
 FNDSA_BUILDS = ("pqclean-falcon", "liboqs")
 FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
+MCE_BEGIN, MCE_END = "<!-- vendor-audits-mceliece:begin -->", "<!-- vendor-audits-mceliece:end -->"
+MCE_BUILDS = ("pqclean-mceliece",)
+MCE_STAGES = ("keyGen", "encaps", "decaps", "padding")
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
                 b"int randombytes(uint8_t *o, size_t n)"
@@ -248,6 +251,29 @@ def load_fndsa_table(path=TABLE):
         return json.load(fh).get("fndsa_audits", [])
 
 
+def load_mceliece_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("mceliece_audits", [])
+
+
+def build_mceliece(recipe, src, param_set, out_dir, tag=""):
+    """Compile one Classic McEliece parameter set. Encapsulation draws its
+    error vector from the system RNG: it is audited for validity and
+    repetition, so no randomness harness is linked."""
+    so = Path(out_dir) / f"{recipe}-{param_set}{tag}.so"
+    src = Path(src)
+    if recipe == "pqclean-mceliece":
+        d = src / "crypto_kem" / param_set / "clean"
+        common = src / "common"
+        cmd = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared", "-w", "-I", str(common),
+               "-o", str(so), *sorted(str(p) for p in d.glob("*.c")),
+               str(common / "fips202.c"), str(common / "aes.c"), str(common / "randombytes.c")]
+    else:
+        raise ValueError(f"unknown Classic McEliece build recipe {recipe!r}")
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
 def build_fndsa(recipe, src, param_set, out_dir, tag=""):
     """Compile one FN-DSA (Falcon) parameter set. Signing draws its nonce
     and seeds from the system RNG: FN-DSA signing is audited for validity,
@@ -299,6 +325,17 @@ def audit_fndsa(so, param_set, prefix=None):
     from pq_verify.fndsa_audit import pqverify_audit_fndsa
     with contextlib.redirect_stdout(io.StringIO()):
         r = pqverify_audit_fndsa(so, param_set, verbose=False, prefix=prefix)
+    if r is None:
+        return None
+    return {"results": {k: list(v) for k, v in r["detail"].items()},
+            "not_applicable": r["not_applicable_total"]}
+
+
+def audit_mceliece(so, param_set, prefix=None):
+    sys.path.insert(0, str(REPO))
+    from pq_verify.mceliece_audit import pqverify_audit_mceliece
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_mceliece(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
@@ -669,6 +706,72 @@ def check_fndsa(rows, workdir):
     return 0
 
 
+def check_mceliece(rows, workdir):
+    """Classic McEliece (not a FIPS standard): each row's sets as recorded,
+    and every mutant failed in the stages it names."""
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        try:
+            if not (src / ".git").exists():
+                fetch(row["url"], row["commit"], src)
+        except Exception as e:
+            print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: fetch failed: {e}")
+            return 2
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps}"
+            try:
+                so = build_mceliece(row["build"], src, ps, workdir)
+            except subprocess.CalledProcessError as e:
+                print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
+                return 2
+            got = audit_mceliece(so, ps, prefix_for(row, ps))
+            want = {"results": row["results"][ps],
+                    "not_applicable": row["not_applicable"][ps]}
+            if got == want:
+                p, t = total(got["results"])
+                print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}")
+            if got is None:
+                print("         pq-verify could not audit it (entry points not resolved)")
+                continue
+            for s in sorted(set(got["results"]) | set(want["results"])):
+                if got["results"].get(s) != want["results"].get(s):
+                    print(f"         {s:8s} recorded {want['results'].get(s)}  "
+                          f"now {got['results'].get(s)}")
+            if got["not_applicable"] != want["not_applicable"]:
+                print(f"         not applicable recorded {want['not_applicable']}  "
+                      f"now {got['not_applicable']}")
+        for i, m in enumerate(row.get("mutants", [])):
+            label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build_mceliece(row["build"], msrc, m["set"], workdir, tag=f"-mcmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got = audit_mceliece(so, m["set"], prefix_for(row, m["set"], m))
+            missed = [f"{st} {p}/{t}" for st in m["fails"]
+                      for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                      if not (t and p < t)]
+            if got is not None and not missed:
+                bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
+                print(f"  caught {label}: fails {', '.join(bad)}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: the audit did not fail "
+                  + (", ".join(missed) if got else "(could not audit it)")
+                  + ". pq-verify cannot see this bug class.")
+    if failures:
+        print(f"\n  {failures} Classic McEliece row(s) or mutant(s) differ. Fix the regression, "
+              f"or, if intended, update tools/vendor_audits.json and AUDITS.md in "
+              f"the same PR and say why.")
+        return 1
+    return 0
+
+
 # ─────────────────────────────── table ───────────────────────────────
 
 def edge_total(row):
@@ -780,17 +883,39 @@ def fndsa_markdown(rows):
     return "\n".join(lines)
 
 
+def mceliece_markdown(rows):
+    lines = ["| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) "
+             "| padding | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        def cell(stage):
+            p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
+            t = sum(row["results"][ps].get(stage, [0, 0])[1] for ps in row["sets"])
+            return f"{p}/{t}" if t else "—"
+        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
+                for i in (0, 1))
+        muts = row.get("mutants", [])
+        lines.append(" | ".join([
+            f"| {row['library']}",
+            f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
+            f"all {len(row['sets'])}", cell("keyGen"), cell("encaps"), cell("decaps"),
+            cell("padding"), f"{len(muts)}/{len(muts)}" if muts else "—",
+            f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--markdown", action="store_true",
                     help="print the AUDITS.md table from the pinned rows; no build")
     ap.add_argument("--workdir", help="where to fetch and build (default: a "
                                       "temporary directory, removed afterwards)")
-    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA"),
+    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA", "McEliece"),
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
     rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
     fndsa_rows = load_fndsa_table()
+    mce_rows = load_mceliece_table()
     if a.markdown:
         print(markdown(rows))
         print()
@@ -799,6 +924,8 @@ def main(argv=None):
         print(hbs_markdown(hbs_rows))
         print()
         print(fndsa_markdown(fndsa_rows))
+        print()
+        print(mceliece_markdown(mce_rows))
         return 0
 
     def run(work):
@@ -812,6 +939,8 @@ def main(argv=None):
             code = max(code, check_hbs(hbs_rows, work))
         if a.only in (None, "FN-DSA"):
             code = max(code, check_fndsa(fndsa_rows, work))
+        if a.only in (None, "McEliece"):
+            code = max(code, check_mceliece(mce_rows, work))
         return code
     if a.workdir:
         return run(a.workdir)

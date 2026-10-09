@@ -1,0 +1,22 @@
+{
+  "bundle_sha256": "406c516741a0ce7aa1c86caae832305883a86209c4e596ebf795f0c7a40ab151",
+  "note": "public keys are not pinned; pq-verify regenerates them and the rebuilt KAT must hash to the published value",
+  "published_nistkat_sha256": {
+    "mceliece348864": "6f0f50626df15ce403c0c1d5f91648245282afebcac90e5db3595ce9b20b1817",
+    "mceliece348864f": "9b17b21becc1d3acf9df0a6d87875790259c075abeb50f97ea254c8d29395a41",
+    "mceliece460896": "03124a66e44aea18a3c1fcd63be22f2217ec5514b7d84166b1da71094c251769",
+    "mceliece460896f": "a027478ab01849de3d492176ea95c071110bcb8f7e4e6afa136a30cd1a1f6074",
+    "mceliece6688128": "4c825bf86378d76b197caca6f957942c0cc98b50ce4a6b26cad6efa25d1d20c6",
+    "mceliece6688128f": "1fa84d1abd8ef104cdcf75277ca4399475945e97087dde3183a09415e1d61987",
+    "mceliece6960119": "8feea532732502134b7965fd495e6618b09f0b4747c2d94b29a85a90a0b6cc8a",
+    "mceliece6960119f": "9a586a40d1af4819efb3f7343a05c260bd27d7e5d450945fee0ace5593761c3b",
+    "mceliece8192128": "cbe9b802465df7a7b3a59a08d3bd3ea603b6277532c15f89418b8d0d6508ee24",
+    "mceliece8192128f": "f497b217022465568f0ed6c7987c462b74ba2d3e39f963ac357436c727ed9bdb"
+  },
+  "source": {
+    "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+    "date": "2026-08-04",
+    "implementation": "clean (SUPERCOP-20221025, round 4)",
+    "repo": "https://github.com/PQClean/PQClean"
+  }
+}

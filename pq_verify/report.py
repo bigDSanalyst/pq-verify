@@ -572,6 +572,77 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
     return doc
 
 
+_MCELIECE_STANDARD = "Classic McEliece round 4 (not a FIPS standard)"
+
+
+def to_json_mceliece(result):
+    """Native schema for pqverify_mceliece: pq-verify's Classic McEliece
+    reference against the pinned KATs. Classic McEliece is not a FIPS
+    standard, and `track` / `standard` say so in every report."""
+    doc = _envelope("pq-verify/mceliece-result", None,
+                    reason="reference conformance, no vendor binary loaded")
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["track"] = "classic-mceliece"
+    doc["standard"] = result.get("standard", _MCELIECE_STANDARD)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["vectors"] = result.get("vectors")
+    doc["reference"] = result.get("reference")
+    doc["groups"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["failures"] = result.get("failures", [])
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "findings": 0 if p == t else t - p}
+    return doc
+
+
+def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
+                           reason=None):
+    """Native schema for pqverify_audit_mceliece: a vendor Classic McEliece
+    library. Not a FIPS standard; `track` says so."""
+    doc = _envelope("pq-verify/mceliece-audit-result", artifact)
+    doc["track"] = "classic-mceliece"
+    doc["standard"] = _MCELIECE_STANDARD
+    doc["parameter_set"] = param_set
+    doc["library"] = library or (result or {}).get("library")
+    if result is None:
+        doc.update(status="CANNOT VERIFY", verified=False, stages={}, symbols={},
+                   not_applicable={},
+                   summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
+                   findings=["cannot verify: " + (
+                       reason or "no Classic McEliece entry point could be bound "
+                                 "unambiguously")])
+        return doc
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["calling_convention"] = result.get("abi")
+    doc["symbols"] = result.get("symbols", {})
+    doc["vectors"] = result.get("vectors")
+    doc["stages"] = {k: {"passed": v[0], "total": v[1],
+                         "via": (result.get("via") or {}).get(k)}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
+                             for k, v in (result.get("not_applicable") or {}).items()}
+    fails = result.get("failures") or []
+    findings = []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            first = next((f for f in fails if f["stage"] == k), None)
+            where = f"; first: {first['case']}: {first['detail']}" if first else ""
+            findings.append(f"Classic McEliece: stage {k}: {v[0]}/{v[1]}{where}")
+    doc["failures"] = fails
+    doc["findings"] = findings
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "not_applicable": result.get("not_applicable_total", 0),
+                      "findings": len(findings)}
+    doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
+                          na_why="the parameter set or API has no such case")
+    return doc
+
+
 def artifact_harness(path, command):
     """Binding for a harness audit: the harness executable is hashed, and the
     detail says that the library behind it is not."""

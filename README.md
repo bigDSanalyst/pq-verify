@@ -71,6 +71,7 @@ pip install "pq-verify[full]"
 pq-verify --acvp-all            # 1566/1566, offline, no configuration, ~1 min
 pq-verify --slhdsa-siggen      # + SLH-DSA sigGen, 624 signatures, ~30 min
 pq-verify --fndsa              # FN-DSA verification, FIPS 206 DRAFT track, ~1 s
+pq-verify --mceliece           # Classic McEliece reference vs the KATs, NOT a FIPS standard
 ```
 
 That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
@@ -298,6 +299,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
+| PQClean Classic McEliece, all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding; 8 mutants | 404/404; every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
 vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
@@ -373,6 +375,33 @@ change; framing (headers, padding, how a context string is bound) may change,
 and lives in one section of `pq_verify/fndsa.py`. Signing — floating-point FFT
 and a Gaussian sampler, where Falcon implementations actually go wrong — is
 not checked until the final standard's vectors exist.
+
+---
+
+### Not a FIPS standard: Classic McEliece
+
+Classic McEliece was a NIST round-4 candidate that NIST did not select (it
+chose HQC); it is being standardised by ISO. pq-verify checks it on a track of
+its own (`track: "classic-mceliece"`), never part of a FIPS verdict.
+
+`pq-verify --mceliece` holds pq-verify's own implementation to the official
+KATs for all ten parameter sets. The public keys (0.26–1.36 MB) are not
+pinned: each is regenerated from the private key's seed, and the rebuilt KAT
+must hash to the `nistkat-sha256` PQClean publishes for it.
+
+`pq-verify --audit-mceliece lib.so mceliece348864` audits a library through
+its own entry points (the NIST API, or liboqs's `OQS_KEM_classic_mceliece_*`):
+
+| Stage | What |
+|---|---|
+| keyGen | each key regenerated from the seed its private key begins with: public key, pivots, Goppa polynomial and rejection string byte-exact, control bits encoding the regenerated permutation. No control over the library's randomness is needed |
+| encaps | its ciphertexts decode under pq-verify's decoder to weight exactly t, the key is SHAKE256(1 ‖ e ‖ C), its own Decap agrees, no error vector repeats |
+| decaps | ciphertexts built against its own key — weight t at random positions, in the identity part, in the T part and through the support's zero element; weight t−1 (decodable, must be rejected, also through the zero element), t+1, C = 0, random C, another key's ciphertext — each decapsulated to the exact key pq-verify computes |
+| padding | mceliece6960119 only, where mt and k end mid-byte: a ciphertext or public key with a padding bit set is refused, as the submitters' reference does |
+
+PQClean's reference passes all ten sets; eight planted bugs each fail the
+audit in CI ([AUDITS.md](AUDITS.md)). Encapsulation's error-vector sampling
+is checked for validity and repetition, not distribution.
 
 ---
 
