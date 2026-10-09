@@ -67,7 +67,7 @@ MCE_BEGIN, MCE_END = "<!-- vendor-audits-mceliece:begin -->", "<!-- vendor-audit
 HQC_BEGIN, HQC_END = "<!-- vendor-audits-hqc:begin -->", "<!-- vendor-audits-hqc:end -->"
 HQC_BUILDS = ("pqclean-hqc", "hqc-ref", "hqc-avx256")
 HQC_STAGES = ("encode", "rm-decode", "rs-decode", "code-decode", "bounds")
-MCE_BUILDS = ("pqclean-mceliece",)
+MCE_BUILDS = ("pqclean-mceliece", "liboqs", "liboqs-generic")
 MCE_STAGES = ("keyGen", "encaps", "decaps", "padding")
 
 _RANDOMBYTES = (b"#include <stdint.h>\n#include <stddef.h>\n"
@@ -98,26 +98,34 @@ def load_hbs_table(path=TABLE):
 LIBOQS_ALGS = ("KEM_ml_kem_512;KEM_ml_kem_768;KEM_ml_kem_1024;"
                "SIG_ml_dsa_44;SIG_ml_dsa_65;SIG_ml_dsa_87;"
                "SIG_falcon_512;SIG_falcon_1024;SIG_falcon_padded_512;SIG_falcon_padded_1024")
+# Classic McEliece (not FIPS) is built separately, so its ten sets do not
+# slow every other liboqs row; "generic" is the portable configuration, whose
+# public API can only run the clean backend.
+LIBOQS_MCE_ALGS = ";".join(f"KEM_classic_mceliece_{s}" for s in (
+    "348864", "348864f", "460896", "460896f", "6688128", "6688128f",
+    "6960119", "6960119f", "8192128", "8192128f"))
 _LIBOQS_BUILT = {}
 _LIBOQS_MUTANTS = itertools.count()
 
 
-def build_liboqs(src, out_dir, tag=""):
-    """The pinned tree is built once and shared by every row and set. A
-    mutant (tag) is always rebuilt, to a path of its own: every liboqs row
-    mutates the same tree path and numbers its mutants from 0, so a cache
-    keyed on either would hand one row's mutant to another."""
-    key = str(src)
+def build_liboqs(src, out_dir, tag="", algs=LIBOQS_ALGS, generic=False):
+    """The pinned tree is built once per configuration and shared by every row
+    and set. A mutant (tag) is always rebuilt, to a path of its own: every
+    liboqs row mutates the same tree path and numbers its mutants from 0, so a
+    cache keyed on either would hand one row's mutant to another."""
+    config = ("" if algs == LIBOQS_ALGS else "-mce") + ("-generic" if generic else "")
+    key = (str(src), config)
     if not tag and key in _LIBOQS_BUILT:
         return _LIBOQS_BUILT[key]
-    if tag:
-        tag = f"{tag}-{next(_LIBOQS_MUTANTS)}"
+    tag = config + (f"{tag}-{next(_LIBOQS_MUTANTS)}" if tag else "")
     bdir = Path(out_dir) / f"liboqs-build{tag}"
     if bdir.exists():
         shutil.rmtree(bdir)
+    target = (["-DOQS_DIST_BUILD=OFF", "-DOQS_OPT_TARGET=generic"] if generic
+              else ["-DOQS_DIST_BUILD=ON"])
     subprocess.run(["cmake", "-S", str(src), "-B", str(bdir), "-DBUILD_SHARED_LIBS=ON",
-                    "-DOQS_USE_OPENSSL=OFF", "-DOQS_BUILD_ONLY_LIB=ON", "-DOQS_DIST_BUILD=ON",
-                    "-DCMAKE_BUILD_TYPE=Release", f"-DOQS_MINIMAL_BUILD={LIBOQS_ALGS}"],
+                    "-DOQS_USE_OPENSSL=OFF", "-DOQS_BUILD_ONLY_LIB=ON", *target,
+                    "-DCMAKE_BUILD_TYPE=Release", f"-DOQS_MINIMAL_BUILD={algs}"],
                    check=True, capture_output=True)
     subprocess.run(["cmake", "--build", str(bdir), "-j", str(os.cpu_count() or 2)],
                    check=True, capture_output=True)
@@ -126,7 +134,7 @@ def build_liboqs(src, out_dir, tag=""):
     # loaded from the same path, which would audit the first build every time.
     so = Path(out_dir) / f"liboqs{tag}.so"
     shutil.copy2(lib, so)
-    if tag:
+    if tag != config:
         shutil.rmtree(bdir, ignore_errors=True)
     else:
         _LIBOQS_BUILT[key] = str(so)
@@ -137,7 +145,7 @@ def prefix_for(row, param_set, mutant=None):
     """The row's --symbol-prefix for one parameter set ({level} filled in),
     or None: a library exporting several implementations names one."""
     t = (mutant or {}).get("prefix") or row.get("prefix")
-    return t.format(level=param_set.rsplit("-", 1)[1]) if t else None
+    return t.format(level=param_set.rsplit("-", 1)[-1]) if t else None
 
 def fetch(url, commit, dest):
     """Exactly `commit`, nothing newer: fetch that object and check it out."""
@@ -267,7 +275,12 @@ def load_hqc_table(path=TABLE):
 def build_mceliece(recipe, src, param_set, out_dir, tag=""):
     """Compile one Classic McEliece parameter set. Encapsulation draws its
     error vector from the system RNG: it is audited for validity and
-    repetition, so no randomness harness is linked."""
+    repetition, so no randomness harness is linked. liboqs: every set in one
+    library, its distribution build (the AVX2 backend on an AVX2/POPCNT CPU)
+    or the portable one (the clean backend only)."""
+    if recipe in ("liboqs", "liboqs-generic"):
+        return build_liboqs(src, out_dir, tag, algs=LIBOQS_MCE_ALGS,
+                            generic=recipe == "liboqs-generic")
     so = Path(out_dir) / f"{recipe}-{param_set}{tag}.so"
     src = Path(src)
     if recipe == "pqclean-mceliece":
@@ -786,7 +799,8 @@ def check_mceliece(rows, workdir):
     and every mutant failed in the stages it names."""
     failures = 0
     for row in rows:
-        src = Path(workdir) / row["build"] / row["commit"][:12]
+        tree = "liboqs" if row["build"].startswith("liboqs") else row["build"]
+        src = Path(workdir) / tree / row["commit"][:12]
         try:
             if not (src / ".git").exists():
                 fetch(row["url"], row["commit"], src)
