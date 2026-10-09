@@ -72,6 +72,7 @@ pq-verify --acvp-all            # 1566/1566, offline, no configuration, ~1 min
 pq-verify --slhdsa-siggen      # + SLH-DSA sigGen, 624 signatures, ~30 min
 pq-verify --fndsa              # FN-DSA verification, FIPS 206 DRAFT track, ~1 s
 pq-verify --mceliece           # Classic McEliece reference vs the KATs, NOT a FIPS standard
+pq-verify --hqc                # HQC's error-correcting code vs the submitters' decoders, ~2 s
 ```
 
 That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
@@ -300,6 +301,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 | PQClean Classic McEliece, all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding; 8 mutants | 404/404; every mutant caught |
+| PQClean HQC and the submitters' reference (v5.0.0 and next-release), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words; 9 mutants | 5,349/5,349; every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
 vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
@@ -408,6 +410,43 @@ about the scheme's security: its cryptanalysis is active (key-recovery cost
 estimates were published in 2025–2026 and disputed by the submitters), so
 whether to deploy it, and with which parameter set, follows current agency
 guidance such as BSI's TR-02102-1.
+
+### Standard not final: HQC's error-correcting code
+
+HQC was selected by NIST in March 2025; its standard is not final. pq-verify
+checks its code layer on a track of its own (`track: "hqc"`), never part of a
+FIPS verdict: the Reed–Solomon code over GF(2⁸) concatenated with a duplicated
+Reed–Muller RM(1,7) that decryption decodes. Not the KEM around it.
+
+The decoder is audited on its own because nothing else reaches it. Honest
+decryptions rarely put more than two errors in front of the outer decoder, and
+decapsulation re-encrypts, so no ciphertext, honest or built, can drive the
+decoder into a corner and show its answer. A decoder bug that only bites on
+rare error patterns passes every KAT and every round trip.
+
+`pq-verify --hqc` holds pq-verify's reference to the submitters' published
+generator polynomials and to their own decoders' answers on its built vectors,
+for HQC v5.0.0 (whose code layer is the 2023 submission's) and the unreleased
+next-release branch (a different field polynomial and bit order).
+
+`pq-verify --audit-hqc lib.so HQC-1` calls a library's encoder and decoder
+functions directly (`reed_solomon_*`, `reed_muller_*`, `code_*`; `--hqc-profile
+next` for the next-release code):
+
+| Stage | What |
+|---|---|
+| encode | Reed–Solomon, Reed–Muller and concatenated encoders, byte for byte |
+| rm-decode | every codeword; noise up to the radius; blocks between two codewords at every distance up to the radius; ties broken to the lowest index, as the submitters' code does (equidistant blocks, and the GF(2⁷) inversion word, tied 14 ways); one exact copy outvoting noisy ones; random blocks. Each answer exact |
+| rs-decode | random errors up to the radius δ, all in the parity or all in the message part, and patterns whose leading Hankel minors vanish: the Berlekamp–Massey branch random patterns rarely reach |
+| code-decode | whole received words within both radii → the message |
+| bounds | no call writes outside its output buffer |
+
+Built vectors, not random ones: four planted Berlekamp–Massey bugs fail on
+5–9% of random full-weight error patterns and essentially never on honest
+decryptions; the Hankel-built patterns trigger three of them every time
+([AUDITS.md](AUDITS.md)). liboqs builds these functions with hidden
+visibility, so its shared library cannot be audited this way: build its HQC
+sources with default visibility. Not a side-channel review.
 
 ---
 

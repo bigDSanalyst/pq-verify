@@ -5,6 +5,35 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — HQC's error-correcting code (HQC's standard is not final)
+
+- **`pq-verify --hqc`**: pq-verify's own reference for HQC's code layer
+  (`pq_verify/hqc.py`: GF(2⁸), the Reed–Solomon code and a Berlekamp–Massey /
+  Forney decoder, the duplicated Reed–Muller RM(1,7) code and an exact
+  maximum-likelihood decoder with the submitters' lowest-index tie rule),
+  held to the generator polynomials the submitters publish and to their own
+  reference decoders' answers on a fixed-seed suite of built vectors, pinned
+  as digests (`tools/pin_hqc_vectors.py`): 61/61 in about 2 s. Two code
+  profiles: v5 (HQC v5.0.0, whose code layer PQClean's 2023 submission
+  shares, verified on the same suite) and next (the submitters' unreleased
+  next-release branch: a new field polynomial, generator x + 1, and
+  Reed–Muller bytes stored most-significant bit first).
+- **`pq-verify --audit-hqc PATH SET`** (with `--hqc-profile`, `--hqc-symbol`,
+  `--hqc-seed`, `--symbol-prefix`): a library's own encoder and decoder
+  functions, called directly, because decapsulation's re-encryption hides
+  the decoder from any KEM-level test. Every codeword; blocks between two
+  codewords at every distance up to the inner radius; ties (including the
+  GF(2⁷) inversion word, tied 14 ways); one exact copy outvoting noisy ones;
+  Reed–Solomon error patterns whose leading Hankel minors vanish (the
+  Berlekamp–Massey branch random patterns rarely reach); whole received
+  words; guard bytes around every output. Each answer exact.
+- **PQClean's HQC and the submitters' reference (v5.0.0 and next-release)
+  are pinned and re-audited in CI**, HQC-1/3/5: 5,349/5,349, and nine planted
+  decoder bugs are all caught. Three of them fail on 5–9% of random
+  full-weight error patterns and on every Hankel-built one.
+- Its own track everywhere (`track: "hqc"`), never part of a FIPS 203/204/205
+  verdict; the KEM around the code is not covered.
+
 ### Added — Classic McEliece (round 4; not a FIPS standard)
 
 - **`pq-verify --mceliece`**: pq-verify's own Classic McEliece reference

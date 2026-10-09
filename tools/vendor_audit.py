@@ -64,6 +64,9 @@ FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audi
 FNDSA_BUILDS = ("pqclean-falcon", "liboqs")
 FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
 MCE_BEGIN, MCE_END = "<!-- vendor-audits-mceliece:begin -->", "<!-- vendor-audits-mceliece:end -->"
+HQC_BEGIN, HQC_END = "<!-- vendor-audits-hqc:begin -->", "<!-- vendor-audits-hqc:end -->"
+HQC_BUILDS = ("pqclean-hqc", "hqc-ref", "hqc-avx256")
+HQC_STAGES = ("encode", "rm-decode", "rs-decode", "code-decode", "bounds")
 MCE_BUILDS = ("pqclean-mceliece",)
 MCE_STAGES = ("keyGen", "encaps", "decaps", "padding")
 
@@ -256,6 +259,11 @@ def load_mceliece_table(path=TABLE):
         return json.load(fh).get("mceliece_audits", [])
 
 
+def load_hqc_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("hqc_audits", [])
+
+
 def build_mceliece(recipe, src, param_set, out_dir, tag=""):
     """Compile one Classic McEliece parameter set. Encapsulation draws its
     error vector from the system RNG: it is audited for validity and
@@ -270,6 +278,60 @@ def build_mceliece(recipe, src, param_set, out_dir, tag=""):
                str(common / "fips202.c"), str(common / "aes.c"), str(common / "randombytes.c")]
     else:
         raise ValueError(f"unknown Classic McEliece build recipe {recipe!r}")
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
+HQC_DIRS = {"HQC-1": ("hqc-128", "hqc-1"), "HQC-3": ("hqc-192", "hqc-3"),
+            "HQC-5": ("hqc-256", "hqc-5")}
+_RANDOMBYTES_STUB = """#include <stddef.h>
+#include <stdint.h>
+#include <sys/random.h>
+int randombytes(uint8_t *out, size_t n) {
+    while (n) { ssize_t r = getrandom(out, n, 0); if (r <= 0) return -1; out += r; n -= (size_t)r; }
+    return 0;
+}
+"""
+
+
+def build_hqc(recipe, src, param_set, out_dir, tag=""):
+    """Compile one HQC parameter set with its decoder symbols visible.
+    pqclean-hqc: PQClean's clean code (the 2023-04-30 submission).
+    hqc-ref / hqc-avx256: the submitters' repository, as its CMake build
+    assembles each variant (src/common, the architecture's sources, the
+    set's headers, lib/fips202). Releases from next-release on declare
+    randombytes() without defining it; a getrandom() stub is linked then.
+    The submitters' code is built at -O3, as their CMake does. The decoder
+    is deterministic, so no randomness harness is needed."""
+    old, new = HQC_DIRS[param_set]
+    so = Path(out_dir) / f"{recipe}-{new}{tag}.so"
+    src = Path(src)
+    cc = os.environ.get("CC", "gcc")
+    if recipe == "pqclean-hqc":
+        d, common = src / "crypto_kem" / old / "clean", src / "common"
+        cmd = [cc, "-O2", "-fPIC", "-shared", "-w", "-I", str(common), "-I", str(d),
+               "-o", str(so), *sorted(str(p) for p in d.glob("*.c")),
+               str(common / "fips202.c"), str(common / "randombytes.c")]
+    elif recipe in ("hqc-ref", "hqc-avx256"):
+        s = src / "src"
+        if recipe == "hqc-ref":
+            arch = plat = s / "ref"
+            flags = []
+        else:
+            arch, plat = s / "x86_64" / "common", s / "x86_64" / "avx256"
+            flags = ["-mavx", "-mavx2", "-mbmi", "-mpclmul"]
+        dirs = [s / "common", s / "common" / new, arch, arch / new, plat, plat / new,
+                src / "lib" / "fips202"]
+        files = sorted({str(p) for d in (s / "common", arch, arch / new, plat, plat / new)
+                        for p in d.glob("*.c")}) + [str(src / "lib" / "fips202" / "fips202.c")]
+        if (s / "common" / "randombytes.h").exists():
+            stub = Path(out_dir) / "pqv_randombytes_stub.c"
+            stub.write_text(_RANDOMBYTES_STUB)
+            files.append(str(stub))
+        cmd = [cc, "-O3", "-fPIC", "-shared", "-w", *flags,
+               *[f"-I{d}" for d in dirs], "-o", str(so), *files]
+    else:
+        raise ValueError(f"unknown HQC build recipe {recipe!r}")
     subprocess.run(cmd, check=True, capture_output=True)
     return str(so)
 
@@ -340,6 +402,17 @@ def audit_mceliece(so, param_set, prefix=None):
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
             "not_applicable": r["not_applicable_total"]}
+
+
+def audit_hqc(so, param_set, profile, seed, prefix=None):
+    sys.path.insert(0, str(REPO))
+    from pq_verify.hqc_audit import pqverify_audit_hqc
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_hqc(so, param_set, verbose=False, prefix=prefix,
+                               profile=profile, seed=seed)
+    if r is None:
+        return None
+    return {"results": {k: list(v) for k, v in r["detail"].items()}}
 
 
 def audit_ct(so, param_set, prefix=None):
@@ -772,6 +845,70 @@ def check_mceliece(rows, workdir):
     return 0
 
 
+def check_hqc(rows, workdir):
+    """HQC's code layer (standard not final): each row's sets as recorded --
+    a row may record findings, the library's own defects, which must then
+    reproduce exactly -- and every mutant failed in the stages it names."""
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / f"hqc-{row['build']}" / row["commit"][:12]
+        try:
+            if not (src / ".git").exists():
+                fetch(row["url"], row["commit"], src)
+        except Exception as e:
+            print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: fetch failed: {e}")
+            return 2
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps}"
+            try:
+                so = build_hqc(row["build"], src, ps, workdir, tag=f"-{row['commit'][:7]}")
+            except subprocess.CalledProcessError as e:
+                print(f"  ERROR  {label}: build failed\n{e.stderr.decode()[-2000:]}")
+                return 2
+            got = audit_hqc(so, ps, row["profile"], row["seed"], prefix_for(row, ps))
+            want = {"results": row["results"][ps]}
+            if got == want:
+                p, t = total(got["results"])
+                print(f"  ok     {label}: {p}/{t}, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}")
+            if got is None:
+                print("         pq-verify could not audit it (entry points not resolved)")
+                continue
+            for st in sorted(set(got["results"]) | set(want["results"])):
+                if got["results"].get(st) != want["results"].get(st):
+                    print(f"         {st:11s} recorded {want['results'].get(st)}  "
+                          f"now {got['results'].get(st)}")
+        for i, m in enumerate(row.get("mutants", [])):
+            label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / f"hqc-{row['build']}")
+                so = build_hqc(row["build"], msrc, m["set"], workdir, tag=f"-hqcmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got = audit_hqc(so, m["set"], row["profile"], row["seed"],
+                            prefix_for(row, m["set"], m))
+            missed = [f"{st} {p}/{t}" for st in m["fails"]
+                      for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                      if not (t and p < t)]
+            if got is not None and not missed:
+                bad = sorted(st for st, (p, t) in got["results"].items() if p < t)
+                print(f"  caught {label}: fails {', '.join(bad)}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: the audit did not fail "
+                  + (", ".join(missed) if got else "(could not audit it)")
+                  + ". pq-verify cannot see this bug class.")
+    if failures:
+        print(f"\n  {failures} HQC row(s) or mutant(s) differ. Fix the regression, or, if "
+              f"intended, update tools/vendor_audits.json and AUDITS.md in the same PR "
+              f"and say why.")
+        return 1
+    return 0
+
+
 # ─────────────────────────────── table ───────────────────────────────
 
 def edge_total(row):
@@ -904,18 +1041,43 @@ def mceliece_markdown(rows):
     return "\n".join(lines)
 
 
+def hqc_markdown(rows):
+    lines = ["| Library | Commit | Profile | Sets | encode | rm-decode | rs-decode "
+             "| code-decode | bounds | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        def cell(stage):
+            p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
+            t = sum(row["results"][ps].get(stage, [0, 0])[1] for ps in row["sets"])
+            return (f"{p}/{t}" if p == t else f"**{p}/{t}**") if t else "—"
+        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
+                for i in (0, 1))
+        muts = row.get("mutants", [])
+        url = (f"{row['url'].removesuffix('.git')}/-/commit/{row['commit']}"
+               if "gitlab.com" in row["url"] else f"{row['url']}/commit/{row['commit']}")
+        lines.append(" | ".join([
+            f"| {row['library']}", f"[`{row['commit'][:7]}`]({url}) ({row['date']})",
+            row["profile"], ", ".join(row["sets"]), cell("encode"), cell("rm-decode"),
+            cell("rs-decode"), cell("code-decode"), cell("bounds"),
+            f"{len(muts)}/{len(muts)}" if muts else "—",
+            f"{p:,}/{t:,} {'**VERIFIED**' if p == t else '**findings**'} |"]))
+    return "\n".join(lines)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--markdown", action="store_true",
                     help="print the AUDITS.md table from the pinned rows; no build")
     ap.add_argument("--workdir", help="where to fetch and build (default: a "
                                       "temporary directory, removed afterwards)")
-    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA", "McEliece"),
+    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA", "McEliece",
+                                       "HQC"),
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
     rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
     fndsa_rows = load_fndsa_table()
     mce_rows = load_mceliece_table()
+    hqc_rows = load_hqc_table()
     if a.markdown:
         print(markdown(rows))
         print()
@@ -926,6 +1088,8 @@ def main(argv=None):
         print(fndsa_markdown(fndsa_rows))
         print()
         print(mceliece_markdown(mce_rows))
+        print()
+        print(hqc_markdown(hqc_rows))
         return 0
 
     def run(work):
@@ -941,6 +1105,8 @@ def main(argv=None):
             code = max(code, check_fndsa(fndsa_rows, work))
         if a.only in (None, "McEliece"):
             code = max(code, check_mceliece(mce_rows, work))
+        if a.only in (None, "HQC"):
+            code = max(code, check_hqc(hqc_rows, work))
         return code
     if a.workdir:
         return run(a.workdir)
