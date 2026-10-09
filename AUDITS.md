@@ -131,6 +131,7 @@ API and, beside it, each backend it dispatches to:
 | ML-KEM | `OQS_KEM_ml_kem_{512,768,1024}_*` | mlkem-native C and x86-64 (`PQCP_MLKEM_NATIVE_MLKEM768_{C,X86_64}_*`) |
 | ML-DSA | `OQS_SIG_ml_dsa_{44,65,87}_*` | mldsa-native C and x86-64, with its full internal API |
 | Falcon | `OQS_SIG_falcon{,_padded}_{512,1024}_*` | none (PQClean's code is not exported) |
+| Classic McEliece (not FIPS) | `OQS_KEM_classic_mceliece_*` | none (only the AVX2 backend's assembly helpers are); audited in two builds of its own, [below](#classic-mceliece-library-audit--not-a-fips-standard-with-mutants) |
 
 pq-verify refuses to choose between them and lists them;
 `--symbol-prefix` names one. Each is audited separately, because the public
@@ -674,21 +675,42 @@ its own key pairs:
 | Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) | padding | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|
 | PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 8/8 | 404/404 **VERIFIED** |
+| liboqs 0.16.0 — Classic McEliece, OQS API (distribution build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 6/6 | 404/404 **VERIFIED** |
+| liboqs 0.16.0 — Classic McEliece, OQS API (portable build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 3/3 | 404/404 **VERIFIED** |
 <!-- vendor-audits-mceliece:end -->
 
-Each mutant plants one bug in PQClean's source and CI requires the audit to
-fail it in the stage named: a decoder that accepts any weight whose syndrome
+**liboqs 0.16.0** is audited through its public API, `OQS_KEM_classic_mceliece_*`,
+in a build with only the ten Classic McEliece sets. Its backends' C entry
+points are not exported, so the API is the only way in, and it runs one
+backend: on a CPU with AVX2 and POPCNT the distribution build
+(`OQS_DIST_BUILD=ON`) dispatches to the AVX2 code, while the portable build
+(`OQS_OPT_TARGET=generic`) compiles the clean code alone. Both are pinned
+rows, so each backend is audited, on all ten sets. Its `keypair_derand` and
+`encaps_derand` exports are stubs that return an error, and the audit does
+not bind them: key pairs are regenerated from the seed in the private key,
+so no control over liboqs's randomness is needed.
+
+Each mutant plants one bug in the source and CI requires the audit to fail
+it in the stage named. In PQClean: a decoder that accepts any weight whose syndrome
 matches (caught by the t − 1 and C = 0 cases; the first version of this audit
 missed it on most keys, because the reference's fixed-degree locator gives a
 spurious root at the zero element that the syndrome check then rejects, which
 is why the through-zero cases exist), implicit rejection hashing the
 decoder's output instead of s, or with prefix 1; a key generator storing a
 zero s, or (f variant) no pivots; encapsulation hashing with prefix 0; and,
-for 6960119, decapsulation and encapsulation ignoring padding bits.
+for 6960119, decapsulation and encapsulation ignoring padding bits. In
+liboqs, on the AVX2 path: the AVX2 decoder's weight check passing any weight,
+implicit rejection hashing the decoder's output, encapsulation hashing with
+prefix 0, the f variant recording no pivots, decapsulation ignoring the
+ciphertext's padding bits, and liboqs's own wrapper turning the backend's
+refusal into success (a 6960119 ciphertext with a padding bit set is then
+accepted); on the clean path: the decoder accepting any weight, the same
+wrapper bug for 6960119f, and encapsulation ignoring the public key's padding
+bits. That the AVX2 mutants fail the distribution build and the clean ones
+the portable build shows each row runs the backend it names.
 
 Not covered: the distribution of encapsulation's error vectors (only their
-weight, validity and repetition), constant time, and liboqs's Classic
-McEliece (its symbol names are recognised; it is not yet a pinned row).
+weight, validity and repetition), and constant time.
 
 ## HQC decoder audit — standard not final, with mutants
 

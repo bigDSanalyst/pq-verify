@@ -64,6 +64,14 @@ versioning](https://semver.org/spec/v2.0.0.html).
   404/404, and eight planted bugs (a decoder accepting any weight, implicit
   rejection hashing the wrong string or prefix, a zero `s`, missing pivots,
   the wrong encapsulation prefix, padding ignored twice) are all caught.
+- **liboqs 0.16.0's Classic McEliece is pinned too**, through its public API
+  in two builds: the distribution build, whose API runs the AVX2 backend on
+  CI's runner, and the portable one, which has only the clean backend (the
+  backends' own entry points are not exported). 404/404 each, and nine planted
+  bugs caught, two of them in liboqs's wrapper (it turns the backend's refusal
+  of a padded ciphertext into success). `tools/vendor_audit.py` builds liboqs
+  per configuration: the McEliece sets apart from the other rows, dist or
+  generic.
 - Its own track everywhere (`track: "classic-mceliece"`), never part of a FIPS
   203/204/205 verdict, and a check of correctness, not of the scheme's
   security (its cryptanalysis is active; deployment follows agency guidance).

@@ -300,7 +300,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
-| PQClean Classic McEliece, all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding; 8 mutants | 404/404; every mutant caught |
+| PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding; 17 mutants, including liboqs's wrapper | 404/404 each; every mutant caught |
 | PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words; 9 mutants | references 5,349/5,349; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](AUDITS.md)); every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP

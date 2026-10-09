@@ -2565,6 +2565,466 @@
           ]
         }
       ]
+    },
+    {
+      "library": "liboqs 0.16.0 — Classic McEliece, OQS API (distribution build)",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "OQS_DIST_BUILD: the public API runs the AVX2 backend on an AVX2/POPCNT CPU, as CI's runner is; the backends' own entry points are not exported",
+      "build": "liboqs",
+      "prefix": "OQS_KEM_classic_mceliece_",
+      "sets": [
+        "mceliece348864",
+        "mceliece348864f",
+        "mceliece460896",
+        "mceliece460896f",
+        "mceliece6688128",
+        "mceliece6688128f",
+        "mceliece6960119",
+        "mceliece6960119f",
+        "mceliece8192128",
+        "mceliece8192128f"
+      ],
+      "not_applicable": {
+        "mceliece348864": 0,
+        "mceliece348864f": 0,
+        "mceliece460896": 0,
+        "mceliece460896f": 0,
+        "mceliece6688128": 0,
+        "mceliece6688128f": 0,
+        "mceliece6960119": 0,
+        "mceliece6960119f": 0,
+        "mceliece8192128": 0,
+        "mceliece8192128f": 0
+      },
+      "results": {
+        "mceliece348864": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece348864f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6960119": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece6960119f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece8192128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece8192128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "the AVX2 decoder's weight check passes any weight",
+          "set": "mceliece348864",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece348864_avx2/decrypt.c",
+          "find": "check = (w0 ^ SYS_T) | (w1 ^ SYS_T);",
+          "replace": "check = 0;",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "AVX2 implicit rejection hashes the decoder's output instead of s",
+          "set": "mceliece348864",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece348864_avx2/operations.c",
+          "find": "*x++ = (~m & s[i]) | (m & e[i]);",
+          "replace": "*x++ = e[i];",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "AVX2 encapsulation hashes with prefix 0",
+          "set": "mceliece460896",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece460896_avx2/operations.c",
+          "find": "unsigned char one_ec[ 1 + SYS_N / 8 + SYND_BYTES ] = {1};",
+          "replace": "unsigned char one_ec[ 1 + SYS_N / 8 + SYND_BYTES ] = {0};",
+          "fails": [
+            "encaps"
+          ]
+        },
+        {
+          "name": "the AVX2 f variant's private key records no pivots",
+          "set": "mceliece348864f",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece348864f_avx2/operations.c",
+          "find": "store8(sk + 32, pivots);",
+          "replace": "store8(sk + 32, 0xFFFFFFFF);",
+          "fails": [
+            "keyGen"
+          ]
+        },
+        {
+          "name": "AVX2 decapsulation ignores the ciphertext's padding bits",
+          "set": "mceliece6960119",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece6960119_avx2/operations.c",
+          "find": "padding_ok = check_c_padding(c);",
+          "replace": "padding_ok = 0;",
+          "fails": [
+            "padding"
+          ]
+        },
+        {
+          "name": "liboqs's wrapper turns the AVX2 backend's refusal into success",
+          "set": "mceliece6960119",
+          "file": "src/kem/classic_mceliece/kem_classic_mceliece_6960119.c",
+          "find": "\t\treturn (OQS_STATUS) PQCLEAN_MCELIECE6960119_AVX2_crypto_kem_dec(shared_secret, ciphertext, secret_key);",
+          "replace": "\t\t(void) PQCLEAN_MCELIECE6960119_AVX2_crypto_kem_dec(shared_secret, ciphertext, secret_key);\n\t\treturn OQS_SUCCESS;",
+          "fails": [
+            "padding"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — Classic McEliece, OQS API (portable build)",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "OQS_OPT_TARGET=generic, no OQS_DIST_BUILD: the AVX2 backends are not compiled, so the public API runs the clean ones",
+      "build": "liboqs-generic",
+      "prefix": "OQS_KEM_classic_mceliece_",
+      "sets": [
+        "mceliece348864",
+        "mceliece348864f",
+        "mceliece460896",
+        "mceliece460896f",
+        "mceliece6688128",
+        "mceliece6688128f",
+        "mceliece6960119",
+        "mceliece6960119f",
+        "mceliece8192128",
+        "mceliece8192128f"
+      ],
+      "not_applicable": {
+        "mceliece348864": 0,
+        "mceliece348864f": 0,
+        "mceliece460896": 0,
+        "mceliece460896f": 0,
+        "mceliece6688128": 0,
+        "mceliece6688128f": 0,
+        "mceliece6960119": 0,
+        "mceliece6960119f": 0,
+        "mceliece8192128": 0,
+        "mceliece8192128f": 0
+      },
+      "results": {
+        "mceliece348864": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece348864f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece460896f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6688128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece6960119": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece6960119f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ],
+          "padding": [
+            2,
+            2
+          ]
+        },
+        "mceliece8192128": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        },
+        "mceliece8192128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "encaps": [
+            6,
+            6
+          ],
+          "decaps": [
+            24,
+            24
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "the clean decoder accepts any weight whose syndrome matches",
+          "set": "mceliece8192128",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece8192128_clean/decrypt.c",
+          "find": "check ^= SYS_T;",
+          "replace": "check ^= w;",
+          "fails": [
+            "decaps"
+          ]
+        },
+        {
+          "name": "liboqs's wrapper turns the clean backend's refusal into success",
+          "set": "mceliece6960119f",
+          "file": "src/kem/classic_mceliece/kem_classic_mceliece_6960119f.c",
+          "find": "#else\n\treturn (OQS_STATUS) PQCLEAN_MCELIECE6960119F_CLEAN_crypto_kem_dec(shared_secret, ciphertext, secret_key);",
+          "replace": "#else\n\t(void) PQCLEAN_MCELIECE6960119F_CLEAN_crypto_kem_dec(shared_secret, ciphertext, secret_key);\n\treturn OQS_SUCCESS;",
+          "fails": [
+            "padding"
+          ]
+        },
+        {
+          "name": "clean encapsulation ignores the public key's padding bits",
+          "set": "mceliece6960119f",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece6960119f_clean/operations.c",
+          "find": "padding_ok = check_pk_padding(pk);",
+          "replace": "padding_ok = 0;",
+          "fails": [
+            "padding"
+          ]
+        }
+      ]
     }
   ],
   "hqc_audits": [
