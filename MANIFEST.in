@@ -1,6 +1,8 @@
 include README.md
 include LICENSE
 include QUICKSTART.md
+include ARCHITECTURE.md
+include HYBRID.md
 include DEMO.ipynb
 include vendor_audit_template.py
 include sample_report.json
