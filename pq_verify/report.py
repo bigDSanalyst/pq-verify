@@ -628,8 +628,29 @@ def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
                              for k, v in (result.get("not_applicable") or {}).items()}
     fails = result.get("failures") or []
     findings = []
+    ct = result.get("constant_time")
+    if ct:
+        doc["constant_time"] = ct
+        if "unavailable" not in ct:
+            doc.setdefault("side_channel", {})["constant_time_checked"] = {
+                "operations": sorted(ct["stages"]), "tool": ct.get("tool"),
+                "scope": ("secret-dependent branches and memory addresses in this "
+                          "binary, by Valgrind memcheck taint, outside the function "
+                          "that draws encapsulation's randomness (listed, not "
+                          "judged); not key generation, instruction timing, power, "
+                          "EM or microarchitecture"),
+                "leak_free": all(p == t for p, t in ct["stages"].values())}
     for k, v in (result.get("detail") or {}).items():
-        if v[0] != v[1]:
+        if v[0] != v[1] and k.startswith("ct:"):
+            if ct and "unavailable" in ct:
+                findings.append(f"constant time: requested but could not run "
+                                f"({ct['unavailable']})")
+            else:
+                where = "; ".join(f"{lk['kind']} in {lk['function']}"
+                                  for lk in (ct or {}).get("leaks", {}).get(k[3:], []))
+                findings.append(f"Classic McEliece: stage {k}: secret-dependent behaviour "
+                                f"under Valgrind memcheck: {where}")
+        elif v[0] != v[1]:
             first = next((f for f in fails if f["stage"] == k), None)
             where = f"; first: {first['case']}: {first['detail']}" if first else ""
             findings.append(f"Classic McEliece: stage {k}: {v[0]}/{v[1]}{where}")

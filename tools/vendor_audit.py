@@ -430,6 +430,18 @@ def audit_hqc(so, param_set, profile, seed, prefix=None):
     return {"results": {k: list(v) for k, v in r["detail"].items()}}
 
 
+def audit_ct_mceliece(so, param_set, prefix=None):
+    """--audit-mceliece's constant-time stages alone: ({stage: [p, t]}, leaks)."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.mceliece_audit import VendorMcEliece, constant_time
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = constant_time(VendorMcEliece(so, param_set, prefix=prefix))
+    stages = {f"ct:{op}": list(v) for op, v in r["stages"].items()}
+    leaks = {f"ct:{op}": [f"{x['kind']} in {x['function']}" for x in r["leaks"][op]]
+             for op in r["leaks"]}
+    return stages, leaks
+
+
 def audit_ct(so, param_set, prefix=None):
     """The --constant-time stages alone: {stage: [p, t]} and the leaks."""
     sys.path.insert(0, str(REPO))
@@ -925,6 +937,53 @@ def check_hqc(rows, workdir):
     return 0
 
 
+def check_mceliece_ct(rows, workdir):
+    """Classic McEliece rows' "ct" results, and every "ct_mutants" leak caught."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        print(f"  ERROR  constant-time rows cannot run: {why}")
+        return 2
+    failures = 0
+    for row in rows:
+        if "ct" not in row:
+            continue
+        tree = "liboqs" if row["build"].startswith("liboqs") else row["build"]
+        src = Path(workdir) / tree / row["commit"][:12]
+        if not (src / ".git").exists():
+            fetch(row["url"], row["commit"], src)
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
+            got, leaks = audit_ct_mceliece(build_mceliece(row["build"], src, ps, workdir),
+                                           ps, prefix_for(row, ps))
+            if got == row["ct"][ps]:
+                print(f"  ok     {label}: no secret-dependent branch or address, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}: recorded {row['ct'][ps]}  now {got}  {leaks}")
+        for i, m in enumerate(row.get("ct_mutants", [])):
+            label = f"{row['library']} ct mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build_mceliece(row["build"], msrc, m["set"], workdir, tag=f"-mcctmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got, leaks = audit_ct_mceliece(so, m["set"], prefix_for(row, m["set"], m))
+            missed = [st for st in m["fails"] if got.get(st, [0, 0])[0] == got.get(st, [0, 0])[1]]
+            if missed:
+                failures += 1
+                print(f"  MISSED {label}: {', '.join(missed)} passed. pq-verify cannot "
+                      f"see this leak.")
+            else:
+                print(f"  caught {label}: {'; '.join(x for v in leaks.values() for x in v)}")
+    if failures:
+        print(f"\n  {failures} Classic McEliece constant-time row(s) or mutant(s) differ.")
+        return 1
+    return 0
+
+
 # ─────────────────────────────── table ───────────────────────────────
 
 def edge_total(row):
@@ -1038,8 +1097,8 @@ def fndsa_markdown(rows):
 
 def mceliece_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) "
-             "| padding | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| padding | Constant time | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stage):
             p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
@@ -1047,12 +1106,16 @@ def mceliece_markdown(rows):
             return f"{p}/{t}" if t else "—"
         p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
                 for i in (0, 1))
-        muts = row.get("mutants", [])
+        muts = row.get("mutants", []) + row.get("ct_mutants", [])
+        ct = row.get("ct") or {}
+        ctp = sum(v[0] for ps in ct for v in ct[ps].values())
+        ctt = sum(v[1] for ps in ct for v in ct[ps].values())
         lines.append(" | ".join([
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             f"all {len(row['sets'])}", cell("keyGen"), cell("encaps"), cell("decaps"),
-            cell("padding"), f"{len(muts)}/{len(muts)}" if muts else "—",
+            cell("padding"), f"{ctp}/{ctt}" if ctt else "—",
+            f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
     return "\n".join(lines)
 
@@ -1121,6 +1184,7 @@ def main(argv=None):
             code = max(code, check_fndsa(fndsa_rows, work))
         if a.only in (None, "McEliece"):
             code = max(code, check_mceliece(mce_rows, work))
+            code = max(code, check_mceliece_ct(mce_rows, work))
         if a.only in (None, "HQC"):
             code = max(code, check_hqc(hqc_rows, work))
         return code

@@ -1963,7 +1963,7 @@ import pathlib as _pathlib
 import re as _re
 
 _REPO = _pathlib.Path(__file__).resolve().parent.parent
-_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md")
+_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
 
 
 def _doc_text(name):
@@ -2051,7 +2051,7 @@ def test_internal_doc_links_resolve():
     """
     import pathlib as _pl
     files = ("README.md", "QUICKSTART.md", "SECURITY.md", "CHANGELOG.md",
-             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md")
+             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
     present = {n: _pl.Path(_REPO / n) for n in files
                if (_REPO / n).exists()}
     if not present:
@@ -2084,6 +2084,38 @@ def test_internal_doc_links_resolve():
                 if not (_REPO / target).exists():
                     broken.append(f"{name}: [{label}]({target}) — file does not exist")
     assert not broken, "broken internal doc links:\n  " + "\n  ".join(broken)
+
+
+def test_limits_md_estimator_numbers_are_the_code_s(capsys):
+    """LIMITS.md quotes the pinned ML-KEM values and what the custom formula
+    gives on the same parameters. Both are numbers in the code, and a limit
+    stated with the wrong number is its own overclaim."""
+    from pq_verify.core import _STANDARD_PARAMS, pqverify_params
+    text = _doc_text("LIMITS.md")
+    pinned = [_STANDARD_PARAMS[f"ML-KEM-{n}"] for n in (512, 768, 1024)]
+    assert "β = {}, {} and {}".format(*(p["_auth_beta"] for p in pinned)) in text
+    assert "{}, {} and {} core-SVP bits".format(*(p["_auth_cl"] for p in pinned)) in text
+    custom = [pqverify_params(n=p["n"], q=p["q"], sigma_s=p["ss"], sigma_e=p["se"])["beta"]
+              for p in pinned[1:]]
+    assert "β = {} and {}, against".format(*custom) in text
+    assert custom != [p["_auth_beta"] for p in pinned[1:]], (
+        "the formula now matches; LIMITS.md should stop calling it close, not exact")
+    assert pqverify_params(n=512, q=3329, sigma_s=1.2247, sigma_e=1.2247)["beta"] == 406
+    capsys.readouterr()
+
+
+def test_limits_md_names_every_audit_constant_time_covers():
+    """The constant-time table in LIMITS.md lists the audits the CLI lets
+    --constant-time run with; a new one must be added there too."""
+    from pq_verify import cli
+    import inspect
+    src = inspect.getsource(cli)
+    allowed = _re.search(r'"--constant-time": "([^"]+)"', src).group(1)
+    flags = _re.findall(r"--audit-[a-z]+", allowed)
+    assert flags, allowed
+    text = _doc_text("LIMITS.md")
+    table = text.split("`--constant-time` is the exception", 1)[1].split("\n\n", 2)[1]
+    assert sorted(_re.findall(r"^\| `(--audit-[a-z]+)`", table, _re.M)) == sorted(flags)
 
 
 # ----------------------------------------------------------------------
@@ -6278,3 +6310,99 @@ def test_hqc_vendor_rows_and_mutants_are_well_formed_and_published():
     assert published == mod.hqc_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the HQC table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-hqc markers")
+
+
+# ----------------------------------------------------------------------
+# --audit-mceliece --constant-time: Encaps and Decaps under memcheck.
+# tests/data/ct_mceliece_shim.c is a fake KEM with mceliece348864's sizes,
+# a sampler that rejection-samples its own randomness, and planted leaks.
+# ----------------------------------------------------------------------
+
+def _ct_mce(tmp_path, define=None):
+    import shutil, subprocess
+    from pq_verify.ct_audit import available
+    from pq_verify.mceliece_audit import VendorMcEliece, constant_time
+    why = available()
+    if why:
+        pytest.skip(why)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"ctmce_{define or 'clean'}.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared",
+                    *([f"-D{define}"] if define else []), "-o", str(so),
+                    str(root / "tests" / "data" / "ct_mceliece_shim.c")],
+                   check=True, capture_output=True)
+    v = VendorMcEliece(str(so), "mceliece348864", symbols={
+        "keypair": "shim_mce_keypair", "enc": "shim_mce_enc", "dec": "shim_mce_dec"})
+    return constant_time(v)
+
+
+def test_mceliece_constant_time_lists_the_sampler_and_passes_a_clean_library(tmp_path):
+    """The sampler's branch on its own fresh randomness is listed, not
+    judged: rejection sampling, which the submitters declassify."""
+    r = _ct_mce(tmp_path)
+    assert r["stages"] == {"encaps": (1, 1), "decaps": (1, 1)}, r["leaks"]
+    assert [(s["kind"], s["function"]) for s in r["sampling"]["encaps"]] == [
+        ("branch on a secret", "sample")]
+    assert not r["sampling"]["decaps"] and "keyGen" in r["not_applicable"]
+
+
+@pytest.mark.parametrize("define,op,kind,fn", [
+    ("LEAK_ENC_BRANCH", "encaps", "branch on a secret", "shim_mce_enc"),
+    ("LEAK_DEC_BRANCH", "decaps", "branch on a secret", "shim_mce_dec"),
+    ("LEAK_DEC_INDEX", "decaps", "secret used as a memory address", "shim_mce_dec")])
+def test_mceliece_constant_time_catches_leaks_outside_the_sampler(tmp_path, define, op,
+                                                                  kind, fn):
+    r = _ct_mce(tmp_path, define)
+    assert r["stages"][op] == (0, 1)
+    assert (kind, fn) in [(l["kind"], l["function"]) for l in r["leaks"][op]]
+
+
+def test_mceliece_constant_time_refuses_randomness_it_does_not_control(tmp_path):
+    """Encapsulation that draws nothing through the driver's randombytes()
+    was not checked with its randomness secret: unavailable, never a pass."""
+    from pq_verify.ct_audit import Unavailable
+    with pytest.raises(Unavailable, match="no randomness through the driver"):
+        _ct_mce(tmp_path, "NO_RNG")
+
+
+def test_mceliece_constant_time_classifies_only_with_symbols():
+    """A report counts as the sampler's only when it sits in the library
+    function that drew the randomness; without symbols nothing is excused."""
+    from pq_verify.ct_audit import _classify
+    lib = "/lib/x.so"
+    drew = [("randombytes", "/drv"), ("gen_e", lib), ("enc", lib)]
+    errs = [("UninitCondition", [("gen_e", lib), ("enc", lib)], drew),
+            ("UninitValue", [("syndrome", lib), ("enc", lib)], drew),
+            ("UninitCondition", [("??", lib)], [("randombytes", "/drv"), ("??", lib)]),
+            ("UninitCondition", [("dec", lib)], [("main", "/drv")])]
+    leaks, sampling = _classify(errs, lib)
+    assert sampling == {("UninitCondition", "gen_e"): 1}
+    assert set(leaks) == {("UninitValue", "syndrome"), ("UninitCondition", "??"),
+                          ("UninitCondition", "dec")}
+
+
+def test_mceliece_constant_time_unavailable_is_a_finding():
+    from pq_verify.report import to_json_mceliece_audit
+    doc = to_json_mceliece_audit({"verified": False, "passed": 40, "total": 41,
+                                  "detail": {"keyGen": (10, 10), "encaps": (6, 6),
+                                             "decaps": (24, 24), "ct:unavailable": (0, 1)},
+                                  "constant_time": {"unavailable": "valgrind is not installed"}},
+                                 param_set="mceliece348864")
+    assert any("could not run" in f for f in doc["findings"])
+    assert "constant_time_checked" not in doc.get("side_channel", {})
+
+
+def test_constant_time_flag_names_both_audits():
+    code, out = _cli("--constant-time", "--acvp")
+    assert code == 2 and "--audit-kem or --audit-mceliece" in out
+
+
+def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
+    mod, _ = _vendor_audit()
+    for row in mod.load_mceliece_table():
+        assert set(row["ct"]) == set(row["sets"]), row["library"]
+        for ps in row["sets"]:
+            assert set(row["ct"][ps]) == {"ct:encaps", "ct:decaps"}
+        for m in row.get("ct_mutants", []):
+            assert m["set"] in row["sets"] and m["fails"]
+            assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}, m["name"]

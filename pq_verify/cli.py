@@ -246,10 +246,10 @@ def build_parser():
                         "--audit-harness './harness-circl' ML-KEM-768. COMMAND is "
                         "split like a shell command line")
     p.add_argument("--constant-time", action="store_true",
-                   help="with --audit-kem: run Encaps and Decaps under Valgrind memcheck "
-                        "with the secret inputs marked, and fail on any branch or "
-                        "memory access that depends on them (Linux, needs valgrind). "
-                        "Not a measurement of timing, power or EM")
+                   help="with --audit-kem or --audit-mceliece: run Encaps and Decaps "
+                        "under Valgrind memcheck with the secret inputs marked, and fail "
+                        "on any branch or memory access that depends on them (Linux, "
+                        "needs valgrind). Not a measurement of timing, power or EM")
     p.add_argument("--accumulated", type=int, metavar="N",
                    help="with --audit-kem / --audit-dsa / --audit-harness: run N of C2SP "
                         "CCTV's accumulated cases (seeded random keygen/encaps/decaps or "
@@ -370,7 +370,7 @@ def main(argv=None):
             ("--hqc-seed", args.hqc_seed, args.audit_hqc),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
-            ("--constant-time", args.constant_time, args.audit_kem),
+            ("--constant-time", args.constant_time, args.audit_kem or args.audit_mceliece),
             ("--accumulated", args.accumulated is not None,
              args.audit_kem or args.audit_dsa or args.audit_harness),
             ("--kem-keypair", args.kem_keypair, args.audit_kem),
@@ -393,7 +393,7 @@ def main(argv=None):
                        "--hqc-profile": "--audit-hqc",
                        "--hqc-seed": "--audit-hqc",
                        "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
-                       "--constant-time": "--audit-kem",
+                       "--constant-time": "--audit-kem or --audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
                        "--audit-timeout": "an --audit-* task"}.get(
@@ -701,7 +701,8 @@ def main(argv=None):
         try:
             mca_result, _loaded, mca_reason = _isolated(
                 args, "pq_verify.mceliece_audit", "pqverify_audit_mceliece", _p, _ps,
-                symbols=_syms, prefix=args.symbol_prefix)
+                symbols=_syms, prefix=args.symbol_prefix,
+                constant_time_check=args.constant_time)
             _bound = _bind_loaded(mca_artifact, _loaded)
             mca_reason = mca_reason or _bound
             if mca_reason:

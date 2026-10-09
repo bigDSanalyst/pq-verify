@@ -72,6 +72,21 @@ versioning](https://semver.org/spec/v2.0.0.html).
   of a padded ciphertext into success). `tools/vendor_audit.py` builds liboqs
   per configuration: the McEliece sets apart from the other rows, dist or
   generic.
+- **`--audit-mceliece ... --constant-time`**: Decaps (the whole private key
+  secret, a valid and a random ciphertext) and Encaps (its randomness secret)
+  under Valgrind memcheck. The NIST API takes no coins, so the driver supplies
+  the randomness (`randombytes()`, `PQCLEAN_randombytes()`, liboqs's custom
+  RNG hook) and refuses an Encaps that draws none through it; keys and valid
+  ciphertexts come from the library itself, outside Valgrind, so a set takes
+  seconds. Reports inside the function that drew the randomness (the
+  error-vector sampler, whose rejection checks the submitters declassify) are
+  listed, not judged; everything else fails. PQClean and both liboqs builds:
+  clean on all ten sets (60/60), and seven planted leaks are caught, among them
+  a parity table indexed by the error vector in the syndrome, outside the
+  sampler. Two reports inside liboqs's AVX2 sampler were traced to the
+  instruction: GCC reuses the rejection flag's register as a loop counter,
+  a memcheck false positive. Key generation is not checked (declassified
+  retries, and minutes per key under memcheck).
 - Its own track everywhere (`track: "classic-mceliece"`), never part of a FIPS
   203/204/205 verdict, and a check of correctness, not of the scheme's
   security (its cryptanalysis is active; deployment follows agency guidance).
@@ -92,6 +107,24 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - The documentation guards (documented flags exist, referenced files exist,
   links and anchors resolve, the 160-check and ACVP figures match what is
   measured, the RFC 10024 table matches the registry) cover both new files.
+- **LIMITS.md**: everything pq-verify does not check, in one place — what a
+  pass is bound to (an audit-aware library, the CPU's code path, the
+  prompt/response path's `artifact: none`, hidden symbols), the schemes not
+  covered, partial coverage within covered ones, constant-time scope (ML-KEM
+  and Classic McEliece Encaps/Decaps only), parameter security, the verdict
+  classes, and which paths are proved in Coq and which are only tested. Its
+  estimator figures and its constant-time table are held to the code by tests.
+- The README's estimator row asked "Are the parameters hard enough?"; it now
+  asks what the estimator answers. ML-KEM's three sets report the
+  lattice-estimator's pinned primal-uSVP values; the formula for custom
+  parameters matches it at its calibration point (Kyber-512) and gives
+  β = 624 and 874 on ML-KEM-768's and -1024's parameters, against 630 and 864.
+  "Reproduces lattice-estimator exactly" is gone from README and
+  ARCHITECTURE.md.
+- ARCHITECTURE.md's package list names all 24 modules, `coq/`, `harness/`,
+  `vectors/` and `tools/`; the `dist/` files it listed are release assets,
+  not in the repository. AUDITS.md's scope no longer says no audit checks
+  constant time.
 
 ### Added — liboqs, audited per implementation
 

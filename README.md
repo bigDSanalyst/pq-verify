@@ -31,7 +31,7 @@ Layers of an audit:
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
 | **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
-| **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
+| **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](LIMITS.md#parameter-security)) |
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
 Plus per-layer algebraic protection allocation: which NTT layers are worth
@@ -300,7 +300,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
-| PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding; 17 mutants, including liboqs's wrapper | 404/404 each; every mutant caught |
+| PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding, **constant-time Encaps and Decaps**; 24 mutants, including liboqs's wrapper and 7 planted leaks | 404/404 each; constant time 20/20 each; every mutant caught |
 | PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words; 9 mutants | references 5,349/5,349; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](AUDITS.md)); every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
@@ -400,6 +400,7 @@ its own entry points (the NIST API, or liboqs's `OQS_KEM_classic_mceliece_*`):
 | encaps | its ciphertexts decode under pq-verify's decoder to weight exactly t, the key is SHAKE256(1 ‖ e ‖ C), its own Decap agrees, no error vector repeats |
 | decaps | ciphertexts built against its own key — weight t at random positions, in the identity part, in the T part and through the support's zero element; weight t−1 (decodable, must be rejected, also through the zero element), t+1, C = 0, random C, another key's ciphertext — each decapsulated to the exact key pq-verify computes |
 | padding | mceliece6960119 only, where mt and k end mid-byte: a ciphertext or public key with a padding bit set is refused, as the submitters' reference does |
+| ct:encaps, ct:decaps | with `--constant-time`: Decaps with the whole private key secret and Encaps with its randomness secret, under Valgrind memcheck; a secret-dependent branch or memory address fails, except inside the error-vector sampler, whose declassified rejection checks are listed instead ([AUDITS.md](AUDITS.md#constant-time---constant-time)) |
 
 PQClean's reference passes all ten sets; eight planted bugs each fail the
 audit in CI ([AUDITS.md](AUDITS.md)). Encapsulation's error-vector sampling
@@ -482,6 +483,10 @@ the [Quick start](#quick-start); what is checked, and how, is in
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
 
 The algebraic core is proven natively where the proof is exact; the full implementation is proven byte-exact against NIST's own bytes. We make the claims we can prove.
+
+Everything pq-verify does not check — schemes, side channels, parameter
+security, which paths are proved and which are only tested — is collected in
+[LIMITS.md](LIMITS.md).
 
 ### Side channels are not measured
 
@@ -590,7 +595,7 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 
 **Deliberately NOT required** (a deployment advantage):
 - No numpy, scipy, or PyTorch — pure Python + ctypes + inline C
-- No SageMath — the `pqverify_params` lattice estimator is self-contained (it reproduces the lattice-estimator's results without it)
+- No SageMath — the `pqverify_params` lattice estimator is self-contained (ML-KEM's lattice-estimator values are pinned; custom parameters use a calibrated formula, [close but not exact](LIMITS.md#parameter-security))
 
 ---
 

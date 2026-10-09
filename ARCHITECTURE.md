@@ -43,7 +43,10 @@ All tested on commodity hardware (Google Colab CPU).
   what the budget skips is reported as not run, never as passed
 - **Native full-KEM** verified at ML-KEM-1024 (Level 5): recovery 20/20, negative control caught
 - **Non-circular KAT** 100/100 against the independent FIPS reference
-- Calibrated lattice estimator: reproduces lattice-estimator exactly (Kyber-512 β=406/118.6 bits)
+- Calibrated lattice estimator: ML-KEM's three sets report the lattice-estimator's
+  primal-uSVP values, pinned; for custom parameters a simplified formula matches it
+  at its calibration point (Kyber-512 β=406, 118.6 bits) and is close, not exact,
+  elsewhere ([LIMITS.md](LIMITS.md#parameter-security))
 - **Proofs for every input** (`pq-verify --proofs`, Coq): the FIPS 203 and
   FIPS 204 forward NTT equal the CRT map they are defined to compute, for
   every 256-coefficient input; `montgomery_reduce`, `barrett_reduce` and
@@ -324,23 +327,45 @@ assessment against the deployed binary on the deployed hardware.
 ```
 pq_verify/
   __init__.py              Public API
-  core.py                  The stack (6 field-native engines)
+  core.py                  The stack: 6 field-native engines, ML-KEM audit, parameter estimator
   cli.py                   Command-line interface
-  response.py              Prompt/response verification for un-loadable builds
-  hybrid.py                RFC 10024 hybrid key-agreement composition
-  fndsa.py                 FN-DSA (Falcon) verification, FIPS 206 draft track
   report.py                Native JSON + SARIF 2.1.0 output
+  symbols.py               The functions a shared library exports, per platform
+  isolate.py               Runs a vendor audit in a child process
+  dsa_audit.py             ML-DSA library audit
+  ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
+  edge.py                  Wycheproof and CCTV edge-case vectors
+  accumulated.py           Accumulated vectors: 10 000 random cases, one digest
+  fresh.py                 Fresh, unpublished ACVP question sets
+  response.py              Prompt/response verification for un-loadable builds
+  harness_audit.py         Audits through a Crucible-protocol harness
+  hybrid.py                RFC 10024 hybrid key-agreement composition
+  hbs.py                   LMS/HSS and XMSS/XMSS^MT (SP 800-208)
+  hbs_suite.py             Their conformance suites
+  hbs_audit.py             LMS/HSS and XMSS library audit
+  fndsa.py                 FN-DSA (Falcon) verification, FIPS 206 draft track
+  fndsa_audit.py           FN-DSA library audit, draft track
+  mceliece.py              Classic McEliece reference (not a FIPS standard)
+  mceliece_audit.py        Classic McEliece library audit
+  hqc.py                   HQC's error-correcting code (standard not final)
+  hqc_audit.py             HQC decoder audit
+  proofs.py                Runs the Coq proofs (--proofs)
+  coq/                     NTT.v, Reduce.v: the proofs
+  harness/                 C files linked into a test build of a library: deterministic
+                           randombytes(), LMS/XMSS adapters. Never in production
+  vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
+tools/                     Vendor audits, vector pinning, the re-pinning doctor
 pyproject.toml             Build config + console-script entry point
-dist/
-  pq_verify-2.11.0-py3-none-any.whl    Installable wheel
-  pq_verify-2.11.0.tar.gz              Source distribution
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
-README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md
-LICENSE / CITATION.cff
+README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
+REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE / CITATION.cff
 ```
 
-Install: `pip install "pq-verify[full]"` — or download the wheel from
-[Releases](https://github.com/bigDSanalyst/pq-verify/releases).
+The wheel and source distribution are not in the repository: they are built
+by the release workflow and attached to each
+[release](https://github.com/bigDSanalyst/pq-verify/releases) (see
+[Verifying a release](README.md#verifying-a-release)). Install:
+`pip install "pq-verify[full]"`, or download the wheel from the release.

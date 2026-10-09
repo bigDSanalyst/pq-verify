@@ -672,11 +672,11 @@ its own key pairs:
   both.
 
 <!-- vendor-audits-mceliece:begin -->
-| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) | padding | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 8/8 | 404/404 **VERIFIED** |
-| liboqs 0.16.0 — Classic McEliece, OQS API (distribution build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 6/6 | 404/404 **VERIFIED** |
-| liboqs 0.16.0 — Classic McEliece, OQS API (portable build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 3/3 | 404/404 **VERIFIED** |
+| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) | padding | Constant time | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 20/20 | 12/12 | 404/404 **VERIFIED** |
+| liboqs 0.16.0 — Classic McEliece, OQS API (distribution build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 20/20 | 8/8 | 404/404 **VERIFIED** |
+| liboqs 0.16.0 — Classic McEliece, OQS API (portable build) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 20/20 | 4/4 | 404/404 **VERIFIED** |
 <!-- vendor-audits-mceliece:end -->
 
 **liboqs 0.16.0** is audited through its public API, `OQS_KEM_classic_mceliece_*`,
@@ -709,8 +709,14 @@ wrapper bug for 6960119f, and encapsulation ignoring the public key's padding
 bits. That the AVX2 mutants fail the distribution build and the clean ones
 the portable build shows each row runs the backend it names.
 
+**Constant time** (`--audit-mceliece ... --constant-time`), every row and set:
+Decaps with the whole private key secret, on a valid and on a random
+ciphertext, and Encaps with its randomness secret, under Valgrind memcheck;
+see [Constant time](#constant-time---constant-time). All 30 are clean, and
+seven planted leaks are caught (the CT mutants counted in the table).
+
 Not covered: the distribution of encapsulation's error vectors (only their
-weight, validity and repetition), and constant time.
+weight, validity and repetition), and constant-time key generation.
 
 ## HQC decoder audit — standard not final, with mutants
 
@@ -810,6 +816,11 @@ all three parameter sets. The reference decoder (`src/ref`) has neither.
    build the submitters' code at `-O3`, as they do, so they record the first
    defect only.
 
+*Disclosure.* A report for the submitters (gitlab.com/pqc-hqc/hqc), with a
+standalone reproduction that uses only `reed_muller_encode` and
+`reed_muller_decode`, has been drafted and is to be filed by the maintainer.
+Its link and the submitters' response will be recorded here.
+
 **Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
 stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its
 length test, or moving the saved locator's degree on any nonzero discrepancy;
@@ -877,6 +888,44 @@ pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
 Not checked, and said so in every report: instruction timing (KyberSlash's
 secret division is invisible to memcheck; the library's division instructions
 are listed instead), key generation, and anything physical.
+
+**Classic McEliece** (not FIPS; `--audit-mceliece ... --constant-time`). The
+NIST API takes no coins, so the driver supplies the randomness: it defines
+`randombytes()` and `PQCLEAN_randombytes()`, which take precedence over the
+library's own, and installs itself through liboqs's
+`OQS_randombytes_custom_algorithm`. An Encaps that draws nothing through it is
+refused, not reported clean. Key pairs and valid ciphertexts come from the
+library itself, outside Valgrind, so each set takes seconds. Key generation
+retries when an attempt fails (an irreducibility check, repeated support
+elements, a non-systematic matrix): the submitters declassify those
+comparisons, a black-box check cannot tell them from a leak, and it is not
+checked.
+
+Encaps has one exception, made by rule rather than by name: reports inside the
+library function that drew the random bytes they depend on are listed, not
+judged. That function is the error-vector sampler (`gen_e`). Its range and
+repetition checks are rejection sampling, declassified by the submitters
+(`crypto_declassify`, a no-op in these builds). Memcheck does not follow
+branches, so it also taints what the sampler computes afterwards. In
+liboqs's AVX2 code GCC reuses the register holding the rejection flag,
+provably zero once the loop exits, as a later loop's counter, and memcheck
+reports a "secret" branch (mceliece348864) and a "secret" address
+(mceliece6960119). Both were traced to the instruction and are false
+positives. The cost: a real leak in the sampler's own construction of the
+error vector would land in the same list. Every report outside it fails.
+
+| Library | Sets | ct:encaps | ct:decaps |
+|---|---|---|---|
+| PQClean clean `0586a82` | all 10 | 10/10 | 10/10 |
+| liboqs 0.16.0, distribution build (AVX2) `5a1a854` | all 10 | 10/10 | 10/10 |
+| liboqs 0.16.0, portable build (clean) `5a1a854` | all 10 | 10/10 | 10/10 |
+
+| Planted leak | Caught in |
+|---|---|
+| the Beneš network branching on its control bits (PQClean; liboqs clean) | ct:decaps |
+| decryption returning early on a wrong weight (PQClean; liboqs AVX2) | ct:decaps |
+| implicit rejection picking `s` or `e` by pointer (PQClean; liboqs AVX2) | ct:decaps |
+| the syndrome reading a parity table indexed by the error vector (PQClean) | ct:encaps, in `syndrome`, outside the sampler |
 
 ## Any language, through Crucible-protocol harnesses
 
@@ -959,8 +1008,12 @@ The symbol audits verify the **number-theoretic transform** against the FIPS
 203/204 definitions; `--audit-kem`, `--audit-dsa` and `--audit-hbs` verify a
 library's whole scheme against the pinned vectors. None of them:
 
-- verify constant-time behaviour or side-channel resistance
+- verify side-channel resistance: `--constant-time` checks ML-KEM's and
+  Classic McEliece's Encaps and Decaps for secret-dependent branches and
+  addresses, within the scope in [Constant time](#constant-time---constant-time),
+  and nothing else
 - constitute a security review of the surrounding implementation
 
 A passing NTT audit says the transform is arithmetically correct. It does not
-say the library is free of defects elsewhere.
+say the library is free of defects elsewhere. Everything pq-verify does not
+check is collected in [LIMITS.md](LIMITS.md).
