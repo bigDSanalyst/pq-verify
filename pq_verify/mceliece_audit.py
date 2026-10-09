@@ -37,7 +37,6 @@ are the same. An ambiguous role is never guessed (--mceliece-symbol,
 --symbol-prefix).
 """
 import ctypes as _ct
-import hashlib
 import random
 import re as _re
 
@@ -263,8 +262,22 @@ def run(v):
     return T
 
 
+def constant_time(v, keys=2):
+    """Encaps and Decaps under Valgrind memcheck (pq_verify.ct_audit), on key
+    pairs and ciphertexts the library made itself, outside Valgrind."""
+    from . import ct_audit as CT
+    material = []
+    for _ in range(keys):
+        pk, sk = v.keypair()
+        rc, ct, _ss = v.enc(pk)
+        if rc != 0:
+            raise CT.Unavailable(f"encapsulation returned {rc} outside Valgrind")
+        material.append((pk, sk, ct))
+    return CT.run_mceliece(v.path, v.P.name, v.sym["enc"], v.sym["dec"], material)
+
+
 def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
-                            verbose=True, prefix=None):
+                            verbose=True, prefix=None, constant_time_check=False):
     """Audit a third-party Classic McEliece library; see the module docstring.
 
     Returns None when it cannot be audited (an ambiguous symbol, no entry
@@ -292,12 +305,28 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
         print(f"  reference: pq_verify.mceliece ({M.sources()})")
         print("=" * 68)
     T = run(v)
+    ct_res = None
+    if constant_time_check:
+        from . import ct_audit as CT
+        if not (v.has("enc") and v.has("dec")):
+            ct_res = {"unavailable": "no encapsulation or decapsulation entry point"}
+            T.detail["ct:unavailable"] = (0, 1)
+        else:
+            try:
+                ct_res = constant_time(v)
+                for op, val in ct_res["stages"].items():
+                    T.detail["ct:" + op] = val
+            except CT.Unavailable as exc:
+                # Asked for and not run is not a pass: a stage that fails, saying why.
+                ct_res = {"unavailable": str(exc)}
+                T.detail["ct:unavailable"] = (0, 1)
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
     verified = p_all == t_all and t_all > 0
     via = {"keyGen": v.sym.get("keypair"), "encaps": v.sym.get("enc"),
-           "decaps": v.sym.get("dec"), "padding": v.sym.get("dec")}
+           "decaps": v.sym.get("dec"), "padding": v.sym.get("dec"),
+           "ct:encaps": v.sym.get("enc"), "ct:decaps": v.sym.get("dec")}
     if verbose:
         for s in STAGES:
             if s in T.detail:
@@ -306,6 +335,18 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
             if s in T.na:
                 c, why = T.na[s]
                 print(f"  n/a   {s:8s} {c}: {why}")
+        if ct_res and "unavailable" in ct_res:
+            print(f"  FAIL  constant time: could not run ({ct_res['unavailable']})")
+        elif ct_res:
+            for op, (p, t) in ct_res["stages"].items():
+                print(f"  {'PASS' if p == t else 'FAIL'}  ct:{op:7s} {p}/{t}   no secret-dependent "
+                      f"branch or memory address (Valgrind memcheck)")
+                for lk in ct_res["leaks"][op][:3]:
+                    print(f"        \u2717 {lk['kind']} in {lk['function']} ({lk['count']} report(s))")
+                for lk in ct_res["sampling"][op][:3]:
+                    print(f"        listed, not judged: {lk['kind']} in {lk['function']}, the "
+                          f"function that draws the randomness ({lk['count']})")
+            print(f"  n/a   ct:keyGen   {ct_res['not_applicable']['keyGen'][:60]}...")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
         print("=" * 68)
@@ -314,12 +355,14 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
               + (f"   ({na_all} not applicable)" if na_all else ""))
         print(f"  {M.TRACK_NOTE}")
         print("  Encapsulation's error-vector sampling is checked for validity and")
-        print("  repetition, not distribution. Not a side-channel review.")
+        print("  repetition, not distribution. " + (
+            "Constant time: branches and addresses only, not timing or power."
+            if constant_time_check else "Not a side-channel review."))
         print("=" * 68)
     return {"verified": verified, "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "failures": T.failures, "library": v.path, "vectors": M.sources(),
-            "track": "classic-mceliece",
+            "track": "classic-mceliece", "constant_time": ct_res,
             "standard": "Classic McEliece round 4 (not a FIPS standard)",
             "symbols": {k: s for k, s in v.sym.items() if s}}

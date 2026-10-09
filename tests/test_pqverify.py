@@ -6278,3 +6278,99 @@ def test_hqc_vendor_rows_and_mutants_are_well_formed_and_published():
     assert published == mod.hqc_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the HQC table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-hqc markers")
+
+
+# ----------------------------------------------------------------------
+# --audit-mceliece --constant-time: Encaps and Decaps under memcheck.
+# tests/data/ct_mceliece_shim.c is a fake KEM with mceliece348864's sizes,
+# a sampler that rejection-samples its own randomness, and planted leaks.
+# ----------------------------------------------------------------------
+
+def _ct_mce(tmp_path, define=None):
+    import shutil, subprocess
+    from pq_verify.ct_audit import available
+    from pq_verify.mceliece_audit import VendorMcEliece, constant_time
+    why = available()
+    if why:
+        pytest.skip(why)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"ctmce_{define or 'clean'}.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared",
+                    *([f"-D{define}"] if define else []), "-o", str(so),
+                    str(root / "tests" / "data" / "ct_mceliece_shim.c")],
+                   check=True, capture_output=True)
+    v = VendorMcEliece(str(so), "mceliece348864", symbols={
+        "keypair": "shim_mce_keypair", "enc": "shim_mce_enc", "dec": "shim_mce_dec"})
+    return constant_time(v)
+
+
+def test_mceliece_constant_time_lists_the_sampler_and_passes_a_clean_library(tmp_path):
+    """The sampler's branch on its own fresh randomness is listed, not
+    judged: rejection sampling, which the submitters declassify."""
+    r = _ct_mce(tmp_path)
+    assert r["stages"] == {"encaps": (1, 1), "decaps": (1, 1)}, r["leaks"]
+    assert [(s["kind"], s["function"]) for s in r["sampling"]["encaps"]] == [
+        ("branch on a secret", "sample")]
+    assert not r["sampling"]["decaps"] and "keyGen" in r["not_applicable"]
+
+
+@pytest.mark.parametrize("define,op,kind,fn", [
+    ("LEAK_ENC_BRANCH", "encaps", "branch on a secret", "shim_mce_enc"),
+    ("LEAK_DEC_BRANCH", "decaps", "branch on a secret", "shim_mce_dec"),
+    ("LEAK_DEC_INDEX", "decaps", "secret used as a memory address", "shim_mce_dec")])
+def test_mceliece_constant_time_catches_leaks_outside_the_sampler(tmp_path, define, op,
+                                                                  kind, fn):
+    r = _ct_mce(tmp_path, define)
+    assert r["stages"][op] == (0, 1)
+    assert (kind, fn) in [(l["kind"], l["function"]) for l in r["leaks"][op]]
+
+
+def test_mceliece_constant_time_refuses_randomness_it_does_not_control(tmp_path):
+    """Encapsulation that draws nothing through the driver's randombytes()
+    was not checked with its randomness secret: unavailable, never a pass."""
+    from pq_verify.ct_audit import Unavailable
+    with pytest.raises(Unavailable, match="no randomness through the driver"):
+        _ct_mce(tmp_path, "NO_RNG")
+
+
+def test_mceliece_constant_time_classifies_only_with_symbols():
+    """A report counts as the sampler's only when it sits in the library
+    function that drew the randomness; without symbols nothing is excused."""
+    from pq_verify.ct_audit import _classify
+    lib = "/lib/x.so"
+    drew = [("randombytes", "/drv"), ("gen_e", lib), ("enc", lib)]
+    errs = [("UninitCondition", [("gen_e", lib), ("enc", lib)], drew),
+            ("UninitValue", [("syndrome", lib), ("enc", lib)], drew),
+            ("UninitCondition", [("??", lib)], [("randombytes", "/drv"), ("??", lib)]),
+            ("UninitCondition", [("dec", lib)], [("main", "/drv")])]
+    leaks, sampling = _classify(errs, lib)
+    assert sampling == {("UninitCondition", "gen_e"): 1}
+    assert set(leaks) == {("UninitValue", "syndrome"), ("UninitCondition", "??"),
+                          ("UninitCondition", "dec")}
+
+
+def test_mceliece_constant_time_unavailable_is_a_finding():
+    from pq_verify.report import to_json_mceliece_audit
+    doc = to_json_mceliece_audit({"verified": False, "passed": 40, "total": 41,
+                                  "detail": {"keyGen": (10, 10), "encaps": (6, 6),
+                                             "decaps": (24, 24), "ct:unavailable": (0, 1)},
+                                  "constant_time": {"unavailable": "valgrind is not installed"}},
+                                 param_set="mceliece348864")
+    assert any("could not run" in f for f in doc["findings"])
+    assert "constant_time_checked" not in doc.get("side_channel", {})
+
+
+def test_constant_time_flag_names_both_audits():
+    code, out = _cli("--constant-time", "--acvp")
+    assert code == 2 and "--audit-kem or --audit-mceliece" in out
+
+
+def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
+    mod, _ = _vendor_audit()
+    for row in mod.load_mceliece_table():
+        assert set(row["ct"]) == set(row["sets"]), row["library"]
+        for ps in row["sets"]:
+            assert set(row["ct"][ps]) == {"ct:encaps", "ct:decaps"}
+        for m in row.get("ct_mutants", []):
+            assert m["set"] in row["sets"] and m["fails"]
+            assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}, m["name"]

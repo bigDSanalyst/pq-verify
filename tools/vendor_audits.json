@@ -2471,6 +2471,108 @@
           ]
         }
       },
+      "ct": {
+        "mceliece348864": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece348864f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
       "not_applicable": {
         "mceliece348864": 0,
         "mceliece348864f": 0,
@@ -2562,6 +2664,48 @@
           "replace": "padding_ok = 0;",
           "fails": [
             "padding"
+          ]
+        }
+      ],
+      "ct_mutants": [
+        {
+          "name": "the Benes network branches on its control bits",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/benes.c",
+          "find": "d &= (*bits++);",
+          "replace": "if (!(*bits++)) {\n                d = 0;\n            }",
+          "fails": [
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "decryption returns early on a wrong weight",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/decrypt.c",
+          "find": "    check = (uint16_t)w;",
+          "replace": "    if (w != SYS_T) {\n        return 1;\n    }\n    check = (uint16_t)w;",
+          "fails": [
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "implicit rejection picks s or e by pointer",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/operations.c",
+          "find": "*x++ = (~m & s[i]) | (m & e[i]);",
+          "replace": "*x++ = (m ? e : s)[i];",
+          "fails": [
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "the syndrome reads a parity table indexed by the error vector",
+          "set": "mceliece348864",
+          "file": "crypto_kem/mceliece348864/clean/encrypt.c",
+          "find": "b ^= row[j] & e[j];",
+          "replace": "{\n            static const volatile unsigned char PAR[16] = {0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0};\n            unsigned char t = row[j] & e[j];\n            b ^= PAR[t & 15] ^ PAR[t >> 4];\n        }",
+          "fails": [
+            "ct:encaps"
           ]
         }
       ]
@@ -2748,6 +2892,108 @@
           ]
         }
       },
+      "ct": {
+        "mceliece348864": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece348864f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
       "mutants": [
         {
           "name": "the AVX2 decoder's weight check passes any weight",
@@ -2807,6 +3053,28 @@
           "replace": "\t\t(void) PQCLEAN_MCELIECE6960119_AVX2_crypto_kem_dec(shared_secret, ciphertext, secret_key);\n\t\treturn OQS_SUCCESS;",
           "fails": [
             "padding"
+          ]
+        }
+      ],
+      "ct_mutants": [
+        {
+          "name": "the AVX2 weight check returns early on a wrong weight",
+          "set": "mceliece348864",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece348864_avx2/decrypt.c",
+          "find": "    check = (w0 ^ SYS_T) | (w1 ^ SYS_T);",
+          "replace": "    if (w0 != SYS_T) {\n        return 0;\n    }\n    check = (w0 ^ SYS_T) | (w1 ^ SYS_T);",
+          "fails": [
+            "ct:decaps"
+          ]
+        },
+        {
+          "name": "AVX2 implicit rejection picks s or e by pointer",
+          "set": "mceliece460896",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece460896_avx2/operations.c",
+          "find": "*x++ = (~m & s[i]) | (m & e[i]);",
+          "replace": "*x++ = (m ? e : s)[i];",
+          "fails": [
+            "ct:decaps"
           ]
         }
       ]
@@ -2993,6 +3261,108 @@
           ]
         }
       },
+      "ct": {
+        "mceliece348864": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece348864f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece460896f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6688128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece6960119f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        },
+        "mceliece8192128f": {
+          "ct:encaps": [
+            1,
+            1
+          ],
+          "ct:decaps": [
+            1,
+            1
+          ]
+        }
+      },
       "mutants": [
         {
           "name": "the clean decoder accepts any weight whose syndrome matches",
@@ -3022,6 +3392,18 @@
           "replace": "padding_ok = 0;",
           "fails": [
             "padding"
+          ]
+        }
+      ],
+      "ct_mutants": [
+        {
+          "name": "the clean Benes network branches on its control bits",
+          "set": "mceliece348864f",
+          "file": "src/kem/classic_mceliece/pqclean_mceliece348864f_clean/benes.c",
+          "find": "d &= (*bits++);",
+          "replace": "if (!(*bits++)) {\n                d = 0;\n            }",
+          "fails": [
+            "ct:decaps"
           ]
         }
       ]
