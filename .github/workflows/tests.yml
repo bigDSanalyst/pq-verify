@@ -67,6 +67,8 @@ jobs:
         run: python -m pq_verify.cli --lms-xmss --fail-on-finding
       - name: FN-DSA (draft track) — PQClean vectors, rejections, native NTT
         run: python -m pq_verify.cli --fndsa
+      - name: Classic McEliece (not FIPS) — reference regenerates every KAT, ten sets
+        run: python -m pq_verify.cli --mceliece
 
       - name: Hybrid (RFC 10024) — prompt emits and round-trips
         run: |
@@ -310,6 +312,14 @@ jobs:
           r = pqverify_fndsa(verbose=False)
           assert r["verified"] and r["total"] == 188, (r["passed"], r["total"])
           print("FN-DSA vectors present (draft track):", r["vectors"])
+          PY
+      - name: The wheel must carry the Classic McEliece KATs
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          from pq_verify.mceliece import pqverify_mceliece
+          r = pqverify_mceliece(verbose=False, sets=("mceliece348864",))
+          assert r["verified"] and r["total"] == 10, (r["passed"], r["total"])
+          print("Classic McEliece KATs present (not FIPS):", r["vectors"])
           PY
       - name: The wheel must carry the hybrid module
         run: |

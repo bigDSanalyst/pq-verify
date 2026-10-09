@@ -620,6 +620,76 @@ The first version of the audit missed the range-check mutant (its test key
 changed value mod q, so the norm check refused it); the mutant is why the
 `w + q` case exists.
 
+## Classic McEliece library audit — not a FIPS standard, with mutants
+
+Classic McEliece (round 4) was a NIST round-4 candidate that NIST did not
+select (it chose HQC); it is on an ISO track (ISO/IEC 18033-2). These results
+are on a track of their own and are never part of a FIPS 203/204/205 verdict,
+and they establish correctness, not the scheme's security.
+
+**The reference.** `pq_verify/mceliece.py` is pq-verify's own implementation
+of what an audit needs: seeded key generation, encoding with a chosen error
+vector, the Goppa decoder (syndromes with g², Berlekamp–Massey, roots over the
+support, success only at weight exactly t with a matching syndrome) and
+decapsulation with implicit rejection. It is held to the official KATs
+(`pq-verify --mceliece`): PQClean's NIST KAT harness, first record, for all
+ten sets, each matching the `nistkat-sha256` PQClean publishes. The 0.26–1.36
+MB public keys are not pinned; pq-verify regenerates each from the private
+key's seed and the rebuilt KAT must hash to the published value, so the
+reference proves itself on a key it was never given. Every step of key
+generation is unique given the seed (the minimal polynomial, the sorted
+support, the reduced echelon form [I | T] and, for the f variants, the first
+32 pivot columns in [mt − 32, mt + 32)), which is why a correct library
+reproduces it byte for byte.
+
+**The audit** (`--audit-mceliece`), per library and parameter set, on two of
+its own key pairs:
+
+- **keyGen:** the private key stores the seed of the attempt that succeeded,
+  so the whole key pair is regenerated from it in one attempt: public key,
+  pivots `c`, Goppa polynomial `g` and rejection string `s` byte-exact; the
+  Beneš control bits applied to the identity must give the regenerated
+  permutation (control bits for a permutation are not unique, so their bytes
+  are not compared).
+- **encaps:** three ciphertexts per key decode under pq-verify's decoder to an
+  error vector of weight t, the key is SHAKE256(1 ‖ e ‖ C), the library's own
+  Decap returns it, and no error vector repeats.
+- **decaps:** twelve ciphertexts per key built against that key, each
+  answered by pq-verify's decoder: weight t at random positions (2), in the
+  first t positions (the identity part of H), in the last t (the T part) and
+  through the support's zero element → SHAKE256(1 ‖ e ‖ C); weight t − 1 (the
+  decoder can correct it, the specification's weight check must reject it),
+  again through the zero element, t + 1, C = 0, random C (2), and a valid
+  ciphertext for the library's other key → SHAKE256(0 ‖ s ‖ C). An error at
+  the zero element drops the error locator's degree, the classic place for a
+  decoder to slip. A key whose support lacks 0 uses its smallest element, so
+  the count never varies.
+- **padding** (mceliece6960119 and 6960119f, where mt = 1547 and k = 5413 end
+  mid-byte): a valid ciphertext with a padding bit set, and a public key with
+  one, must be refused (nonzero return). The rule is taken from the
+  submitters' reference implementation (SUPERCOP-20221025), which refuses
+  both.
+
+<!-- vendor-audits-mceliece:begin -->
+| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) | padding | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | all 10 | 100/100 | 60/60 | 240/240 | 4/4 | 8/8 | 404/404 **VERIFIED** |
+<!-- vendor-audits-mceliece:end -->
+
+Each mutant plants one bug in PQClean's source and CI requires the audit to
+fail it in the stage named: a decoder that accepts any weight whose syndrome
+matches (caught by the t − 1 and C = 0 cases; the first version of this audit
+missed it on most keys, because the reference's fixed-degree locator gives a
+spurious root at the zero element that the syndrome check then rejects, which
+is why the through-zero cases exist), implicit rejection hashing the
+decoder's output instead of s, or with prefix 1; a key generator storing a
+zero s, or (f variant) no pivots; encapsulation hashing with prefix 0; and,
+for 6960119, decapsulation and encapsulation ignoring padding bits.
+
+Not covered: the distribution of encapsulation's error vectors (only their
+weight, validity and repetition), constant time, and liboqs's Classic
+McEliece (its symbol names are recognised; it is not yet a pinned row).
+
 ## Accumulated vectors
 
 Every KEM, ML-DSA and harness audit also runs 10 000 seeded random cases

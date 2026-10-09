@@ -5,6 +5,34 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Classic McEliece (round 4; not a FIPS standard)
+
+- **`pq-verify --mceliece`**: pq-verify's own Classic McEliece reference
+  (`pq_verify/mceliece.py`: seeded key generation, encoding, the Goppa decoder,
+  implicit rejection) held to the official KATs for all ten parameter sets.
+  The KATs come from PQClean's NIST harness and match the `nistkat-sha256`
+  PQClean publishes (`tools/pin_mceliece_vectors.py`). Their 0.26–1.36 MB
+  public keys are not pinned: each is regenerated from the private key's seed,
+  and the rebuilt KAT must hash to the published value. All ten sets in about
+  15 s.
+- **`pq-verify --audit-mceliece PATH SET`** (and `--mceliece-symbol`,
+  `--symbol-prefix`): a vendor library's keys regenerated from the seed in
+  their own private key (public key, pivots, Goppa polynomial and rejection
+  string byte-exact, control bits encoding the permutation); its ciphertexts
+  decoded; ciphertexts built against its key (weight t, t−1, t+1, zero,
+  random, another key's) decapsulated to the exact expected key -- including errors through the
+  support's zero element, where the locator's degree drops; and, for
+  6960119, padding bits refused as the submitters' reference does.
+- **PQClean's Classic McEliece is pinned and re-audited in CI**, all ten sets:
+  404/404, and eight planted bugs (a decoder accepting any weight, implicit
+  rejection hashing the wrong string or prefix, a zero `s`, missing pivots,
+  the wrong encapsulation prefix, padding ignored twice) are all caught.
+- Its own track everywhere (`track: "classic-mceliece"`), never part of a FIPS
+  203/204/205 verdict, and a check of correctness, not of the scheme's
+  security (its cryptanalysis is active; deployment follows agency guidance).
+  The native GF(2) engine is not used: it holds at most 2048 variables and
+  returns solutions, not the reduced matrix a public key is.
+
 ### Changed — the README is for using pq-verify
 
 - **README.md is cut from 851 to about 550 lines**, by moving what is not

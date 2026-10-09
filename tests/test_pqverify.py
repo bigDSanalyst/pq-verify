@@ -2603,7 +2603,8 @@ def _doctor_repo(tmp_path, history=None):
     for f in ("acvp_vectors.json.gz", "slhdsa_sig_vectors.json.gz", "MANIFEST.json",
               "edge_vectors.json.gz", "EDGE_MANIFEST.json",
               "hbs_vectors.json.gz", "HBS_MANIFEST.json",
-              "fndsa_vectors.json.gz", "FNDSA_MANIFEST.json"):
+              "fndsa_vectors.json.gz", "FNDSA_MANIFEST.json",
+              "mceliece_kat.json.gz", "MCELIECE_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
                 repo / "tools" / "vector_state" / "baseline.json")
@@ -5849,3 +5850,219 @@ def test_symbol_prefix_needs_an_audit():
     with contextlib.redirect_stdout(io.StringIO()) as out:
         assert main(["--acvp", "--symbol-prefix", "OQS_"]) == 2
     assert "--symbol-prefix does nothing without" in out.getvalue()
+
+
+# ----------------------------------------------------------------------
+# Classic McEliece (round 4; not a FIPS standard): the reference against the
+# pinned KATs, and --audit-mceliece through a shim whose entry points call
+# back into Python, with faults planted
+# ----------------------------------------------------------------------
+
+def test_mceliece_reference_regenerates_the_kat_public_keys():
+    """The KATs' public keys are not pinned: pq-verify regenerates each from
+    the private key's seed, and the rebuilt KAT must hash to the value PQClean
+    publishes. Then the key fields, the control bits and decapsulation."""
+    from pq_verify.mceliece import pqverify_mceliece
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_mceliece(sets=("mceliece348864", "mceliece348864f", "mceliece6960119"))
+    assert r["verified"], r["failures"]
+    assert r["detail"]["mceliece348864"] == (9, 9)
+    assert r["track"] == "classic-mceliece" and "not a FIPS" in r["standard"]
+
+
+def test_mceliece_decoder_takes_weight_t_and_nothing_else():
+    """weight t decodes; t-1 is decodable algebraically and must still be
+    rejected; t+1, 0 and noise are rejected."""
+    import random
+    from pq_verify import mceliece as M
+    b, _ = M.load_vectors()
+    P = M.Params("mceliece348864")
+    sk = bytes.fromhex(b["mceliece348864"]["sk"])
+    pk = M.keygen(P, sk[:32]).pk
+    rng = random.Random(3)
+    for w, ok in ((P.t, True), (P.t - 1, False), (P.t + 1, False), (1, False)):
+        pos = rng.sample(range(P.n), w)
+        C = M.encode(P, pk, M.e_bytes(P, pos))
+        e = M.decode(P, sk, C)
+        assert (e == M.e_bytes(P, pos)) if ok else e is None, w
+        if w == P.t - 1:
+            err, _ = M.locate(P, sk, C)
+            assert sorted(err) == sorted(pos)         # the algebra finds them...
+    assert M.decode(P, sk, bytes(P.ct_bytes)) is None  # ...and C = 0 is weight 0
+    status, K, how = M.decap(P, sk, bytes(P.ct_bytes))
+    assert how == "rejected" and K == M.shared_key(0, M.split_sk(P, sk)["s"], bytes(P.ct_bytes))
+
+
+def test_mceliece_check_key_names_what_is_wrong():
+    from pq_verify import mceliece as M
+    b, _ = M.load_vectors()
+    P = M.Params("mceliece348864")
+    sk = bytes.fromhex(b["mceliece348864"]["sk"])
+    kp = M.keygen(P, sk[:32])
+    assert all(ok for _, ok, _ in M.check_key(P, kp.pk, sk, kp))
+    pk2 = bytearray(kp.pk); pk2[1000] ^= 1
+    assert [n for n, ok, _ in M.check_key(P, bytes(pk2), sk, kp) if not ok] == [
+        "public key = regenerated public key"]
+    o = 40 + 2 * P.t
+    sk2 = bytearray(sk); sk2[o] ^= 1                     # one control bit
+    assert [n for n, ok, _ in M.check_key(P, kp.pk, bytes(sk2), kp) if not ok] == [
+        "control bits encode the regenerated permutation"]
+    sk3 = bytearray(sk); sk3[-1] ^= 1                    # the rejection string s
+    assert [n for n, ok, _ in M.check_key(P, kp.pk, bytes(sk3), kp) if not ok] == [
+        "private key s = regenerated"]
+
+
+_MCE_KEEP = []
+
+
+def _mceliece_shim(tmp_path, ps, fault=""):
+    """A NIST-API Classic McEliece library over pq-verify's reference serving
+    the pinned KAT key. Faults: accept-any-weight, reject-prefix-1, repeat-e,
+    enc-prefix-0, bad-s, ignore-c-padding, ignore-pk-padding."""
+    import ctypes as C, random, shutil, subprocess
+    from pq_verify import mceliece as M
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libmce{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", f"-DPQV_NS=PQCLEAN_{ps.upper()}_CLEAN",
+                    "-o", str(so), str(root / "tests" / "data" / "mceliece_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    P = M.Params(ps)
+    b, _ = M.load_vectors()
+    sk = bytes.fromhex(b[ps]["sk"])
+    pk = M.keygen(P, sk[:32]).pk
+    if fault == "bad-s":
+        sk = sk[:-P.n // 8] + bytes(P.n // 8)
+    rng, last = random.Random(7), []
+    U8 = C.POINTER(C.c_uint8)
+
+    @C.CFUNCTYPE(C.c_int, U8, U8)
+    def kp(pkp, skp):
+        C.memmove(pkp, pk, len(pk))
+        C.memmove(skp, sk, len(sk))
+        return 0
+
+    @C.CFUNCTYPE(C.c_int, U8, U8, U8)
+    def enc(ctp, ssp, pkp):
+        try:
+            pkb = C.string_at(pkp, P.pk_bytes)
+            if P.padded and fault != "ignore-pk-padding" and any(
+                    pkb[i * P.row_bytes + P.row_bytes - 1] >> (P.k % 8) for i in range(P.mt)):
+                return -1
+            pos = last[0] if (fault == "repeat-e" and last) else rng.sample(range(P.n), P.t)
+            last[:] = [pos]
+            e = M.e_bytes(P, pos)
+            ct = M.encode(P, pkb, e)
+            C.memmove(ctp, ct, len(ct))
+            C.memmove(ssp, M.shared_key(0 if fault == "enc-prefix-0" else 1, e, ct), 32)
+            return 0
+        except Exception:
+            return -1
+
+    @C.CFUNCTYPE(C.c_int, U8, U8, U8)
+    def dec(ssp, ctp, skp):
+        try:
+            ct, skb = C.string_at(ctp, P.ct_bytes), C.string_at(skp, P.sk_bytes)
+            if not M.padding_zero(P, ct) and fault != "ignore-c-padding":
+                return -1
+            e = M.decode(P, skb, ct)
+            if e is None and fault == "accept-any-weight":
+                err, S = M.locate(P, skb, ct)
+                g, support, _ = M.support_from_sk(P, skb)
+                if err is not None and M._syndromes(P, err, g, support) == S:
+                    e = M.e_bytes(P, err)
+            if e is not None:
+                K = M.shared_key(1, e, ct)
+            else:
+                K = M.shared_key(1 if fault == "reject-prefix-1" else 0,
+                                 M.split_sk(P, skb)["s"], ct)
+            C.memmove(ssp, K, 32)
+            return 0
+        except Exception:
+            return -1
+    lib.pqvtest_mceliece_register(kp, enc, dec)
+    _MCE_KEEP.extend([lib, kp, enc, dec])
+    return str(so)
+
+
+def _mce_audit(so, ps):
+    from pq_verify.mceliece_audit import pqverify_audit_mceliece
+    with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_mceliece(so, ps, verbose=True)
+
+
+def test_mceliece_audit_verifies_a_correct_library(tmp_path):
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece348864"), "mceliece348864")
+    assert r["verified"], r["failures"]
+    assert r["detail"]["keyGen"] == (10, 10) and r["detail"]["encaps"] == (6, 6)
+    assert r["detail"]["decaps"] == (24, 24)
+    assert "padding" not in r["detail"] and not r["not_applicable"]   # no padding bits
+    assert r["track"] == "classic-mceliece"
+
+
+@pytest.mark.parametrize("fault,stage", [
+    ("accept-any-weight", "decaps"),     # weight t-1 (and C = 0) decoded, not rejected
+    ("reject-prefix-1", "decaps"),       # implicit rejection hashed as success
+    ("repeat-e", "encaps"),
+    ("enc-prefix-0", "encaps"),
+    ("bad-s", "keyGen")])
+def test_mceliece_audit_catches_each_planted_fault(tmp_path, fault, stage):
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece348864", fault), "mceliece348864")
+    p, t = r["detail"][stage]
+    assert not r["verified"] and p < t, (fault, r["detail"])
+
+
+@pytest.mark.parametrize("fault", ["", "ignore-c-padding", "ignore-pk-padding"])
+def test_mceliece_audit_padding_6960119(tmp_path, fault):
+    """mt = 1547 and k = 5413 end mid-byte: a padding bit set must be refused,
+    as the submitters' reference does."""
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece6960119", fault), "mceliece6960119")
+    p, t = r["detail"]["padding"]
+    assert t == 2 and (p == 2 if not fault else p == 1), (fault, r["detail"])
+
+
+def test_mceliece_symbols_tell_f_variants_apart():
+    from pq_verify.mceliece_audit import resolve_symbols
+    exported = [f"PQCLEAN_MCELIECE{s}_CLEAN_crypto_kem_{r}" for s in ("348864", "348864F")
+                for r in ("keypair", "enc", "dec")]
+    exported += [f"OQS_KEM_classic_mceliece_{s}_{r}" for s in ("348864", "348864f")
+                 for r in ("keypair", "encaps", "decaps")]
+    f, amb = resolve_symbols(exported, "mceliece348864", prefix="PQCLEAN_")
+    assert not amb and f["dec"] == "PQCLEAN_MCELIECE348864_CLEAN_crypto_kem_dec"
+    f, amb = resolve_symbols(exported, "mceliece348864f", prefix="OQS_")
+    assert not amb and f["enc"] == "OQS_KEM_classic_mceliece_348864f_encaps"
+    f, amb = resolve_symbols(exported, "mceliece348864f")
+    assert set(amb) == {"keypair", "enc", "dec"}          # PQClean and liboqs: refused
+
+
+def test_mceliece_cli_gates_its_inputs(tmp_path):
+    from pq_verify.cli import main
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert main(["--audit-mceliece", "x.so", "mceliece1"]) == 2
+        assert main(["--mceliece-symbol", "keypair=x"]) == 2
+    assert "unknown parameter set" in out.getvalue()
+    assert "--mceliece-symbol does nothing without --audit-mceliece" in out.getvalue()
+
+
+def test_mceliece_vendor_rows_and_mutants_are_well_formed_and_published():
+    import re
+    from pq_verify.mceliece import SETS
+    mod, root = _vendor_audit()
+    rows = mod.load_mceliece_table()
+    assert {r["build"] for r in rows} == set(mod.MCE_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert set(row["results"]) == set(row["sets"]) and set(row["sets"]) <= set(SETS)
+        for ps in row["sets"]:
+            assert set(row["results"][ps]) <= set(mod.MCE_STAGES), ps
+        assert row["mutants"]
+        for m in row["mutants"]:
+            assert m["set"] in row["sets"], m["name"]
+            assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.MCE_BEGIN, 1)[1].split(mod.MCE_END, 1)[0].strip()
+    assert published == mod.mceliece_markdown(rows).strip(), (
+        "AUDITS.md is out of date: paste the Classic McEliece table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-mceliece markers")
