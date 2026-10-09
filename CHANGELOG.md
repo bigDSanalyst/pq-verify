@@ -28,8 +28,10 @@ versioning](https://semver.org/spec/v2.0.0.html).
   rejection hashing the wrong string or prefix, a zero `s`, missing pivots,
   the wrong encapsulation prefix, padding ignored twice) are all caught.
 - Its own track everywhere (`track: "classic-mceliece"`), never part of a FIPS
-  203/204/205 verdict. The native GF(2) engine is not used: it holds at most
-  2048 variables and returns solutions, not the reduced matrix a public key is.
+  203/204/205 verdict, and a check of correctness, not of the scheme's
+  security (its cryptanalysis is active; deployment follows agency guidance).
+  The native GF(2) engine is not used: it holds at most 2048 variables and
+  returns solutions, not the reduced matrix a public key is.
 
 ### Changed — the README is for using pq-verify
 

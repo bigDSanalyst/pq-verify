@@ -381,8 +381,8 @@ not checked until the final standard's vectors exist.
 ### Not a FIPS standard: Classic McEliece
 
 Classic McEliece was a NIST round-4 candidate that NIST did not select (it
-chose HQC); it is being standardised by ISO. pq-verify checks it on a track of
-its own (`track: "classic-mceliece"`), never part of a FIPS verdict.
+chose HQC); it is on an ISO track (ISO/IEC 18033-2). pq-verify checks it on a
+track of its own (`track: "classic-mceliece"`), never part of a FIPS verdict.
 
 `pq-verify --mceliece` holds pq-verify's own implementation to the official
 KATs for all ten parameter sets. The public keys (0.26–1.36 MB) are not
@@ -402,6 +402,12 @@ its own entry points (the NIST API, or liboqs's `OQS_KEM_classic_mceliece_*`):
 PQClean's reference passes all ten sets; eight planted bugs each fail the
 audit in CI ([AUDITS.md](AUDITS.md)). Encapsulation's error-vector sampling
 is checked for validity and repetition, not distribution.
+
+A pass means the library computes Classic McEliece exactly. It says nothing
+about the scheme's security: its cryptanalysis is active (key-recovery cost
+estimates were published in 2025–2026 and disputed by the submitters), so
+whether to deploy it, and with which parameter set, follows current agency
+guidance such as BSI's TR-02102-1.
 
 ---
 

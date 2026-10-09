@@ -2,9 +2,11 @@
 pq_verify.mceliece — Classic McEliece (round 4), a reference for auditing.
 
 Classic McEliece is not a FIPS standard. It was a NIST round-4 candidate that
-NIST did not select (it chose HQC), and it is being standardised by ISO.
+NIST did not select (it chose HQC); it is on an ISO track (ISO/IEC 18033-2).
 Everything here is its own track: never part of a FIPS 203/204/205 verdict,
-reported as "classic-mceliece" in every report.
+reported as "classic-mceliece" in every report. It checks that an
+implementation computes the scheme exactly, not that the scheme is secure: its
+cryptanalysis is active, so deployment follows current agency guidance.
 
 This module is pq-verify's own implementation of the parts an audit needs,
 written from the round-4 definitions (the submitters' SUPERCOP-20221025 code
@@ -62,8 +64,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BUNDLE = os.path.join(HERE, "vectors", "mceliece_kat.json.gz")
 MANIFEST = os.path.join(HERE, "vectors", "MCELIECE_MANIFEST.json")
 TRACK_NOTE = ("Classic McEliece (round 4) is not a FIPS standard: a NIST round-4 "
-              "candidate not selected by NIST, under ISO standardisation. This is "
-              "its own track, never part of a FIPS 203/204/205 verdict.")
+              "candidate not selected by NIST, on an ISO track. This is its own "
+              "track, never part of a FIPS 203/204/205 verdict, and it checks "
+              "correctness, not the scheme's security.")
 
 
 class Params:

@@ -623,8 +623,9 @@ changed value mod q, so the norm check refused it); the mutant is why the
 ## Classic McEliece library audit — not a FIPS standard, with mutants
 
 Classic McEliece (round 4) was a NIST round-4 candidate that NIST did not
-select (it chose HQC); it is under ISO standardisation. These results are on a
-track of their own and are never part of a FIPS 203/204/205 verdict.
+select (it chose HQC); it is on an ISO track (ISO/IEC 18033-2). These results
+are on a track of their own and are never part of a FIPS 203/204/205 verdict,
+and they establish correctness, not the scheme's security.
 
 **The reference.** `pq_verify/mceliece.py` is pq-verify's own implementation
 of what an audit needs: seeded key generation, encoding with a chosen error
