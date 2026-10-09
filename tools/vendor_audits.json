@@ -2834,6 +2834,89 @@
       }
     },
     {
+      "library": "HQC optimized (AVX2)",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "f46e54222ffb76706678a9ec8a43cd2188a12ab1",
+      "date": "2025-08-22",
+      "note": "the submitters' v5.0.0 release, src/x86_64/avx256",
+      "build": "hqc-avx256",
+      "profile": "v5",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            408,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            444,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            536,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        }
+      }
+    },
+    {
       "library": "HQC reference",
       "url": "https://gitlab.com/pqc-hqc/hqc.git",
       "commit": "71090d4679837a0de1e6946284818184994d952a",
@@ -2911,6 +2994,89 @@
           ],
           "code-decode": [
             9,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "library": "HQC optimized (AVX2)",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "71090d4679837a0de1e6946284818184994d952a",
+      "date": "2026-08-05",
+      "note": "the submitters' next-release branch (unreleased), src/x86_64/avx256",
+      "build": "hqc-avx256",
+      "profile": "next",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            408,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            444,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            536,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            7,
             9
           ]
         }

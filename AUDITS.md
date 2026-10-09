@@ -751,8 +751,42 @@ built fresh each run (the seed is reported; the rows below use a fixed one):
 |---|---|---|---|---|---|---|---|---|---|---|
 | PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | 9/9 | 1,783/1,783 **VERIFIED** |
 | HQC reference | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
+| HQC optimized (AVX2) | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
 | HQC reference | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
+| HQC optimized (AVX2) | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
 <!-- vendor-audits-hqc:end -->
+
+**Two defects in the submitters' optimized (AVX2) Reed–Muller decoder**, in
+the v5.0.0 release and still on next-release at `71090d4`, each reproduced on
+all three parameter sets. The reference decoder (`src/ref`) has neither.
+
+1. *Its peak search stops short.* `find_peaks` binary-searches for the
+   largest |transform value| from a width of `1 << (5 + MULTIPLICITY / 2)`.
+   Its comment gives 64, 128 and 256 for multiplicities 2, 4 and 6: half the
+   largest possible value (64 × multiplicity), above which only one value can
+   lie. HQC's multiplicities are 3 and 5, and integer division rounds down:
+   the width is 64 and 128, while two values can reach 96 and 160 together
+   (|t_a| + |t_b| ≤ 64 × multiplicity). With two above the width the decoder
+   returns the lower index of the two, not the larger value. A block 95 flips
+   from one codeword (inside HQC-1's unique-decoding radius of 95) and 97 from
+   another comes back as the farther one whenever its index is lower: 6 of the
+   414 blocks in an HQC-1 audit, 4 of 448 and 540 for HQC-3 and HQC-5, and 2 of
+   9 whole received words within both codes' radii decode to the wrong
+   message. In 40 800 blocks (HQC-1 and HQC-3; uniformly random words, and
+   codewords with independent bit flips at rates 0.30, 0.35 and 0.40) it
+   never differed from the reference: random testing, KATs and round trips
+   do not see it. Starting the search at
+   `1 << (6 + MULTIPLICITY / 2)` fixes it (no differences on the same
+   vectors). Its effect on HQC's decryption failure rate was not estimated.
+2. *It reads a vector through a `uint16_t` pointer.* The sign lookup does
+   `uint16_t *ptr = (uint16_t *)&tmp;` on an `__m256i`, which strict aliasing
+   does not allow. GCC 13.3 at `-O2` then returns the wrong sign bit for every
+   block (the codeword 0x00 decodes as 0x80) and the KEM fails every round
+   trip (0 of 50 shared secrets agree). At `-O3`, the submitters' CMake
+   default, at `-O2 -fno-strict-aliasing`, and with clang 18 it works; copying
+   the vector out with `memcpy` fixes it under both compilers. The rows above
+   build the submitters' code at `-O3`, as they do, so they record the first
+   defect only.
 
 **Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
 stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its

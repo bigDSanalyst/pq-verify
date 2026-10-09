@@ -301,8 +301,10 @@ def build_hqc(recipe, src, param_set, out_dir, tag=""):
     assembles each variant (src/common, the architecture's sources, the
     set's headers, lib/fips202). Releases from next-release on declare
     randombytes() without defining it; a getrandom() stub is linked then.
-    The submitters' code is built at -O3, as their CMake does. The decoder
-    is deterministic, so no randomness harness is needed."""
+    The submitters' code is built at -O3, as their CMake does: their AVX2
+    Reed-Muller decoder reads an __m256i through a uint16_t pointer, and GCC
+    13 at -O2 then returns the wrong sign bit for every block (AUDITS.md).
+    The decoder is deterministic, so no randomness harness is needed."""
     old, new = HQC_DIRS[param_set]
     so = Path(out_dir) / f"{recipe}-{new}{tag}.so"
     src = Path(src)

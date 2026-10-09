@@ -6122,9 +6122,10 @@ _HQC_NS = {"HQC-1": "PQCLEAN_HQC128_CLEAN", "HQC-3": "PQCLEAN_HQC192_CLEAN",
 
 def _hqc_shim(tmp_path, name="HQC-1", fault=""):
     """An HQC code layer over pq-verify's reference. Faults: tie-high (ties to
-    the highest index), drop-copy (one copy not summed), defective-chain
-    (wrong whenever a leading Hankel minor of the errors vanishes), overflow
-    (one byte past the output), next-profile (encodes the other code)."""
+    the highest index), drop-copy (one copy not summed), cap (the submitters'
+    AVX2 search width, 1 << (5 + copies / 2)), defective-chain (wrong whenever
+    a leading Hankel minor of the errors vanishes), overflow (one byte past
+    the output), next-profile (encodes the other code)."""
     import ctypes as C, shutil, subprocess
     from pq_verify import hqc as H
     if not shutil.which("gcc"):
@@ -6139,12 +6140,15 @@ def _hqc_shim(tmp_path, name="HQC-1", fault=""):
     E = H.Code(name, "next") if fault == "next-profile" else R
 
     def rm_block(copies):
-        if fault not in ("tie-high", "drop-copy"):
+        if fault not in ("tie-high", "drop-copy", "cap"):
             return R.rm_decode_block(copies)
         Y = R.correlations(copies[:-1] if fault == "drop-copy" else copies)
         best = max(abs(v) for v in Y)
         tied = [i for i, v in enumerate(Y) if abs(v) == best]
         u = tied[-1] if fault == "tie-high" else tied[0]
+        cap = 1 << (5 + R.copies // 2)
+        if fault == "cap" and best // 2 > cap:
+            u = next(i for i, v in enumerate(Y) if abs(v) // 2 > cap)
         return u | (0x80 if Y[u] < 0 else 0)
 
     def rs_decode(word):
@@ -6204,6 +6208,20 @@ def test_hqc_audit_catches_each_planted_fault(tmp_path, fault, stage, says):
     assert not r["verified"] and p < t, (fault, r["detail"])
     said = [f["case"] + ": " + f["detail"] for f in r["failures"] if f["stage"] == stage]
     assert any(says in x for x in said), said[:5]
+
+
+@pytest.mark.parametrize("name,rm,code", [("HQC-1", (408, 414), (7, 9)),
+                                          ("HQC-5", (536, 540), (7, 9))])
+def test_hqc_audit_sees_the_avx2_search_width(tmp_path, name, rm, code):
+    """The AVX2 decoder's peak search stops at 1 << (5 + copies / 2): 64 for
+    three copies, 128 for five, below the 96 / 160 a second peak can reach.
+    Blocks inside the radius whose wrong peak clears it and has the lower
+    index come back wrong; random noise essentially never makes one."""
+    r, _ = _hqc_audit(_hqc_shim(tmp_path, name, fault="cap"), name)
+    assert r["detail"]["rm-decode"] == rm and r["detail"]["code-decode"] == code
+    assert r["detail"]["rs-decode"][0] == r["detail"]["rs-decode"][1]
+    assert all("flips from" in f["case"] or f["stage"] == "code-decode"
+               for f in r["failures"])
 
 
 def test_hqc_symbols_resolve_across_namings():

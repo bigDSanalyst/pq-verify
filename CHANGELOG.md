@@ -31,6 +31,14 @@ versioning](https://semver.org/spec/v2.0.0.html).
   are pinned and re-audited in CI**, HQC-1/3/5: 5,349/5,349, and nine planted
   decoder bugs are all caught. Three of them fail on 5–9% of random
   full-weight error patterns and on every Hankel-built one.
+- **Two defects in the submitters' AVX2 Reed–Muller decoder** (v5.0.0, and
+  next-release at 71090d4), recorded as pinned rows: its peak search starts
+  from a width too small for HQC's odd multiplicities, so blocks inside the
+  unique-decoding radius between two codewords can decode to the farther one
+  (40 800 random and noisy blocks never triggered it; whole received words
+  within both radii then decode to the wrong message); and its sign lookup reads an `__m256i`
+  through a `uint16_t` pointer, so under GCC 13 at `-O2` every block's sign is
+  wrong and the KEM fails every round trip (fine at the submitters' `-O3`).
 - Its own track everywhere (`track: "hqc"`), never part of a FIPS 203/204/205
   verdict; the KEM around the code is not covered.
 
