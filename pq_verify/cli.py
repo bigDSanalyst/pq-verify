@@ -8,6 +8,7 @@ pq-verify command-line interface.
     pq-verify --lms-xmss           LMS/HSS + XMSS/XMSS^MT, every SP 800-208 family
     pq-verify --fndsa              FN-DSA (Falcon) verification, FIPS 206 draft track
     pq-verify --mceliece           Classic McEliece reference vs the KATs (not FIPS)
+    pq-verify --hqc                HQC code layer vs the submitters' code (not final)
     pq-verify --slhdsa-siggen      SLH-DSA sigGen, 624 signatures (~30 min)
     pq-verify --params SET         parameter security (e.g. ML-KEM-1024)
     pq-verify --kem K              native full-KEM at module rank K (2/3/4)
@@ -17,6 +18,7 @@ pq-verify command-line interface.
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
     pq-verify --audit-mceliece PATH SET  audit a Classic McEliece library (not FIPS)
+    pq-verify --audit-hqc PATH SET       audit an HQC decoder (code layer)
     pq-verify --audit-harness CMD SET  audit through a Crucible-protocol harness
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
@@ -161,6 +163,12 @@ def build_parser():
                         "reference regenerates each pinned KAT's public key from its "
                         "private key, and the rebuilt KAT must hash to the value "
                         "PQClean publishes; all ten parameter sets")
+    p.add_argument("--hqc", action="store_true",
+                   help="HQC's error-correcting code (HQC's standard is not final; "
+                        "never part of a FIPS verdict): pq-verify's Reed-Solomon / "
+                        "Reed-Muller reference against the submitters' published "
+                        "generator polynomials and their own decoders' answers on "
+                        "built vectors, both code profiles, every parameter set")
     p.add_argument("--slhdsa-acvp", action="store_true",
                    help="NIST ACVP SLH-DSA (FIPS 205) alone: keyGen and sigVer, "
                         "all 12 parameter sets (624 vectors)")
@@ -223,6 +231,13 @@ def build_parser():
                         "ciphertexts decoded, ciphertexts built against its key "
                         "(weight t, t-1, t+1, random, another key's) decapsulated to "
                         "the exact expected key, padding refused")
+    p.add_argument("--audit-hqc", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="audit an HQC decoder in PATH through its own encoder and "
+                        "decoder functions (reed_solomon_*, reed_muller_*, code_*), "
+                        "e.g. --audit-hqc libhqc.so HQC-1: every codeword, blocks "
+                        "between two codewords up to the radius, ties, Hankel-built "
+                        "error patterns, whole received words -- each answer exact. "
+                        "The code layer only, not the KEM")
     p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
                    help="audit an ML-KEM or ML-DSA implementation in any language "
                         "through a harness speaking Crucible's JSON-line protocol "
@@ -243,6 +258,16 @@ def build_parser():
     p.add_argument("--mceliece-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-mceliece: bind ROLE (keypair, enc, dec) to SYM; "
                         "repeatable")
+    p.add_argument("--hqc-symbol", action="append", default=[], metavar="ROLE=SYM",
+                   help="with --audit-hqc: bind ROLE (rs_encode, rs_decode, rm_encode, "
+                        "rm_decode, code_encode, code_decode) to SYM; repeatable")
+    p.add_argument("--hqc-profile", choices=("v5", "next"),
+                   help="with --audit-hqc: the code the library implements -- v5 "
+                        "(HQC v5.0.0 and the 2023 round-4 submission; the default) or "
+                        "next (the submitters' unreleased next-release branch)")
+    p.add_argument("--hqc-seed", metavar="SEED",
+                   help="with --audit-hqc: build the vectors from SEED instead of fresh "
+                        "randomness, to replay a reported finding")
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
@@ -259,8 +284,8 @@ def build_parser():
                         "Each audit runs in a child process, so a hang or a crash "
                         "is reported instead of taking pq-verify down with it")
     p.add_argument("--symbol-prefix", metavar="PREFIX",
-                   help="with --audit-kem, --audit-dsa, --audit-fndsa or --audit-mceliece: "
-                        "consider only "
+                   help="with --audit-kem, --audit-dsa, --audit-fndsa, --audit-mceliece "
+                        "or --audit-hqc: consider only "
                         "symbols starting with PREFIX, for a library that exports "
                         "more than one implementation (liboqs: OQS_KEM_ml_kem_768_ "
                         "for its public API, PQCP_MLKEM_NATIVE_MLKEM768_X86_64_ for "
@@ -337,8 +362,12 @@ def main(argv=None):
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--symbol-prefix", args.symbol_prefix,
-             args.audit_kem or args.audit_dsa or args.audit_fndsa or args.audit_mceliece),
+             args.audit_kem or args.audit_dsa or args.audit_fndsa or args.audit_mceliece
+             or args.audit_hqc),
             ("--mceliece-symbol", args.mceliece_symbol, args.audit_mceliece),
+            ("--hqc-symbol", args.hqc_symbol, args.audit_hqc),
+            ("--hqc-profile", args.hqc_profile, args.audit_hqc),
+            ("--hqc-seed", args.hqc_seed, args.audit_hqc),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
             ("--constant-time", args.constant_time, args.audit_kem),
@@ -352,13 +381,17 @@ def main(argv=None):
             ("--fresh-count", args.fresh_count, args.fresh_key),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
-             or args.audit_fndsa or args.audit_mceliece or args.audit_harness)):
+             or args.audit_fndsa or args.audit_mceliece or args.audit_hqc
+             or args.audit_harness)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
-                       "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-fndsa or "
-                                          "--audit-mceliece",
+                       "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-fndsa, "
+                                          "--audit-mceliece or --audit-hqc",
                        "--mceliece-symbol": "--audit-mceliece",
+                       "--hqc-symbol": "--audit-hqc",
+                       "--hqc-profile": "--audit-hqc",
+                       "--hqc-seed": "--audit-hqc",
                        "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
                        "--constant-time": "--audit-kem",
                        "--fresh-key": "--emit-prompt or --verify-response",
@@ -429,7 +462,7 @@ def main(argv=None):
         if not any(getattr(args, a, None) for a in (
                 "acvp", "mldsa_acvp", "acvp_all", "slhdsa_acvp", "slhdsa_siggen",
                 "lms_acvp", "lms_xmss", "lms_xmss_full", "fndsa", "mceliece", "proofs",
-                "edge_cases", "audit_mceliece",
+                "edge_cases", "audit_mceliece", "hqc", "audit_hqc",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
                 "audit_harness",
@@ -449,6 +482,11 @@ def main(argv=None):
     if getattr(args, "mceliece", False):
         from .mceliece import pqverify_mceliece
         mce_result = pqverify_mceliece()
+        ran_task = True
+    hqc_result = None
+    if getattr(args, "hqc", False):
+        from .hqc import pqverify_hqc
+        hqc_result = pqverify_hqc()
         ran_task = True
     proofs_result = None
     if getattr(args, "proofs", False):
@@ -672,6 +710,45 @@ def main(argv=None):
         except OSError as exc:
             mca_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {mca_reason}")
+    hqa_result = hqa_ran = hqa_reason = hqa_artifact = None
+    if getattr(args, "audit_hqc", None):
+        from .hqc import set_name as _hqc_set
+        from .hqc_audit import _ROLES as _HQ_ROLES
+        _p, _ps = args.audit_hqc
+        try:
+            _ps = _hqc_set(_ps)
+        except ValueError as exc:
+            print(f"  {exc}")
+            return 2
+        _syms = {}
+        for item in args.hqc_symbol:
+            role, _, sym = item.partition("=")
+            if role not in _HQ_ROLES or not sym:
+                print(f"  bad --hqc-symbol {item!r}: use ROLE=SYMBOL with ROLE one "
+                      f"of {', '.join(_HQ_ROLES)}")
+                return 2
+            _syms[role] = sym
+        hqa_ran = _ps
+        ran_task = True
+        try:
+            hqa_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {hqa_artifact['summary']}")
+        try:
+            hqa_result, _loaded, hqa_reason = _isolated(
+                args, "pq_verify.hqc_audit", "pqverify_audit_hqc", _p, _ps,
+                symbols=_syms, prefix=args.symbol_prefix,
+                profile=args.hqc_profile or "v5", seed=args.hqc_seed)
+            _bound = _bind_loaded(hqa_artifact, _loaded)
+            hqa_reason = hqa_reason or _bound
+            if hqa_reason:
+                hqa_result = None
+                print(f"  cannot verify: {hqa_reason}")
+        except OSError as exc:
+            hqa_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {hqa_reason}")
     har_result = har_artifact = None
     if getattr(args, "audit_harness", None):
         import shlex as _shlex
@@ -929,6 +1006,30 @@ def main(argv=None):
                   f"--require-full-coverage was set")
             exit_code = 1
 
+    if hqa_ran is not None:
+        from .report import to_json_hqc_audit
+        doc = to_json_hqc_audit(hqa_result, artifact=hqa_artifact, param_set=hqa_ran,
+                                library=args.audit_hqc[0], reason=hqa_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-hqc"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_hqc[0]}:{hqa_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=hqa_artifact)
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: HQC decoder audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print("  FAILING: HQC decoder audit scope is partial and "
+                  "--require-full-coverage was set")
+            exit_code = 1
+
     if response_result is not None:
         doc = to_json_response(response_result)
         if json_doc is None:
@@ -1006,6 +1107,16 @@ def main(argv=None):
             json_doc, reported = doc, "--mceliece"
         if gate and not doc["verified"]:
             print(f"  FAILING: Classic McEliece {doc['status']} "
+                  f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
+            exit_code = 1
+
+    if hqc_result is not None:
+        from .report import to_json_hqc
+        doc = to_json_hqc(hqc_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--hqc"
+        if gate and not doc["verified"]:
+            print(f"  FAILING: HQC code layer {doc['status']} "
                   f"({doc['summary']['checks_passed']}/{doc['summary']['checks_total']})")
             exit_code = 1
 

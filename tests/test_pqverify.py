@@ -2604,7 +2604,7 @@ def _doctor_repo(tmp_path, history=None):
               "edge_vectors.json.gz", "EDGE_MANIFEST.json",
               "hbs_vectors.json.gz", "HBS_MANIFEST.json",
               "fndsa_vectors.json.gz", "FNDSA_MANIFEST.json",
-              "mceliece_kat.json.gz", "MCELIECE_MANIFEST.json"):
+              "mceliece_kat.json.gz", "MCELIECE_MANIFEST.json", "HQC_MANIFEST.json"):
         shutil.copy(root / "pq_verify" / "vectors" / f, repo / "pq_verify" / "vectors" / f)
     shutil.copy(root / "tools" / "vector_state" / "baseline.json",
                 repo / "tools" / "vector_state" / "baseline.json")
@@ -6066,3 +6066,215 @@ def test_mceliece_vendor_rows_and_mutants_are_well_formed_and_published():
     assert published == mod.mceliece_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the Classic McEliece table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-mceliece markers")
+
+
+# ─────────────────────────── HQC (the code layer) ───────────────────────────
+# HQC's standard is not final: its own track. --hqc holds pq-verify's reference
+# to the submitters' generator polynomials and their decoders' answers;
+# --audit-hqc is exercised through a shim whose six entry points call back
+# into the reference, with faults planted in the callbacks.
+
+def test_hqc_reference_reproduces_the_submitters_decoders():
+    from pq_verify.hqc import pqverify_hqc
+    with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_hqc()
+    assert r["verified"] and r["total"] == 61, r["failures"]
+    assert r["detail"]["HQC-1 (v5)"] == (10, 10) and r["detail"]["HQC-5 (next)"] == (10, 10)
+    assert r["track"] == "hqc" and "not final" in r["standard"]
+
+
+def test_hqc_field_refuses_a_generator_of_the_wrong_order():
+    """x has order 51 modulo the next profile's x^8+x^4+x^3+x+1: exp/log tables
+    built on it would be silently wrong."""
+    from pq_verify.hqc import Field
+    with pytest.raises(ValueError, match="order 51"):
+        Field(0x11B, 0x02)
+    assert Field(0x11B, 0x03).exp[255] == 1 and Field(0x11D, 0x02).exp[255] == 1
+
+
+def test_hqc_built_vectors_are_what_they_claim():
+    from pq_verify import hqc as H
+    C, s = H.Code("HQC-1"), H.Stream("test")
+    for m in (1, 7, 14):
+        e = H.defective_errors(C, s, C.delta, m)
+        assert len(e) == C.delta and all(e.values())
+        assert H.hankel_minor(C, e, m) == 0
+        msg = s.bytes(C.k)
+        assert C.rs_decode(H.apply_errors(C.rs_encode(msg), e)) == msg
+    assert C.rs_decode(H.apply_errors(C.rs_encode(bytes(C.k)),
+                                      H.random_errors(C, s, C.delta + 1))) != bytes(C.k)
+    # between two codewords: distance k to the first, 192 - k to the second
+    blk = H.between(C, 0x93, 0x05, 95, s)
+    Y = C.correlations(blk)
+    assert -Y[0x13] == 384 - 2 * 95 and Y[0x05] == 384 - 2 * (192 - 95)
+    assert C.rm_decode_block(blk) == 0x93
+    # equidistant: the lower index wins, as the submitters' code decides
+    assert C.rm_decode_block(H.between(C, 0x40, 0x21, 96, s)) == 0x21
+    Y = C.correlations([H.inversion_word()])
+    best = max(abs(v) for v in Y)
+    assert (128 - best) // 2 == 54 and sum(abs(v) == best for v in Y) == 14
+
+
+_HQC_KEEP = []
+_HQC_NS = {"HQC-1": "PQCLEAN_HQC128_CLEAN", "HQC-3": "PQCLEAN_HQC192_CLEAN",
+           "HQC-5": "PQCLEAN_HQC256_CLEAN"}
+
+
+def _hqc_shim(tmp_path, name="HQC-1", fault=""):
+    """An HQC code layer over pq-verify's reference. Faults: tie-high (ties to
+    the highest index), drop-copy (one copy not summed), cap (the submitters'
+    AVX2 search width, 1 << (5 + copies / 2)), defective-chain (wrong whenever
+    a leading Hankel minor of the errors vanishes), overflow (one byte past
+    the output), next-profile (encodes the other code)."""
+    import ctypes as C, shutil, subprocess
+    from pq_verify import hqc as H
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libhqc{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", f"-DPQV_NS={_HQC_NS[name]}",
+                    "-o", str(so), str(root / "tests" / "data" / "hqc_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    R = H.Code(name)
+    E = H.Code(name, "next") if fault == "next-profile" else R
+
+    def rm_block(copies):
+        if fault not in ("tie-high", "drop-copy", "cap"):
+            return R.rm_decode_block(copies)
+        Y = R.correlations(copies[:-1] if fault == "drop-copy" else copies)
+        best = max(abs(v) for v in Y)
+        tied = [i for i, v in enumerate(Y) if abs(v) == best]
+        u = tied[-1] if fault == "tie-high" else tied[0]
+        cap = 1 << (5 + R.copies // 2)
+        if fault == "cap" and best // 2 > cap:
+            u = next(i for i, v in enumerate(Y) if abs(v) // 2 > cap)
+        return u | (0x80 if Y[u] < 0 else 0)
+
+    def rs_decode(word):
+        m = R.rs_decode(word)
+        if m is not None and fault == "defective-chain":
+            e = {p: a ^ b for p, (a, b) in enumerate(zip(word, R.rs_encode(m))) if a != b}
+            if any(H.hankel_minor(R, e, j) == 0 for j in range(1, len(e))):
+                return bytes(R.k)
+        return m if m is not None else bytes(R.k)
+
+    @C.CFUNCTYPE(None, C.c_int, C.c_void_p, C.c_void_p)
+    def cb(role, out, inp):
+        if role == 0:
+            res = E.rs_encode(C.string_at(inp, R.k))
+        elif role == 1:
+            res = rs_decode(C.string_at(inp, R.n1)) + (b"\x00" if fault == "overflow" else b"")
+        elif role == 2:
+            res = E.rm_encode(C.string_at(inp, R.n1))
+        elif role == 3:
+            res = bytes(rm_block(b) for b in R.blocks(C.string_at(inp, R.word_bytes)))
+        elif role == 4:
+            res = E.code_encode(C.string_at(inp, R.k))
+        else:
+            sym = bytes(rm_block(b) for b in R.blocks(C.string_at(inp, R.word_bytes)))
+            res = rs_decode(sym)
+        C.memmove(out, res, len(res))
+    lib.pqvtest_hqc_register(cb)
+    _HQC_KEEP.extend([lib, cb])
+    return str(so)
+
+
+def _hqc_audit(so, name="HQC-1", **kw):
+    from pq_verify.hqc_audit import pqverify_audit_hqc
+    with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_hqc(so, name, verbose=True, seed="test", **kw)
+    return r, out.getvalue()
+
+
+def test_hqc_audit_verifies_a_correct_decoder(tmp_path):
+    r, _ = _hqc_audit(_hqc_shim(tmp_path))
+    assert r["verified"], r["failures"]
+    assert r["detail"] == {"encode": (18, 18), "rm-decode": (414, 414), "rs-decode": (28, 28),
+                           "code-decode": (9, 9), "bounds": (66, 66)}
+    assert r["symbols"]["rm_decode"] == "PQCLEAN_HQC128_CLEAN_reed_muller_decode"
+    assert r["track"] == "hqc" and r["seed"] == "test" and not r["not_exported"]
+
+
+@pytest.mark.parametrize("fault,stage,says", [
+    ("tie-high", "rm-decode", "tie broken differently"),
+    ("drop-copy", "rm-decode", "not maximum likelihood"),
+    ("defective-chain", "rs-decode", "Hankel minor"),
+    ("overflow", "bounds", "outside its 16-byte output"),
+    ("next-profile", "encode", "--hqc-profile next")])
+def test_hqc_audit_catches_each_planted_fault(tmp_path, fault, stage, says):
+    r, _ = _hqc_audit(_hqc_shim(tmp_path, fault=fault))
+    p, t = r["detail"][stage]
+    assert not r["verified"] and p < t, (fault, r["detail"])
+    said = [f["case"] + ": " + f["detail"] for f in r["failures"] if f["stage"] == stage]
+    assert any(says in x for x in said), said[:5]
+
+
+@pytest.mark.parametrize("name,rm,code", [("HQC-1", (408, 414), (7, 9)),
+                                          ("HQC-5", (536, 540), (7, 9))])
+def test_hqc_audit_sees_the_avx2_search_width(tmp_path, name, rm, code):
+    """The AVX2 decoder's peak search stops at 1 << (5 + copies / 2): 64 for
+    three copies, 128 for five, below the 96 / 160 a second peak can reach.
+    Blocks inside the radius whose wrong peak clears it and has the lower
+    index come back wrong; random noise essentially never makes one."""
+    r, _ = _hqc_audit(_hqc_shim(tmp_path, name, fault="cap"), name)
+    assert r["detail"]["rm-decode"] == rm and r["detail"]["code-decode"] == code
+    assert r["detail"]["rs-decode"][0] == r["detail"]["rs-decode"][1]
+    assert all("flips from" in f["case"] or f["stage"] == "code-decode"
+               for f in r["failures"])
+
+
+def test_hqc_symbols_resolve_across_namings():
+    from pq_verify.hqc_audit import resolve_symbols
+    roles = ("reed_solomon_encode", "reed_solomon_decode", "reed_muller_encode",
+             "reed_muller_decode", "code_encode", "code_decode")
+    pqclean = [f"PQCLEAN_HQC{s}_CLEAN_{r}" for s in ("128", "192", "256") for r in roles]
+    f, amb = resolve_symbols(pqclean, "HQC-3")
+    assert not amb and f["code_decode"] == "PQCLEAN_HQC192_CLEAN_code_decode"
+    oqs = [f"PQCHQC_HQC{s}_C_{r}" for s in ("1", "3", "5") for r in roles]
+    f, amb = resolve_symbols(oqs, "HQC-5")
+    assert not amb and f["rm_decode"] == "PQCHQC_HQC5_C_reed_muller_decode"
+    f, amb = resolve_symbols(list(roles), "HQC-1")            # the submitters' own build
+    assert not amb and f["rs_decode"] == "reed_solomon_decode"
+    f, amb = resolve_symbols(list(roles) + pqclean, "HQC-1")  # two implementations: refused
+    assert set(amb) == {"rs_encode", "rs_decode", "rm_encode", "rm_decode",
+                        "code_encode", "code_decode"}
+    f, amb = resolve_symbols(list(roles) + pqclean, "HQC-1", prefix="PQCLEAN_")
+    assert not amb and f["code_encode"] == "PQCLEAN_HQC128_CLEAN_code_encode"
+
+
+def test_hqc_cli_gates_its_inputs():
+    from pq_verify.cli import main
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert main(["--audit-hqc", "x.so", "HQC-2"]) == 2
+        assert main(["--hqc-symbol", "rm_decode=x"]) == 2
+        assert main(["--hqc-profile", "next"]) == 2
+        assert main(["--audit-hqc", "x.so", "hqc-128", "--hqc-symbol", "bogus=x"]) == 2
+    text = out.getvalue()
+    assert "unknown HQC parameter set" in text
+    assert "--hqc-symbol does nothing without --audit-hqc" in text
+    assert "--hqc-profile does nothing without --audit-hqc" in text
+    assert "bad --hqc-symbol" in text
+
+
+def test_hqc_vendor_rows_and_mutants_are_well_formed_and_published():
+    import re
+    from pq_verify.hqc import SETS, PROFILES
+    mod, root = _vendor_audit()
+    rows = mod.load_hqc_table()
+    assert {r["build"] for r in rows} <= set(mod.HQC_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert row["profile"] in PROFILES and row["seed"]
+        assert set(row["results"]) == set(row["sets"]) and set(row["sets"]) <= set(SETS)
+        for ps in row["sets"]:
+            assert set(row["results"][ps]) <= set(mod.HQC_STAGES), ps
+        for m in row.get("mutants", []):
+            assert m["set"] in row["sets"], m["name"]
+            assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+    assert any(r.get("mutants") for r in rows)
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.HQC_BEGIN, 1)[1].split(mod.HQC_END, 1)[0].strip()
+    assert published == mod.hqc_markdown(rows).strip(), (
+        "AUDITS.md is out of date: paste the HQC table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-hqc markers")

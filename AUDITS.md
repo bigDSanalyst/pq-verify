@@ -690,6 +690,123 @@ Not covered: the distribution of encapsulation's error vectors (only their
 weight, validity and repetition), constant time, and liboqs's Classic
 McEliece (its symbol names are recognised; it is not yet a pinned row).
 
+## HQC decoder audit — standard not final, with mutants
+
+HQC was selected by NIST in March 2025; its standard is not final. These
+results are on a track of their own, never part of a FIPS 203/204/205 verdict,
+and they cover HQC's error-correcting code, not the KEM: the Reed–Solomon code
+over GF(2⁸) (outer) concatenated with a duplicated Reed–Muller RM(1,7)
+(inner) that decryption decodes.
+
+**Why the decoder on its own.** Honest decryptions almost never put more than
+two errors in front of the outer decoder, and decapsulation re-encrypts, so a
+ciphertext built to reach a corner of the decoder is rejected whatever the
+decoder did. A decoder bug that only bites on rare error patterns passes
+PQClean's known-answer test (one honest vector) and every round trip. So the audit calls the encoder and decoder functions directly.
+
+**The reference.** `pq_verify/hqc.py`: GF(2⁸) by tables on a generator it
+checks has order 255; the Reed–Solomon generator polynomial
+(x − α)(x − α²)…(x − α^2δ), systematic encoding and a Berlekamp–Massey /
+Forney decoder; the Reed–Muller encoder and an exact maximum-likelihood
+decoder (the Walsh–Hadamard transform of the summed copies, ties to the lowest
+index). Two code profiles: **v5** (HQC v5.0.0, whose code layer is the
+2023-04-30 submission's) and **next** (the submitters' unreleased
+next-release branch: GF(2⁸) modulo x⁸+x⁴+x³+x+1 with generator x + 1, since x
+has order 51 there, and each Reed–Muller byte stored most-significant bit
+first). `pq-verify --hqc` holds it to the generator polynomials published in
+the submitters' `parameters.h`, and to their own reference decoders' answers
+on every input of a fixed-seed suite, pinned as digests
+(`pq_verify/vectors/HQC_MANIFEST.json`, `tools/pin_hqc_vectors.py`):
+61/61. PQClean's 2023 code answers identically to v5.0.0 on the whole suite.
+
+**The audit** (`--audit-hqc`), per library and parameter set, on vectors
+built fresh each run (the seed is reported; the rows below use a fixed one):
+
+- **encode:** the Reed–Solomon, Reed–Muller and concatenated encoders, byte
+  for byte. An encoder that matches the other profile says so.
+- **rm-decode:** every codeword (256); one block per position with noise up
+  to the radius (32 × copies − 1 flips); blocks between two codewords at
+  distances 32 × copies − 1, 32 × copies − 8, 24, 16 and 8 × copies from the
+  nearer, half of them with the nearer codeword's index the higher; 12 ties
+  (equidistant blocks, including indices 0 and 127) and the GF(2⁷) inversion
+  word Tr(j⁻¹), at distance 54 from 14 codewords at once; one exact copy
+  outvoting noisy ones, in each copy position; random blocks. Each answer
+  exact. A wrong answer is reported as either not maximum likelihood (a
+  nearer codeword exists) or a tie broken differently.
+- **rs-decode:** errors up to the radius δ (no errors; 1, 2, δ − 1 and δ at
+  random positions; δ all in the parity part; δ all in the message part), and
+  error patterns whose m-th leading Hankel minor vanishes, for every m below
+  δ and for 2 and 3 errors. That minor is affine in each error value
+  (Cauchy–Binet), so one value is solved for. Past the radius no answer is
+  specified and only the bounds are checked.
+- **code-decode:** whole received words within both radii: clean, inner
+  noise in every block, δ symbol errors through the inner code (random and
+  Hankel-built), and every block one flip inside the inner radius, aimed at
+  another codeword.
+- **bounds:** every call writes only its output (guard bytes on both sides
+  of 64-byte-aligned buffers).
+
+<!-- vendor-audits-hqc:begin -->
+| Library | Commit | Profile | Sets | encode | rm-decode | rs-decode | code-decode | bounds | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | 9/9 | 1,783/1,783 **VERIFIED** |
+| HQC reference | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
+| HQC optimized (AVX2) | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
+| HQC reference | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
+| HQC optimized (AVX2) | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
+<!-- vendor-audits-hqc:end -->
+
+**Two defects in the submitters' optimized (AVX2) Reed–Muller decoder**, in
+the v5.0.0 release and still on next-release at `71090d4`, each reproduced on
+all three parameter sets. The reference decoder (`src/ref`) has neither.
+
+1. *Its peak search stops short.* `find_peaks` binary-searches for the
+   largest |transform value| from a width of `1 << (5 + MULTIPLICITY / 2)`.
+   Its comment gives 64, 128 and 256 for multiplicities 2, 4 and 6: half the
+   largest possible value (64 × multiplicity), above which only one value can
+   lie. HQC's multiplicities are 3 and 5, and integer division rounds down:
+   the width is 64 and 128, while two values can reach 96 and 160 together
+   (|t_a| + |t_b| ≤ 64 × multiplicity). With two above the width the decoder
+   returns the lower index of the two, not the larger value. A block 95 flips
+   from one codeword (inside HQC-1's unique-decoding radius of 95) and 97 from
+   another comes back as the farther one whenever its index is lower: 6 of the
+   414 blocks in an HQC-1 audit, 4 of 448 and 540 for HQC-3 and HQC-5, and 2 of
+   9 whole received words within both codes' radii decode to the wrong
+   message. In 40 800 blocks (HQC-1 and HQC-3; uniformly random words, and
+   codewords with independent bit flips at rates 0.30, 0.35 and 0.40) it
+   never differed from the reference: random testing, KATs and round trips
+   do not see it. Starting the search at
+   `1 << (6 + MULTIPLICITY / 2)` fixes it (no differences on the same
+   vectors). Its effect on HQC's decryption failure rate was not estimated.
+2. *It reads a vector through a `uint16_t` pointer.* The sign lookup does
+   `uint16_t *ptr = (uint16_t *)&tmp;` on an `__m256i`, which strict aliasing
+   does not allow. GCC 13.3 at `-O2` then returns the wrong sign bit for every
+   block (the codeword 0x00 decodes as 0x80) and the KEM fails every round
+   trip (0 of 50 shared secrets agree). At `-O3`, the submitters' CMake
+   default, at `-O2 -fno-strict-aliasing`, and with clang 18 it works; copying
+   the vector out with `memcpy` fixes it under both compilers. The rows above
+   build the submitters' code at `-O3`, as they do, so they record the first
+   defect only.
+
+**Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
+stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its
+length test, or moving the saved locator's degree on any nonzero discrepancy;
+syndromes ignoring position 0; Forney's denominator dropping a factor;
+Reed–Muller ties going to the highest index; one copy left out of the sum;
+index 127 never a peak; the first transform entry corrected for one copy too
+few.
+
+The first three are why the Hankel-built patterns exist. Measured on HQC-1
+(δ = 15), 20 000 random weight-15 patterns each: 1 078, 1 078 and 1 882 wrong
+answers (5–9%), against 56/56, 56/56 and 51/56 on Hankel-built ones. Honest
+decryptions, with at most a couple of outer errors, essentially never reach
+them, and the suite's handful of random patterns may miss them; the built
+patterns do not.
+
+Not covered: the KEM (key generation, encryption, sampling, hashing), constant
+time, and liboqs's binary, whose HQC functions have hidden visibility (its
+sources are the submitters' 2025 reference, the v5 profile).
+
 ## Accumulated vectors
 
 Every KEM, ML-DSA and harness audit also runs 10 000 seeded random cases

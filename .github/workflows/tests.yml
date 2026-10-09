@@ -69,6 +69,8 @@ jobs:
         run: python -m pq_verify.cli --fndsa
       - name: Classic McEliece (not FIPS) — reference regenerates every KAT, ten sets
         run: python -m pq_verify.cli --mceliece
+      - name: HQC code layer (standard not final) — reference vs the submitters' decoders
+        run: python -m pq_verify.cli --hqc
 
       - name: Hybrid (RFC 10024) — prompt emits and round-trips
         run: |
@@ -320,6 +322,14 @@ jobs:
           r = pqverify_mceliece(verbose=False, sets=("mceliece348864",))
           assert r["verified"] and r["total"] == 10, (r["passed"], r["total"])
           print("Classic McEliece KATs present (not FIPS):", r["vectors"])
+          PY
+      - name: The wheel must carry the HQC manifest
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          from pq_verify.hqc import pqverify_hqc
+          r = pqverify_hqc(verbose=False, sets=("HQC-1",), profiles=("v5",))
+          assert r["verified"] and r["total"] == 11, (r["passed"], r["total"])
+          print("HQC manifest present (standard not final):", r["vectors"])
           PY
       - name: The wheel must carry the hybrid module
         run: |

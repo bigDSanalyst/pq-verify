@@ -57,7 +57,7 @@ from pq_verify.core import _VECTOR_BUNDLES, _bundle_name      # noqa: E402
 OK, DECIDE, WARN, BLOCK = "ok", "DECIDE", "WARN", "BLOCK"
 PINNED_SIDE = ("manifest", "watched", "keycheck:pinned", "references", "upstream",
                "edge:manifest", "references:edge", "hbs:manifest",
-               "fndsa:manifest", "mceliece:manifest")
+               "fndsa:manifest", "mceliece:manifest", "hqc:manifest")
 STABLE_DAYS = 14          # NIST has reverted files within a day; wait this long
 REFERENCES = ("kyber-py", "dilithium-py", "slh-dsa")
 SUITES = {                # the runner for each vector directory prefix
@@ -348,6 +348,24 @@ def check_mceliece_manifest(repo=REPO):
     return Check("mceliece:manifest", OK, f"Classic McEliece KATs (not FIPS): "
                  f"{len(m['published_nistkat_sha256'])} sets match MCELIECE_MANIFEST.json "
                  f"(PQClean {m['source']['commit'][:7]})")
+
+
+def check_hqc_manifest(repo=REPO):
+    """HQC_MANIFEST.json covers every profile and set, offline. That the
+    reference reproduces the submitters' answers is proved by pq-verify --hqc."""
+    path = Path(repo) / "pq_verify" / "vectors" / "HQC_MANIFEST.json"
+    if not path.exists():
+        return Check("hqc:manifest", BLOCK, "the HQC manifest is missing",
+                     fix="python3 tools/pin_hqc_vectors.py")
+    from pq_verify import hqc as H
+    problems = H.manifest_problems(path)
+    if problems:
+        return Check("hqc:manifest", BLOCK, f"{len(problems)} problem(s) with the HQC "
+                     "manifest", "\n".join(problems[:10]), "python3 tools/pin_hqc_vectors.py")
+    m = json.loads(path.read_text())
+    return Check("hqc:manifest", OK, "HQC code layer (standard not final): "
+                 + ", ".join(f"{p} @ {s['commit'][:7]}" for p, s in sorted(m["sources"].items()))
+                 + " pinned for every set")
 
 
 def check_reference_edges():
@@ -688,6 +706,7 @@ def run(repo, candidate=False, candidate_dir=None, apply=False, commit_overrides
     checks.append(check_hbs_manifest(repo))
     checks.append(check_fndsa_manifest(repo))
     checks.append(check_mceliece_manifest(repo))
+    checks.append(check_hqc_manifest(repo))
     if not skip_edge:
         checks.append(check_reference_edges())
     up, moved = check_upstream_state(manifest, baseline, history)

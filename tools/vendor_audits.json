@@ -2566,5 +2566,521 @@
         }
       ]
     }
+  ],
+  "hqc_audits": [
+    {
+      "library": "PQClean clean",
+      "url": "https://github.com/PQClean/PQClean",
+      "commit": "0586a824fc0d49df0b6b6e9179d8d15d06d0974f",
+      "date": "2026-08-04",
+      "note": "HQC round-4 submission (2023-04-30); its code layer is v5.0.0's",
+      "build": "pqclean-hqc",
+      "profile": "v5",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            414,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            448,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            540,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        }
+      },
+      "mutants": [
+        {
+          "name": "Berlekamp-Massey acts on a zero discrepancy",
+          "set": "HQC-1",
+          "file": "crypto_kem/hqc-128/clean/reed_solomon.c",
+          "find": "mask12 = mask1 & mask2;",
+          "replace": "mask12 = mask2;",
+          "fails": [
+            "code-decode",
+            "rs-decode"
+          ]
+        },
+        {
+          "name": "Berlekamp-Massey skips the length test",
+          "set": "HQC-3",
+          "file": "crypto_kem/hqc-192/clean/reed_solomon.c",
+          "find": "mask12 = mask1 & mask2;",
+          "replace": "mask12 = mask1;",
+          "fails": [
+            "code-decode",
+            "rs-decode"
+          ]
+        },
+        {
+          "name": "the saved locator's degree moves on any nonzero discrepancy",
+          "set": "HQC-5",
+          "file": "crypto_kem/hqc-256/clean/reed_solomon.c",
+          "find": "deg_sigma_p ^= mask12 & (deg_sigma_copy ^ deg_sigma_p);",
+          "replace": "deg_sigma_p ^= mask1 & (deg_sigma_copy ^ deg_sigma_p);",
+          "fails": [
+            "code-decode",
+            "rs-decode"
+          ]
+        },
+        {
+          "name": "syndromes ignore position 0",
+          "set": "HQC-1",
+          "file": "crypto_kem/hqc-128/clean/reed_solomon.c",
+          "find": "syndromes[i] ^= cdw[0];",
+          "replace": ";",
+          "fails": [
+            "code-decode",
+            "rs-decode"
+          ]
+        },
+        {
+          "name": "Forney's denominator drops a factor",
+          "set": "HQC-3",
+          "file": "crypto_kem/hqc-192/clean/reed_solomon.c",
+          "find": "for (size_t k = 1; k < PARAM_DELTA; ++k) {",
+          "replace": "for (size_t k = 1; k < PARAM_DELTA - 1; ++k) {",
+          "fails": [
+            "code-decode",
+            "rs-decode"
+          ]
+        },
+        {
+          "name": "Reed-Muller ties go to the highest index",
+          "set": "HQC-1",
+          "file": "crypto_kem/hqc-128/clean/reed_muller.c",
+          "find": "mask = -(((uint16_t)(peak_abs - abs)) >> 15);",
+          "replace": "mask = -(((uint16_t)(peak_abs - abs - 1)) >> 15);",
+          "fails": [
+            "rm-decode"
+          ]
+        },
+        {
+          "name": "one copy is left out of the sum",
+          "set": "HQC-5",
+          "file": "crypto_kem/hqc-256/clean/reed_muller.c",
+          "find": "for (size_t copy = 1; copy < MULTIPLICITY; ++copy) {\n        for (size_t part = 0; part < 2; ++part) {\n            for (size_t bit = 0; bit < 64; ++bit) {\n                dest",
+          "replace": "for (size_t copy = 1; copy < MULTIPLICITY - 1; ++copy) {\n        for (size_t part = 0; part < 2; ++part) {\n            for (size_t bit = 0; bit < 64; ++bit) {\n                dest",
+          "fails": [
+            "code-decode",
+            "rm-decode"
+          ]
+        },
+        {
+          "name": "index 127 is never a peak",
+          "set": "HQC-3",
+          "file": "crypto_kem/hqc-192/clean/reed_muller.c",
+          "find": "for (uint16_t i = 0; i < 128; ++i) {",
+          "replace": "for (uint16_t i = 0; i < 127; ++i) {",
+          "fails": [
+            "code-decode",
+            "rm-decode"
+          ]
+        },
+        {
+          "name": "the first transform entry is corrected for one copy too few",
+          "set": "HQC-1",
+          "file": "crypto_kem/hqc-128/clean/reed_muller.c",
+          "find": "transform[0] -= 64 * MULTIPLICITY;",
+          "replace": "transform[0] -= 64 * (MULTIPLICITY - 1);",
+          "fails": [
+            "rm-decode"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "HQC reference",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "f46e54222ffb76706678a9ec8a43cd2188a12ab1",
+      "date": "2025-08-22",
+      "note": "the submitters' v5.0.0 release, src/ref (liboqs 0.16 ships these decoder files unchanged)",
+      "build": "hqc-ref",
+      "profile": "v5",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            414,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            448,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            540,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "library": "HQC optimized (AVX2)",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "f46e54222ffb76706678a9ec8a43cd2188a12ab1",
+      "date": "2025-08-22",
+      "note": "the submitters' v5.0.0 release, src/x86_64/avx256",
+      "build": "hqc-avx256",
+      "profile": "v5",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            408,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            444,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            536,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "library": "HQC reference",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "71090d4679837a0de1e6946284818184994d952a",
+      "date": "2026-08-05",
+      "note": "the submitters' next-release branch (unreleased), src/ref",
+      "build": "hqc-ref",
+      "profile": "next",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            414,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            448,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            540,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            9,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "library": "HQC optimized (AVX2)",
+      "url": "https://gitlab.com/pqc-hqc/hqc.git",
+      "commit": "71090d4679837a0de1e6946284818184994d952a",
+      "date": "2026-08-05",
+      "note": "the submitters' next-release branch (unreleased), src/x86_64/avx256",
+      "build": "hqc-avx256",
+      "profile": "next",
+      "seed": "vendor-audit-v1",
+      "sets": [
+        "HQC-1",
+        "HQC-3",
+        "HQC-5"
+      ],
+      "results": {
+        "HQC-1": {
+          "bounds": [
+            66,
+            66
+          ],
+          "encode": [
+            18,
+            18
+          ],
+          "rm-decode": [
+            408,
+            414
+          ],
+          "rs-decode": [
+            28,
+            28
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-3": {
+          "bounds": [
+            65,
+            65
+          ],
+          "encode": [
+            17,
+            17
+          ],
+          "rm-decode": [
+            444,
+            448
+          ],
+          "rs-decode": [
+            29,
+            29
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        },
+        "HQC-5": {
+          "bounds": [
+            74,
+            74
+          ],
+          "encode": [
+            15,
+            15
+          ],
+          "rm-decode": [
+            536,
+            540
+          ],
+          "rs-decode": [
+            42,
+            42
+          ],
+          "code-decode": [
+            7,
+            9
+          ]
+        }
+      }
+    }
   ]
 }

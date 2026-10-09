@@ -2,7 +2,8 @@ name: Vendor audits (pinned)
 
 # Rebuilds every third-party ML-KEM, ML-DSA, LMS/HSS, XMSS and FN-DSA (draft)
 # library in tools/vendor_audits.json at its pinned commit and re-runs
-# --audit-kem / --audit-dsa / --audit-hbs / --audit-fndsa / --audit-mceliece against the pinned vectors. Every input is
+# --audit-kem / --audit-dsa / --audit-hbs / --audit-fndsa / --audit-mceliece / --audit-hqc
+# against the pinned vectors. Every input is
 # pinned, so a failure means pq-verify's own behaviour changed. Each row's
 # mutants (one planted bug each) must FAIL the audit; one that passes is a
 # bug class pq-verify cannot see.
@@ -28,6 +29,7 @@ on:
       - "tests/data/hbs_shim.c"
       - "tests/data/fndsa_shim.c"
       - "tests/data/mceliece_shim.c"
+      - "tests/data/hqc_shim.c"
       - "tests/data/oqs_mldsa_shim.c"
       - "constraints-reference.txt"
       - ".github/workflows/vendor-audits.yml"

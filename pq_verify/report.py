@@ -643,6 +643,73 @@ def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
     return doc
 
 
+_HQC_STANDARD = "HQC code layer (selected by NIST; standard not final)"
+
+
+def to_json_hqc(result):
+    """Native schema for pqverify_hqc: pq-verify's HQC code-layer reference
+    against the submitters' generator polynomials and decoder answers. HQC's
+    standard is not final; `track` / `standard` say so."""
+    doc = _envelope("pq-verify/hqc-result", None,
+                    reason="reference conformance, no vendor binary loaded")
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["track"] = "hqc"
+    doc["standard"] = result.get("standard", _HQC_STANDARD)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["vectors"] = result.get("vectors")
+    doc["reference"] = result.get("reference")
+    doc["groups"] = {k: {"passed": v[0], "total": v[1]}
+                     for k, v in (result.get("detail") or {}).items()}
+    doc["failures"] = result.get("failures", [])
+    doc["summary"] = {"checks_passed": p, "checks_total": t,
+                      "findings": 0 if p == t else t - p}
+    return doc
+
+
+def to_json_hqc_audit(result, artifact=None, param_set=None, library=None, reason=None):
+    """Native schema for pqverify_audit_hqc: a vendor HQC decoder (the code
+    layer, not the KEM). Entry points the library does not export are listed
+    and make the scope partial."""
+    doc = _envelope("pq-verify/hqc-audit-result", artifact)
+    doc["track"] = "hqc"
+    doc["standard"] = _HQC_STANDARD
+    doc["parameter_set"] = param_set
+    doc["library"] = library or (result or {}).get("library")
+    if result is None:
+        doc.update(status="CANNOT VERIFY", verified=False, stages={}, symbols={},
+                   summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
+                   findings=["cannot verify: " + (
+                       reason or "no HQC decoder entry point could be bound unambiguously")])
+        return doc
+    p, t = result.get("passed", 0), result.get("total", 0)
+    doc["verified"] = bool(result.get("verified"))
+    doc["status"] = "VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["profile"] = result.get("profile")
+    doc["seed"] = result.get("seed")
+    doc["symbols"] = result.get("symbols", {})
+    doc["not_exported"] = result.get("not_exported", [])
+    doc["stages"] = {k: {"passed": v[0], "total": v[1],
+                         "via": (result.get("via") or {}).get(k)}
+                     for k, v in (result.get("detail") or {}).items()}
+    fails = result.get("failures") or []
+    findings = []
+    for k, v in (result.get("detail") or {}).items():
+        if v[0] != v[1]:
+            first = next((f for f in fails if f["stage"] == k), None)
+            where = f"; first: {first['case']}: {first['detail']}" if first else ""
+            findings.append(f"HQC: stage {k}: {v[0]}/{v[1]}{where}")
+    doc["failures"] = fails
+    doc["findings"] = findings
+    missing = doc["not_exported"]
+    doc["summary"] = {"checks_passed": p, "checks_total": t, "findings": len(findings)}
+    doc["scope"] = _scope(t, len(missing),
+                          na_why="entry points not exported: " + ", ".join(missing))
+    return doc
+
+
 def artifact_harness(path, command):
     """Binding for a harness audit: the harness executable is hashed, and the
     detail says that the library behind it is not."""
