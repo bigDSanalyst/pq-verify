@@ -277,7 +277,6 @@ class KeyPair:
             P, delta, c, g, pi, s, pk)
 
     def sk_fields(self):
-        P = self.P
         return {"delta": self.delta, "c": self.c.to_bytes(8, "little"),
                 "g": b"".join(x.to_bytes(2, "little") for x in self.g), "s": self.s}
 
@@ -487,7 +486,7 @@ def check_key(P, pk, sk, kp=None):
                  "the seed in the private key does not produce a key on its first "
                  "attempt, so it is not the seed this key came from")]
     out = [("public key = regenerated public key", pk == kp.pk,
-            "" if pk == kp.pk else f"differs in {_first_diff(pk, kp.pk)}")]
+            "" if pk == kp.pk else f"differs in {_first_diff(pk, kp.pk, P.row_bytes)}")]
     want = kp.sk_fields()
     for name in ("c", "g", "s"):
         out.append((f"private key {name} = regenerated", f[name] == want[name],
@@ -499,11 +498,11 @@ def check_key(P, pk, sk, kp=None):
     return out
 
 
-def _first_diff(a, b):
+def _first_diff(a, b, row_bytes):
     if len(a) != len(b):
         return f"length ({len(a)} vs {len(b)} bytes)"
     i = next(i for i in range(len(a)) if a[i] != b[i])
-    return f"byte {i} (row {i // max(1, len(a) // max(1, len(a)))})"
+    return f"byte {i} (row {i // row_bytes} of T)"
 
 
 # ---------------------------------------------------------------------------
