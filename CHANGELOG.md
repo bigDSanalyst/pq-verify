@@ -107,6 +107,24 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - The documentation guards (documented flags exist, referenced files exist,
   links and anchors resolve, the 160-check and ACVP figures match what is
   measured, the RFC 10024 table matches the registry) cover both new files.
+- **LIMITS.md**: everything pq-verify does not check, in one place — what a
+  pass is bound to (an audit-aware library, the CPU's code path, the
+  prompt/response path's `artifact: none`, hidden symbols), the schemes not
+  covered, partial coverage within covered ones, constant-time scope (ML-KEM
+  and Classic McEliece Encaps/Decaps only), parameter security, the verdict
+  classes, and which paths are proved in Coq and which are only tested. Its
+  estimator figures and its constant-time table are held to the code by tests.
+- The README's estimator row asked "Are the parameters hard enough?"; it now
+  asks what the estimator answers. ML-KEM's three sets report the
+  lattice-estimator's pinned primal-uSVP values; the formula for custom
+  parameters matches it at its calibration point (Kyber-512) and gives
+  β = 624 and 874 on ML-KEM-768's and -1024's parameters, against 630 and 864.
+  "Reproduces lattice-estimator exactly" is gone from README and
+  ARCHITECTURE.md.
+- ARCHITECTURE.md's package list names all 24 modules, `coq/`, `harness/`,
+  `vectors/` and `tools/`; the `dist/` files it listed are release assets,
+  not in the repository. AUDITS.md's scope no longer says no audit checks
+  constant time.
 
 ### Added — liboqs, audited per implementation
 

@@ -1963,7 +1963,7 @@ import pathlib as _pathlib
 import re as _re
 
 _REPO = _pathlib.Path(__file__).resolve().parent.parent
-_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md")
+_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
 
 
 def _doc_text(name):
@@ -2051,7 +2051,7 @@ def test_internal_doc_links_resolve():
     """
     import pathlib as _pl
     files = ("README.md", "QUICKSTART.md", "SECURITY.md", "CHANGELOG.md",
-             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md")
+             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
     present = {n: _pl.Path(_REPO / n) for n in files
                if (_REPO / n).exists()}
     if not present:
@@ -2084,6 +2084,38 @@ def test_internal_doc_links_resolve():
                 if not (_REPO / target).exists():
                     broken.append(f"{name}: [{label}]({target}) — file does not exist")
     assert not broken, "broken internal doc links:\n  " + "\n  ".join(broken)
+
+
+def test_limits_md_estimator_numbers_are_the_code_s(capsys):
+    """LIMITS.md quotes the pinned ML-KEM values and what the custom formula
+    gives on the same parameters. Both are numbers in the code, and a limit
+    stated with the wrong number is its own overclaim."""
+    from pq_verify.core import _STANDARD_PARAMS, pqverify_params
+    text = _doc_text("LIMITS.md")
+    pinned = [_STANDARD_PARAMS[f"ML-KEM-{n}"] for n in (512, 768, 1024)]
+    assert "β = {}, {} and {}".format(*(p["_auth_beta"] for p in pinned)) in text
+    assert "{}, {} and {} core-SVP bits".format(*(p["_auth_cl"] for p in pinned)) in text
+    custom = [pqverify_params(n=p["n"], q=p["q"], sigma_s=p["ss"], sigma_e=p["se"])["beta"]
+              for p in pinned[1:]]
+    assert "β = {} and {}, against".format(*custom) in text
+    assert custom != [p["_auth_beta"] for p in pinned[1:]], (
+        "the formula now matches; LIMITS.md should stop calling it close, not exact")
+    assert pqverify_params(n=512, q=3329, sigma_s=1.2247, sigma_e=1.2247)["beta"] == 406
+    capsys.readouterr()
+
+
+def test_limits_md_names_every_audit_constant_time_covers():
+    """The constant-time table in LIMITS.md lists the audits the CLI lets
+    --constant-time run with; a new one must be added there too."""
+    from pq_verify import cli
+    import inspect
+    src = inspect.getsource(cli)
+    allowed = _re.search(r'"--constant-time": "([^"]+)"', src).group(1)
+    flags = _re.findall(r"--audit-[a-z]+", allowed)
+    assert flags, allowed
+    text = _doc_text("LIMITS.md")
+    table = text.split("`--constant-time` is the exception", 1)[1].split("\n\n", 2)[1]
+    assert sorted(_re.findall(r"^\| `(--audit-[a-z]+)`", table, _re.M)) == sorted(flags)
 
 
 # ----------------------------------------------------------------------

@@ -816,6 +816,11 @@ all three parameter sets. The reference decoder (`src/ref`) has neither.
    build the submitters' code at `-O3`, as they do, so they record the first
    defect only.
 
+*Disclosure.* A report for the submitters (gitlab.com/pqc-hqc/hqc), with a
+standalone reproduction that uses only `reed_muller_encode` and
+`reed_muller_decode`, has been drafted and is to be filed by the maintainer.
+Its link and the submitters' response will be recorded here.
+
 **Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
 stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its
 length test, or moving the saved locator's degree on any nonzero discrepancy;
@@ -1003,8 +1008,12 @@ The symbol audits verify the **number-theoretic transform** against the FIPS
 203/204 definitions; `--audit-kem`, `--audit-dsa` and `--audit-hbs` verify a
 library's whole scheme against the pinned vectors. None of them:
 
-- verify constant-time behaviour or side-channel resistance
+- verify side-channel resistance: `--constant-time` checks ML-KEM's and
+  Classic McEliece's Encaps and Decaps for secret-dependent branches and
+  addresses, within the scope in [Constant time](#constant-time---constant-time),
+  and nothing else
 - constitute a security review of the surrounding implementation
 
 A passing NTT audit says the transform is arithmetically correct. It does not
-say the library is free of defects elsewhere.
+say the library is free of defects elsewhere. Everything pq-verify does not
+check is collected in [LIMITS.md](LIMITS.md).

@@ -31,7 +31,7 @@ Layers of an audit:
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
 | **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
-| **Security** | Are the parameters hard enough? | Bai-Galbraith primal-uSVP + hybrid attack estimator |
+| **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](LIMITS.md#parameter-security)) |
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
 Plus per-layer algebraic protection allocation: which NTT layers are worth
@@ -484,6 +484,10 @@ pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE
 
 The algebraic core is proven natively where the proof is exact; the full implementation is proven byte-exact against NIST's own bytes. We make the claims we can prove.
 
+Everything pq-verify does not check — schemes, side channels, parameter
+security, which paths are proved and which are only tested — is collected in
+[LIMITS.md](LIMITS.md).
+
 ### Side channels are not measured
 
 pq-verify compares values. It never executes an implementation under
@@ -591,7 +595,7 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 
 **Deliberately NOT required** (a deployment advantage):
 - No numpy, scipy, or PyTorch — pure Python + ctypes + inline C
-- No SageMath — the `pqverify_params` lattice estimator is self-contained (it reproduces the lattice-estimator's results without it)
+- No SageMath — the `pqverify_params` lattice estimator is self-contained (ML-KEM's lattice-estimator values are pinned; custom parameters use a calibrated formula, [close but not exact](LIMITS.md#parameter-security))
 
 ---
 
