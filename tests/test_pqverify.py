@@ -799,6 +799,11 @@ def test_package_imports_on_every_older_interpreter_present():
     for minor in range(floor[1], sys.version_info.minor):
         exe = shutil.which(f"python3.{minor}")
         if exe:
+            # Check if it actually exists or is a pyenv shim that fails
+            import subprocess as _sub
+            if _sub.run([exe, "--version"], capture_output=True).returncode != 0:
+                exe = None
+        if exe:
             older.append((minor, exe))
     if not older:
         pytest.skip(f"no interpreter older than 3.{sys.version_info.minor} "

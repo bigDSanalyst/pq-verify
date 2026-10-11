@@ -1497,9 +1497,7 @@ def audit_fips203_params():
                        f"ct={len(ct)}/{p['ct']} ss={len(ss1)}/{p['ss']} "
                        f"roundtrip={'OK' if ss1==ss2 else 'FAIL'}")
     except Exception as e:
-        r.add_test('FIPS 203 (kyber-py)', False,
-                   f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed \u2014 pip install kyber-py' if not DEGRADED['deps'].append('kyber-py') else '')
+        r.add_skip('FIPS 203 (kyber-py)', f'{type(e).__name__}: {e}' if str(e) else 'kyber-py not installed', 'kyber-py' if not str(e) else None)
     return r
 
 def audit_exhaustive_inverses(lib):
@@ -1580,9 +1578,7 @@ def audit_kyber_roundtrip():
         r.add_test('ML-KEM-768 \u00d7 100 roundtrips', fails == 0,
                    f'{fails} failures, {elapsed:.1f}s, {elapsed/100*1000:.0f}ms/op')
     except Exception as e:
-        r.add_test('kyber-py roundtrip', False,
-                   f'{type(e).__name__}: {e}' if str(e) else
-                   'kyber-py not installed' if not DEGRADED['deps'].append('kyber-py') else '')
+        r.add_skip('kyber-py roundtrip', f'{type(e).__name__}: {e}' if str(e) else 'kyber-py not installed', 'kyber-py' if not str(e) else None)
     return r
 
 def audit_boundary_values(lib):
@@ -2372,13 +2368,13 @@ def audit_fips204_params():
     except ImportError:
         # Without dilithium-py there is nothing to check these constants
         # AGAINST -- asserting them true compares them with themselves.
-        DEGRADED['deps'].append('dilithium-py')
         DEGRADED['skipped_checks'].append('FIPS 204 parameter validation')
         for name, params in fips204.items():
-            r.add_test(f'{name} params (unverified)', False,
-                       f"SKIPPED \u2014 dilithium-py not installed, constants "
+            r.add_skip(f'{name} params (unverified)',
+                       f"SKIPPED — dilithium-py not installed, constants "
                        f"not checked against an implementation "
-                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})")
+                       f"(pk={params['pk']} sk={params['sk']} sig={params['sig']})",
+                       'dilithium-py')
     return r
 
 # ================================================================
@@ -3036,7 +3032,7 @@ def audit_batch_api(engines, quick=False):
     n_kp = 10 if quick else 50
     rpt = batch_verify_keypairs(n_kp, seed=42)
     if rpt.get('error'):
-        r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', False, rpt['error'])
+        r.add_skip(f'Batch ML-KEM-768 keypairs ({n_kp})', rpt['error'], 'kyber-py')
     else:
         r.add_test(f'Batch ML-KEM-768 keypairs ({n_kp})', rpt['failed'] == 0,
                    f"{rpt['passed']}/{rpt['total']} roundtrips OK, "
