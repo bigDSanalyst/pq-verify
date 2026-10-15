@@ -926,6 +926,59 @@ def test_no_glyph_escapes_remain_inside_f_string_expressions():
             f"expression ({found[0][1][:40]}) -- PEP 701, 3.12+ only")
 
 
+def _runnable_python(minor):
+    """The python3.<minor> on PATH, if it runs and is that version.
+
+    A name on PATH is not an interpreter. pyenv puts a shim on PATH for every
+    version it knows of, and for one that is not installed the shim exits 127
+    ("pyenv: python3.9: command not found"); the test below then reported
+    that pq-verify does not import on 3.9. Only an executable that runs, in
+    bounded time, and reports the version it was looked up as counts.
+    """
+    import shutil
+    import subprocess
+    exe = shutil.which(f"python3.{minor}")
+    if not exe:
+        return None
+    try:
+        v = subprocess.run(
+            [exe, "-c", "import sys; print(tuple(sys.version_info[:2]))"],
+            capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if v.returncode != 0 or v.stdout.strip() != f"(3, {minor})":
+        return None
+    return exe
+
+
+def test_runnable_python_ignores_shims_and_other_versions(tmp_path, monkeypatch):
+    """A pyenv shim for an uninstalled version, and an executable that
+    answers as another version, are not python3.<minor>; one that runs and
+    answers as that version is."""
+    import os
+    import sys
+    if sys.platform == "win32":
+        pytest.skip("shell-script stand-ins need a POSIX shell")
+    cases = {
+        "shim": ('echo "pyenv: python3.99: command not found" >&2\nexit 127\n',
+                 False),
+        "other-version": ('echo "(3, 12)"\n', False),
+        "this-version": ('echo "(3, 99)"\n', True),
+    }
+    for name, (body, runnable) in cases.items():
+        d = tmp_path / name
+        d.mkdir()
+        exe = d / "python3.99"
+        exe.write_text("#!/bin/sh\n" + body)
+        exe.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{d}{os.pathsep}{os.environ['PATH']}")
+        found = _runnable_python(99)
+        if runnable:
+            assert found == str(exe), name
+        else:
+            assert found is None, f"{name}: {found}"
+
+
 def test_package_imports_on_every_older_interpreter_present():
     """Strongest evidence available: actually run it on older Pythons.
 
@@ -933,7 +986,6 @@ def test_package_imports_on_every_older_interpreter_present():
     but turns any older interpreter on PATH into a real compatibility check.
     """
     import pathlib
-    import shutil
     import subprocess
     import sys
 
@@ -941,7 +993,7 @@ def test_package_imports_on_every_older_interpreter_present():
     root = str(pathlib.Path(__file__).resolve().parent.parent)
     older = []
     for minor in range(floor[1], sys.version_info.minor):
-        exe = shutil.which(f"python3.{minor}")
+        exe = _runnable_python(minor)
         if exe:
             older.append((minor, exe))
     if not older:
