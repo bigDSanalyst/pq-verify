@@ -322,6 +322,27 @@ assessment against the deployed binary on the deployed hardware.
 
 ---
 
+## Mapping to requirements
+
+What pq-verify checks for each requirement, and the command that runs it.
+"Checks" means computed and compared with an independent source; nothing
+here is a certification.
+
+| Requirement | What is checked | How |
+|---|---|---|
+| FIPS 203 (ML-KEM) | 240 ACVP vectors; a library's keyGen, Encaps and Decaps byte-exact, the §7.2/§7.3 input checks, Wycheproof and CCTV edge cases, 10 000 accumulated cases; Encaps and Decaps constant time | `--acvp-all`; `--audit-kem LIB SET`, `--constant-time` |
+| FIPS 204 (ML-DSA) | 615 ACVP vectors; a library's keyGen, signing and verification on every interface it exports, and Wycheproof's verify vectors | `--acvp-all`; `--audit-dsa LIB SET` |
+| FIPS 205 (SLH-DSA) | 1,248 ACVP vectors for pq-verify's reference; a third-party implementation through fresh ACVP questions | `--slhdsa-acvp`; `--emit-prompt`, `--verify-response` |
+| SP 800-208 (LMS/HSS, XMSS) | ACVP and RFC vectors; a library's keyGen and signing byte-exact, malformed signatures, and key state | `--lms-xmss`; `--audit-hbs LIB` |
+| CNSA 2.0 | its post-quantum algorithms (ML-KEM-1024, ML-DSA-87, LMS and XMSS), through the rows above | as above |
+| RFC 10024 hybrid TLS | component order, lengths, the encapsulation-key check, both halves of the shared secret | `--verify-hybrid FILE` |
+| FIPS 140-3 / CMVP | evidence for the algorithm-level results above, bound to the sha256 of the binary that ran; not module validation and not a certificate | `--json FILE`, `--sarif FILE` |
+| CI and AppSec | SARIF 2.1.0 for GitHub Code Scanning (the Action uploads it and gates on findings) and DefectDojo | `--sarif FILE`; the [Action](README.md#use-it-in-ci) |
+
+What none of these covers is in [LIMITS.md](LIMITS.md).
+
+---
+
 ## What's in this package
 
 ```

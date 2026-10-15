@@ -23,6 +23,36 @@ It does not compute PQC. It verifies the implementations that do: liboqs, Boring
 
 ---
 
+## Enterprise audits and pre-CMVP readiness
+
+pq-verify is open source and free to run yourself. Its maintainer also runs
+audits with it for teams that want the evidence before a certification lab,
+a customer or a deployment sees their code:
+
+- **Library audit**: ML-KEM and ML-DSA libraries through their own entry
+  points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
+  sealed binaries through fresh ACVP questions. Every NIST ACVP vector, Wycheproof and CCTV edge cases,
+  malformed inputs and key-state handling; constant time for ML-KEM.
+- **Pre-CMVP gap assessment**: the ACVP algorithm tests a CMVP submission
+  depends on, run beforehand, with each failure traced to its cause.
+- **Hybrid TLS review**: RFC 10024 groups such as `X25519MLKEM768`, checked
+  from the wire bytes, where ACVP never looks.
+- **Remediation verification**: the same audit re-run on the fixed build,
+  bound to its sha256.
+- **CI integration**: SARIF 2.1.0 into GitHub Code Scanning or DefectDojo,
+  gating merges.
+- **CNSA 2.0**: its post-quantum algorithms, ML-KEM-1024, ML-DSA-87 and
+  LMS/XMSS for firmware signing, are all covered.
+
+The deliverable is evidence, not certification: only an accredited
+laboratory issues a CMVP certificate. What pq-verify has found in public
+libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
+[LIMITS.md](LIMITS.md); how each requirement maps to a check is in
+[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements). To discuss an
+audit, see [Contact](#contact).
+
+---
+
 ## What you get
 
 Layers of an audit:
@@ -261,9 +291,11 @@ pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt \
           --sarif results.sarif --json results.json --fail-on-finding
 ```
 
-**SARIF 2.1.0** is ingested natively by GitHub Code Scanning, DefectDojo, Snyk
-and AWS Security Hub, so findings land in the security tooling a team already
-runs rather than in a terminal someone has to read.
+**SARIF 2.1.0** is imported directly by GitHub Code Scanning (the
+[Action](#use-it-in-ci) uploads it) and DefectDojo, so findings land in the
+security tooling a team already runs rather than in a terminal someone has to
+read. AWS Security Hub takes its own format (ASFF), so it needs a
+SARIF-to-ASFF conversion step.
 
 | Rule | Meaning |
 |---|---|
@@ -601,7 +633,7 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 
 ## License
 
-MIT. The verifier is open-source — builds trust, enables adoption. Commercial support, custom engine development, and PQC audit engagements available separately.
+MIT. Audits and commercial support: see [Enterprise audits and pre-CMVP readiness](#enterprise-audits-and-pre-cmvp-readiness).
 
 ## Citing this software
 

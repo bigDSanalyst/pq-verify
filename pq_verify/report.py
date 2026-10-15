@@ -4,8 +4,9 @@ pq_verify.report — machine-readable output.
 Two formats:
 
   to_json(results)   native schema, stable, for programmatic use
-  to_sarif(results)  SARIF 2.1.0, which GitHub Code Scanning ingests natively
-                     and which DefectDojo / Snyk / AWS Security Hub accept
+  to_sarif(results)  SARIF 2.1.0, which GitHub Code Scanning and DefectDojo
+                     import directly (AWS Security Hub needs it converted to
+                     ASFF)
 
 Why SARIF: a verifier that reports only to a terminal cannot become part of a
 security workflow. SARIF is the format security platforms already read, so
