@@ -17,7 +17,7 @@ You deploy post-quantum cryptography. pq-verify checks that **your** implementat
 - **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
 - **pq-verify itself**: its reference chain passes all 1566 pinned NIST ACVP vectors (ML-KEM, ML-DSA, SLH-DSA, LMS), and the NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
 
-Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: only an accredited lab issues those.
+Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: a CMVP certificate is issued by NIST and the Canadian Centre for Cyber Security, after an accredited laboratory has tested the module.
 
 It does not compute PQC. It verifies the implementations that do: liboqs, BoringSSL, OpenSSL+OQS, HSM firmware, or your own code.
 
@@ -31,21 +31,23 @@ a customer or a deployment sees their code:
 
 - **Library audit**: ML-KEM and ML-DSA libraries through their own entry
   points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
-  sealed binaries through fresh ACVP questions. Every NIST ACVP vector, Wycheproof and CCTV edge cases,
-  malformed inputs and key-state handling; constant time for ML-KEM.
+  sealed binaries through fresh ACVP questions. Each audit runs the checks
+  that apply: NIST's ACVP vectors, Wycheproof and CCTV edge cases, malformed
+  inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM.
 - **Pre-CMVP gap assessment**: the ACVP algorithm tests a CMVP submission
   depends on, run beforehand, with each failure traced to its cause.
 - **Hybrid TLS review**: RFC 10024 groups such as `X25519MLKEM768`, checked
   from the wire bytes, where ACVP never looks.
 - **Remediation verification**: the same audit re-run on the fixed build,
   bound to its sha256.
-- **CI integration**: SARIF 2.1.0 into GitHub Code Scanning or DefectDojo,
-  gating merges.
+- **CI integration**: the GitHub Action gates merges on the result, and SARIF
+  2.1.0 carries the findings to GitHub Code Scanning or DefectDojo.
 - **CNSA 2.0**: its post-quantum algorithms, ML-KEM-1024, ML-DSA-87 and
   LMS/XMSS for firmware signing, are all covered.
 
-The deliverable is evidence, not certification: only an accredited
-laboratory issues a CMVP certificate. What pq-verify has found in public
+The deliverable is evidence, not certification: a CMVP certificate is issued
+by NIST and the Canadian Centre for Cyber Security, after an accredited
+laboratory has tested the module. What pq-verify has found in public
 libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
 [LIMITS.md](LIMITS.md); how each requirement maps to a check is in
 [ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements). To discuss an

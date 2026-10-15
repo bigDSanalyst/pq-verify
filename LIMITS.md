@@ -156,7 +156,9 @@ pq-verify's reference and the source it is pinned to would not show.
 ## Outside the code
 
 - **Not a certificate.** Results are evidence toward FIPS 140-3 / CMVP and
-  CNSA 2.0 readiness. Only an accredited laboratory issues a certificate.
+  CNSA 2.0 readiness. A CMVP certificate is issued by NIST and the Canadian
+  Centre for Cyber Security, after an accredited laboratory has tested the
+  module.
 - **Randomness.** pq-verify supplies or controls the randomness it audits
   with. Beyond refusing repeats (a reused FN-DSA nonce or McEliece error
   vector is a finding), it does not assess a library's own random number
