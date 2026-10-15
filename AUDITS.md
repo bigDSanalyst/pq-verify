@@ -816,10 +816,11 @@ all three parameter sets. The reference decoder (`src/ref`) has neither.
    build the submitters' code at `-O3`, as they do, so they record the first
    defect only.
 
-*Disclosure.* A report for the submitters (gitlab.com/pqc-hqc/hqc), with a
-standalone reproduction that uses only `reed_muller_encode` and
-`reed_muller_decode`, has been drafted and is to be filed by the maintainer.
-Its link and the submitters' response will be recorded here.
+*Disclosure.* Reported to the HQC team on 9 October 2026, with a patch for
+both defects and a standalone reproduction that uses only
+`reed_muller_encode` and `reed_muller_decode`; acknowledged on 13 October and
+tracked upstream as [HQC issue #46](https://gitlab.com/pqc-hqc/hqc/-/issues/46),
+with the patch under review.
 
 **Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
 stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its
