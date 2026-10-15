@@ -338,8 +338,8 @@ def build_parser():
     p.add_argument("--json", metavar="FILE",
                    help="write results to FILE in pq-verify's native schema")
     p.add_argument("--sarif", metavar="FILE",
-                   help="write SARIF 2.1.0 to FILE — ingested natively by GitHub "
-                        "Code Scanning, DefectDojo, Snyk, AWS Security Hub")
+                   help="write SARIF 2.1.0 to FILE, for GitHub Code Scanning "
+                        "or DefectDojo (AWS Security Hub needs it converted to ASFF)")
     p.add_argument("--require-full-coverage", action="store_true",
                    help="exit non-zero if any engine or dependency was missing "
                         "(prevents a degraded run from reporting green in CI)")

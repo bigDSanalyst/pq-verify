@@ -116,8 +116,8 @@ pq-verify --acvp-all --fail-on-finding --require-full-coverage \
   `CANNOT VERIFY`, and a suite short of its full count.
 - `--require-full-coverage` exits non-zero if any dependency was missing, so a
   degraded run cannot report green.
-- `--sarif` is ingested natively by GitHub Code Scanning, DefectDojo, Snyk and
-  AWS Security Hub.
+- `--sarif` is imported directly by GitHub Code Scanning and DefectDojo; AWS
+  Security Hub needs a SARIF-to-ASFF conversion step.
 
 There is a packaged action — see [Use it in CI](README.md#use-it-in-ci).
 
