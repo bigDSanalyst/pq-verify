@@ -7,7 +7,7 @@
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
 ![ACVP-SLH](https://img.shields.io/badge/SLH--DSA%20ACVP-1248%2F1248-brightgreen)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23092768.svg)](https://doi.org/10.5281/zenodo.23092768)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23419951.svg)](https://doi.org/10.5281/zenodo.23419951)
 
 **Independent verification for ML-KEM (Kyber), ML-DSA (Dilithium), SLH-DSA (SPHINCS+), LMS/HSS and XMSS/XMSS^MT implementations.**
 
@@ -645,17 +645,17 @@ MIT. Audits and commercial support: see [Enterprise audits and pre-CMVP readines
 Archived on Zenodo with a citable DOI:
 
 > Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
-> implementations* (v2.9.0). Zenodo. https://doi.org/10.5281/zenodo.23092768
+> implementations* (v2.12.0). Zenodo. https://doi.org/10.5281/zenodo.23419951
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
   title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
-  version   = {2.9.0},
+  version   = {2.12.0},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.23092768},
-  url       = {https://doi.org/10.5281/zenodo.23092768}
+  doi       = {10.5281/zenodo.23419951},
+  url       = {https://doi.org/10.5281/zenodo.23419951}
 }
 ```
 
