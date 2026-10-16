@@ -651,7 +651,12 @@ its own key pairs:
   pivots `c`, Goppa polynomial `g` and rejection string `s` byte-exact; the
   Beneš control bits applied to the identity must give the regenerated
   permutation (control bits for a permutation are not unique, so their bytes
-  are not compared).
+  are not compared). An f-variant key whose pivots are trivial (about 29% of
+  keys) stores the same `c` as a library that never records pivots. So when
+  the first key's pivots are trivial, the second key is redrawn until its are
+  not (at most 24 more). A key passed over is still checked, and kept if a
+  check fails. If none turns up, or the library repeats a key, the pivots
+  record is not applicable.
 - **encaps:** three ciphertexts per key decode under pq-verify's decoder to an
   error vector of weight t, the key is SHAKE256(1 ‖ e ‖ C), the library's own
   Decap returns it, and no error vector repeats.
@@ -702,7 +707,9 @@ missed it on most keys, because the reference's fixed-degree locator gives a
 spurious root at the zero element that the syndrome check then rejects, which
 is why the through-zero cases exist), implicit rejection hashing the
 decoder's output instead of s, or with prefix 1; a key generator storing a
-zero s, or (f variant) no pivots; encapsulation hashing with prefix 0; and,
+zero s, or (f variant) no pivots (seen only on a key whose pivots are not
+trivial; while both keys could have trivial ones, CI missed this mutant on
+about 8% of runs); encapsulation hashing with prefix 0; and,
 for 6960119, decapsulation and encapsulation ignoring padding bits. In
 liboqs, on the AVX2 path: the AVX2 decoder's weight check passing any weight
 (seen only through the support's zero element: that decoder finds the

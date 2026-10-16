@@ -9,7 +9,11 @@ judged by pq_verify.mceliece, the reference that reproduces every pinned KAT
              pivots c, Goppa polynomial g and rejection string s byte for
              byte, and its Benes control bits applied to the identity giving
              the regenerated permutation. No control over the library's
-             randomness is needed: the key carries its own seed.
+             randomness is needed: the key carries its own seed. An f-variant
+             key whose pivots are trivial (about 29% of keys) stores the c a
+             library that never records pivots also stores, so when the first
+             key's are trivial the second is redrawn until its are not; a key
+             passed over is still checked, and kept if a check fails.
     encaps   vendor ciphertexts decode under pq-verify's decoder to an error
              vector of weight exactly t, the vendor's key is
              SHAKE256(1 || e || C), its own Decap returns the same key, and
@@ -56,6 +60,11 @@ ENCAPS_PER_KEY = 3
 ZERO_DRAWS = 24
 ZERO_CASES = ("weight-t error through the support's zero element",
               "weight t-1 through the support's zero element (must be rejected)")
+# c when no pivot column moved: always outside the f variants, and for about
+# 29% of f-variant keys. Redrawing at most 24 times for one whose pivots are
+# not trivial misses with probability below 1e-12.
+TRIVIAL_PIVOTS = 0xFFFFFFFF
+PIVOT_DRAWS = 24
 _ROLES = {
     "keypair": r"(?:crypto_kem_keypair|_keypair)$",
     "enc":     r"(?:crypto_kem_enc|_encaps)$",
@@ -153,6 +162,43 @@ class _Tally:
     def not_applicable(self, stage, count, why):
         c, _ = self.na.get(stage, (0, why))
         self.na[stage] = (c + count, why)
+
+
+def audit_key(v, T, k, want_pivots=False):
+    """Draw key k and record keyGen's checks on it: (pk, sk, trivial pivots)
+    or None. want_pivots (an f variant whose keys so far all have trivial
+    pivots): redraw, at most PIVOT_DRAWS times, while the regenerated pivots
+    are trivial, since such a key cannot show a library that does not record
+    them. A key passed over is checked too, and kept if a check fails. If
+    none has nontrivial pivots, or the library repeats a key, the pivots
+    record is not applicable."""
+    P = v.P
+    seen, unseen = set(), ""
+    for _ in range(PIVOT_DRAWS + 1 if want_pivots else 1):
+        try:
+            pk, sk = v.keypair()
+        except RuntimeError as exc:
+            T.rec("keyGen", False, f"key {k}", str(exc))
+            return None
+        delta = M.split_sk(P, sk)["delta"]
+        kp = M.keygen(P, delta)
+        checks = M.check_key(P, pk, sk, kp)
+        trivial = kp is not None and kp.c == TRIVIAL_PIVOTS
+        if not (want_pivots and trivial and all(ok for _, ok, _ in checks)):
+            break
+        if delta in seen:
+            unseen = "the library returned the same key again"
+            break
+        seen.add(delta)
+    else:
+        unseen = f"all {PIVOT_DRAWS + 1} drawn have trivial pivots"
+    for name, ok, why in checks:
+        T.rec("keyGen", ok, f"key {k}: {name}", why)
+    if unseen:
+        T.not_applicable("keyGen", 1, f"the pivots record (key {k} was redrawn for "
+                                      f"nontrivial pivots, and {unseen}): a library that "
+                                      f"does not record pivots stores the same c")
+    return pk, sk, trivial
 
 
 def zero_position(P, sk):
@@ -257,16 +303,13 @@ def run(v):
     if not v.has("keypair"):
         T.not_applicable("keyGen", KEYS * 5, "no keypair entry point")
         return T
-    keys = []
+    keys, trivial = [], []
     for k in range(KEYS):
-        try:
-            pk, sk = v.keypair()
-        except RuntimeError as exc:
-            T.rec("keyGen", False, f"key {k}", str(exc))
-            continue
-        for name, ok, why in M.check_key(P, pk, sk):
-            T.rec("keyGen", ok, f"key {k}: {name}", why)
-        keys.append((pk, sk))
+        got = audit_key(v, T, k, want_pivots=P.f and k == KEYS - 1 and bool(keys)
+                        and all(trivial))
+        if got:
+            keys.append(got[:2])
+            trivial.append(got[2])
     if not keys:
         return T
 
