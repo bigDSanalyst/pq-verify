@@ -11,6 +11,12 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.23419951](https://doi.org/10.5281/zenodo.23419951).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.9.0's.
+- The README's note on pinning the Action said `@v1` "is not maintained",
+  which read as if `@v1` were the Action's tag. It now says to pin a full
+  release tag or a commit SHA, and never `@v1`, which marks the first upload
+  and does not move to new releases.
+- SECURITY.md's supported versions stopped at 2.10.x, so 2.11 and 2.12 were
+  not listed. 2.12.x is supported; 2.10.x and 2.11.x get security fixes only.
 
 ### Fixed
 
