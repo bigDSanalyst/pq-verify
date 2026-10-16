@@ -5,6 +5,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-10-16
+
 ### Added — HQC's error-correcting code (HQC's standard is not final)
 
 - **`pq-verify --hqc`**: pq-verify's own reference for HQC's code layer
@@ -140,6 +142,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
   companion matrices, so their checks, rank 8 included, remain evidence
   rather than consequences of it, and ARCHITECTURE.md and the rank-8
   audit's docstring say so.
+- `CITATION.cff` names v2.9.0 again, the release its DOI resolves to. The
+  2.11.0 release moved its version without a new Zenodo deposit, which the
+  file's own rule forbids.
 
 ### Added — liboqs, audited per implementation
 
