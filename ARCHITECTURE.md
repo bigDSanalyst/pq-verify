@@ -70,7 +70,7 @@ PQC evidence.
 | **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](README.md#draft-track-fn-dsa-fips-206)) |
 | Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
 | Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts (singular, anomalous and supersingular curves), SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). Classic McEliece is audited today (`--audit-mceliece`) in exact Python integers: the GF(2) engine holds at most 2048 variables and returns solutions, not the reduced matrix a public key is, so it is not used there yet. HQC's code layer is audited (`--audit-hqc`) by `pq_verify/hqc.py`, also in exact Python: GF(2⁸) tables, Reed–Solomon over it, and a Walsh–Hadamard maximum-likelihood decoder for RM(1,7). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
-| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7), CFL/DQBF pipeline, conformity gradient | correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations. Engine 6 has no PQC target yet |
+| Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7 [1]), CFL/DQBF pipeline, conformity gradient | correctness checks for NTT/FFT side-channel countermeasures; standards constraints as SAT/QBF obligations. Engine 6 has no PQC target yet |
 
 "Being realigned toward" is a direction, not a capability: until an engine
 checks a post-quantum implementation, it is reported under its own track.
@@ -81,6 +81,27 @@ which turns standards constraints into SAT/QBF obligations and could carry
 PQC checks once they are written as such. **Analysis:** the conformity
 gradient D(t) and Engine 6, mathematics over ℂ with no post-quantum target
 yet.
+
+**Which of Engine 6's commutator checks a theorem covers.** Engine 6 checks
+that the odd power traces of [U, Q], with Q = −(U′ + U²), vanish. Where U is
+a companion matrix, U′ is nonzero only in U's coefficient column, so
+[U, Q] = −[U, U′] is the commutator of U with a rank-one perturbation of
+itself. It then has rank at most two [2, Lemma 1], and a traceless matrix of
+rank at most two has no nonzero eigenvalues beyond a pair ±µ [2, Lemma 9], so
+every odd power trace vanishes, at every rank and over every field. That
+covers the rank-2 Legendre and rank-4 mirror-quintic connections: their
+checks confirm a theorem. The genus-2 (rank 4) and genus-4 (rank 8)
+connections are not companion matrices (U′ has full rank there), so [2] does
+not apply. Computed exactly at sample points, their [U, Q] still has rank two
+and odd power traces of zero, but that is an observation, not a proof. The
+rank-8 check remains evidence beyond Paper 7's rank-6 verification.
+
+[1] N. C. Maino, *A Matrix Amari–Schwarzian Identity, with Witnesses at
+Genus 1, Genus 2, and the Mirror Quintic*, Zenodo, 2026,
+[doi:10.5281/zenodo.20129361](https://doi.org/10.5281/zenodo.20129361).
+[2] N. C. Maino, *The Commutator of Two Companion Matrices Has Rank at Most
+Two, with Spectral Consequences over Arbitrary Fields*, Zenodo, 2026,
+[doi:10.5281/zenodo.21857156](https://doi.org/10.5281/zenodo.21857156).
 
 ---
 

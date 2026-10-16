@@ -21,3 +21,15 @@ references:
       - family-names: "Maino"
         given-names: "Nicholas"
     doi: "10.5281/zenodo.19302050"
+  - type: article
+    title: "A Matrix Amari–Schwarzian Identity, with Witnesses at Genus 1, Genus 2, and the Mirror Quintic"
+    authors:
+      - family-names: "Maino"
+        given-names: "Nicholas"
+    doi: "10.5281/zenodo.20129361"
+  - type: article
+    title: "The Commutator of Two Companion Matrices Has Rank at Most Two, with Spectral Consequences over Arbitrary Fields"
+    authors:
+      - family-names: "Maino"
+        given-names: "Nicholas"
+    doi: "10.5281/zenodo.21857156"

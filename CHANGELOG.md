@@ -125,6 +125,14 @@ versioning](https://semver.org/spec/v2.0.0.html).
   `vectors/` and `tools/`; the `dist/` files it listed are release assets,
   not in the repository. AUDITS.md's scope no longer says no audit checks
   constant time.
+- Engine 6's paper is cited with its DOI (Paper 7, 10.5281/zenodo.20129361),
+  in ARCHITECTURE.md, `core.py` and CITATION.cff. The companion-commutator
+  theorem (10.5281/zenodo.21857156) is cited for what it covers: the odd
+  power-trace checks on the companion-form Legendre and mirror-quintic
+  connections confirm it. The genus-2 and genus-4 connections are not
+  companion matrices, so their checks, rank 8 included, remain evidence
+  rather than consequences of it, and ARCHITECTURE.md and the rank-8
+  audit's docstring say so.
 
 ### Added — liboqs, audited per implementation
 
