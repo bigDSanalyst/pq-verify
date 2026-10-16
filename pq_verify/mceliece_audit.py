@@ -25,6 +25,11 @@ judged by pq_verify.mceliece, the reference that reproduces every pinned KAT
                                             -> SHAKE256(0 || s || C)
              A decoder that accepts t-1 errors (it can correct them), skips
              the re-encoding check or hashes the wrong string fails here.
+             A key whose support lacks the zero element (probability
+             1 - n/2^m) has its two zero-element cases built on another
+             vendor key that has it: the audit's other key, or one more drawn
+             from the library and regenerated from its seed as keyGen does.
+             None turning up makes them not applicable.
     padding  6960119 only (mt = 1547, k = 5413: both end mid-byte): a valid
              ciphertext with a padding bit set, and a public key with one,
              must be refused (nonzero return), as the submitters' reference
@@ -45,6 +50,12 @@ from . import mceliece as M
 STAGES = ("keyGen", "encaps", "decaps", "padding")
 KEYS = 2
 ENCAPS_PER_KEY = 3
+# Further keys drawn, at most, when no audit key has the zero element in its
+# support. Each key lacks it with probability 1 - n/2^m, 0.44 at most
+# (mceliece460896), so 24 draws all miss with probability below 1e-8.
+ZERO_DRAWS = 24
+ZERO_CASES = ("weight-t error through the support's zero element",
+              "weight t-1 through the support's zero element (must be rejected)")
 _ROLES = {
     "keypair": r"(?:crypto_kem_keypair|_keypair)$",
     "enc":     r"(?:crypto_kem_enc|_encaps)$",
@@ -144,12 +155,73 @@ class _Tally:
         self.na[stage] = (c + count, why)
 
 
-def crafted(P, sk, pk, other_ct, rng):
-    """[(label, C)] built against one key; answers come from pq-verify's
+def zero_position(P, sk):
+    """The position of the field's zero element in this key's support, or
+    None. The support is the first n elements of a permuted field, so 0 is
+    missing with probability 1 - n/2^m: 0.15 for mceliece348864, 0.44 for
+    460896, never for 8192128 (n = 2^m)."""
+    _, support, _ = M.support_from_sk(P, sk)
+    return support.index(0) if 0 in support else None
+
+
+class ZeroKey:
+    """A key for the cases through the support's zero element: number (as
+    the case labels give it), pk, sk, z (0's position in its support), and
+    problem, why it cannot be used (empty when it can)."""
+
+    def __init__(self, number, pk=None, sk=None, z=None, problem=""):
+        self.number, self.pk, self.sk, self.z, self.problem = number, pk, sk, z, problem
+
+
+class ZeroKeys:
+    """For each audit key, the key its two zero-element cases are built on:
+    the key itself when its support has 0; else the first audit key that
+    has it; else one more from the library (at most ZERO_DRAWS drawn, the
+    one found regenerated from its seed as keyGen does). None when no key
+    has it: those cases are not applicable, never moved to another element."""
+
+    def __init__(self, v, keys):
+        self.v, self.keys = v, keys
+        self.z = [zero_position(v.P, sk) for _, sk in keys]
+        self.drawn, self.searched = None, False
+
+    def for_key(self, k):
+        for j in [k] + list(range(len(self.keys))):
+            if self.z[j] is not None:
+                pk, sk = self.keys[j]
+                return ZeroKey(j, pk, sk, self.z[j])
+        if not self.searched:
+            self.searched, self.drawn = True, self._draw()
+        return self.drawn
+
+    def _draw(self):
+        P = self.v.P
+        for i in range(ZERO_DRAWS):
+            number = KEYS + i
+            try:
+                pk, sk = self.v.keypair()
+            except RuntimeError as exc:
+                return ZeroKey(number, problem=f"drawing key {number}, for a support with "
+                                               f"the zero element: {exc}")
+            z = zero_position(P, sk)
+            if z is None:
+                continue
+            bad = [name + (f" ({why})" if why else "")
+                   for name, ok, why in M.check_key(P, pk, sk) if not ok]
+            return ZeroKey(number, pk, sk, z, f"key {number}, drawn for its zero element, "
+                                              f"fails keyGen's checks: {'; '.join(bad)}"
+                           if bad else "")
+        return None
+
+
+def crafted(P, sk, pk, other_ct, rng, zero=None, note=""):
+    """[(label, C, sk)] built against one key, with the two cases through the
+    support's zero element built on zero (a ZeroKey, or None to leave them
+    out) and note appended to their labels; answers come from pq-verify's
     decoder, never from the label."""
-    def weight(w, where=None):
+    def weight(w, where=None, key=pk):
         pos = where if where is not None else rng.sample(range(P.n), w)
-        return M.encode(P, pk, M.e_bytes(P, pos))
+        return M.encode(P, key, M.e_bytes(P, pos))
     out = [("weight-t error, random positions", weight(P.t)),
            ("weight-t error, random positions (2)", weight(P.t)),
            ("weight-t error in the first t positions (identity part of H)",
@@ -157,24 +229,24 @@ def crafted(P, sk, pk, other_ct, rng):
            ("weight-t error in the last t positions (T part of H)",
             weight(P.t, range(P.n - P.t, P.n))),
            ("weight t-1 (decodable, must still be rejected)", weight(P.t - 1))]
+    out = [(label, C, sk) for label, C in out]
     # The support's zero element: an error there drops the locator's degree,
     # the classic place for a decoder to slip (a weight t-1 vector through
-    # 0 is what a decoder without the weight check accepts). A key whose
-    # support lacks 0 uses its smallest element, so the count never varies.
-    _, support, _ = M.support_from_sk(P, sk)
-    z = support.index(min(support))
-    rest = rng.sample([i for i in range(P.n) if i != z], P.t)
-    out += [("weight-t error through the support's zero element",
-             weight(P.t, [z] + rest[:P.t - 1])),
-            ("weight t-1 through the support's zero element (must be rejected)",
-             weight(P.t - 1, [z] + rest[:P.t - 2])),
-            ("weight t+1", weight(P.t + 1)),
-            ("C = 0", bytes(P.ct_bytes))]
+    # 0 is what a decoder without the weight check accepts). A decoder that
+    # evaluates the locator on the whole field, as the AVX2 ones do, rejects
+    # every other weight t-1 vector anyway: the spurious root at 0 it finds
+    # changes the syndrome. So these cases need a key with 0 in its support.
+    if zero is not None:
+        rest = rng.sample([i for i in range(P.n) if i != zero.z], P.t)
+        out += [(ZERO_CASES[0] + note, weight(P.t, [zero.z] + rest[:P.t - 1], zero.pk), zero.sk),
+                (ZERO_CASES[1] + note, weight(P.t - 1, [zero.z] + rest[:P.t - 2], zero.pk),
+                 zero.sk)]
+    out += [("weight t+1", weight(P.t + 1), sk), ("C = 0", bytes(P.ct_bytes), sk)]
     for i in range(2):
         r = int.from_bytes(rng.randbytes(P.ct_bytes), "little") & ((1 << P.mt) - 1)
-        out.append((f"random C ({i + 1})", r.to_bytes(P.ct_bytes, "little")))
+        out.append((f"random C ({i + 1})", r.to_bytes(P.ct_bytes, "little"), sk))
     if other_ct is not None:
-        out.append(("a valid ciphertext for the vendor's other key", other_ct))
+        out.append(("a valid ciphertext for the vendor's other key", other_ct, sk))
     return out
 
 
@@ -231,11 +303,23 @@ def run(v):
     if not v.has("dec"):
         T.not_applicable("decaps", KEYS * 12, "no decapsulation entry point")
     else:
+        zero_keys = ZeroKeys(v, keys)
         for k, (pk, sk) in enumerate(keys):
             other = other_ct.get(1 - k) if len(keys) > 1 else None
-            for label, C in crafted(P, sk, pk, other, rng):
-                status, want, how = M.decap(P, sk, C)
-                rc, got = v.dec(C, sk)
+            zero, note = zero_keys.for_key(k), ""
+            if zero is None:
+                T.not_applicable("decaps", len(ZERO_CASES),
+                                 f"no key had the zero element in its support (the audit's "
+                                 f"{len(keys)}, and {ZERO_DRAWS} more drawn from the library)")
+            elif zero.problem:
+                for label in ZERO_CASES:
+                    T.rec("decaps", False, f"key {k}: {label}", zero.problem)
+                zero = None
+            elif zero.number != k:
+                note = f", built on key {zero.number} (key {k}'s support lacks 0)"
+            for label, C, dsk in crafted(P, sk, pk, other, rng, zero, note):
+                status, want, how = M.decap(P, dsk, C)
+                rc, got = v.dec(C, dsk)
                 ok = rc == 0 and got == want
                 why = "" if ok else (f"returned {rc}" if rc != 0 else
                                      f"key differs from SHAKE256({1 if how == 'decoded' else 0}"
