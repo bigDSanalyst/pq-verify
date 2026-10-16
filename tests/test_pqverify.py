@@ -6077,7 +6077,7 @@ def _mceliece_shim(tmp_path, ps, fault="", keys=None):
     """A NIST-API Classic McEliece library over pq-verify's reference serving
     the pinned KAT key, or keys, [(pk, sk)] in turn (the last one repeated).
     Faults: accept-any-weight, avx2-any-weight, reject-prefix-1, repeat-e,
-    enc-prefix-0, bad-s, ignore-c-padding, ignore-pk-padding."""
+    enc-prefix-0, bad-s, no-pivots, ignore-c-padding, ignore-pk-padding."""
     import ctypes as C, random, shutil, subprocess
     from pq_verify import mceliece as M
     if not shutil.which("gcc"):
@@ -6102,6 +6102,8 @@ def _mceliece_shim(tmp_path, ps, fault="", keys=None):
     @C.CFUNCTYPE(C.c_int, U8, U8)
     def kp(pkp, skp):
         pk, sk = served.pop(0) if len(served) > 1 else served[0]
+        if fault == "no-pivots":              # c as if no pivot column moved
+            sk = sk[:32] + (0xFFFFFFFF).to_bytes(8, "little") + sk[40:]
         C.memmove(pkp, pk, len(pk))
         C.memmove(skp, sk, len(sk))
         return 0
@@ -6245,6 +6247,49 @@ def test_mceliece_audit_checks_a_drawn_key_before_using_it(tmp_path):
                                                   for c in ZERO_CASES]
     assert all("key 2, drawn for its zero element, fails keyGen's checks: private key s"
                in f["detail"] for f in r["failures"])
+
+
+# A mceliece348864f seed whose key's pivots are trivial (the pinned KAT
+# key's are not).
+_MCE_TRIVIAL_PIVOTS = "bacc698ff142021a9cd027519d0dc6947c09d9d6b9c1fd5b7ed636a1966f55c1"
+
+
+def _mce_f_keys(served):
+    """mceliece348864f. 'T': a key whose pivots are trivial; 'N': the KAT key,
+    whose pivots are not; 'S': T with s zeroed, which keyGen's checks refuse."""
+    from pq_verify import mceliece as M
+    P = M.Params("mceliece348864f")
+    b, _ = M.load_vectors()
+    kat = bytes.fromhex(b[P.name]["sk"])
+    t = _mce_key(P, bytes.fromhex(_MCE_TRIVIAL_PIVOTS))
+    c = [int.from_bytes(sk[32:40], "little") for sk in (t[1], kat)]
+    assert c[0] == 0xFFFFFFFF != c[1]
+    by = {"T": t, "N": (M.keygen(P, kat[:32]).pk, kat),
+          "S": (t[0], t[1][:-P.n // 8] + bytes(P.n // 8))}
+    return [by[ch] for ch in served]
+
+
+@pytest.mark.parametrize("served,fault,keygen,na", [
+    ("TTN", "no-pivots", (9, 10), 0),   # key 0's pivots trivial: key 1 redrawn past T
+    ("TTN", "", (10, 10), 0),
+    ("TSN", "", (9, 10), 0),            # a key passed over is checked, and kept failing
+    ("T", "no-pivots", (10, 10), 1)])   # the library repeats a trivial key
+def test_mceliece_audit_f_variant_keys_show_their_pivots(tmp_path, served, fault, keygen, na):
+    """An f-variant key whose pivots are trivial (about 29% of keys) stores
+    the c a library that never records pivots stores too. With key 0's
+    trivial, key 1 is redrawn until its are not, so that bug is seen."""
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece348864f", fault, _mce_f_keys(served)),
+                   "mceliece348864f")
+    assert r["detail"]["keyGen"] == keygen, r["failures"]
+    assert r["detail"]["decaps"] == (24, 24) and r["detail"]["encaps"] == (6, 6)
+    if fault:
+        assert [f["case"] for f in r["failures"]] == (
+            ["key 1: private key c = regenerated"] if keygen[0] < keygen[1] else [])
+    if served == "TSN":
+        assert [f["case"] for f in r["failures"]] == ["key 1: private key s = regenerated"]
+    assert (r["not_applicable"].get("keyGen") or [0])[0] == na
+    if na:
+        assert "the library returned the same key again" in r["not_applicable"]["keyGen"][1]
 
 
 def test_mceliece_symbols_tell_f_variants_apart():

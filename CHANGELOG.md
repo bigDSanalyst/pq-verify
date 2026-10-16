@@ -55,10 +55,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - **`pq-verify --audit-mceliece PATH SET`** (and `--mceliece-symbol`,
   `--symbol-prefix`): a vendor library's keys regenerated from the seed in
   their own private key (public key, pivots, Goppa polynomial and rejection
-  string byte-exact, control bits encoding the permutation); its ciphertexts
-  decoded; ciphertexts built against its key (weight t, t−1, t+1, zero,
-  random, another key's) decapsulated to the exact expected key -- including errors through the
-  support's zero element, where the locator's degree drops. A key whose
+  string byte-exact, control bits encoding the permutation; for the f
+  variants, a second key whose pivots are not trivial when the first key's
+  are, since a key with trivial pivots stores what a library that never
+  records them stores); its ciphertexts decoded; ciphertexts built against
+  its key (weight t, t−1, t+1, zero, random, another key's) decapsulated to
+  the exact expected key -- including errors through the support's zero
+  element, where the locator's degree drops. A key whose
   support lacks 0 has those cases built on another of the library's keys
   whose support has it, regenerated from its seed first. They are never built
   on another element; if no key has 0, they are not applicable. For
