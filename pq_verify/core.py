@@ -9,8 +9,8 @@ Engines (all C, compiled inline at runtime):
   2. Z_3329       — Kyber ML-KEM NTT verification (libzq)
   3. Z_8380417    — Dilithium ML-DSA NTT verification (libzq32)
   4. Cubic+ECC    — B(a,b) formula + elliptic curve point validation
-  5. Conformity   — D(t) stability on curve families (Paper 4)
-  6. Period       — Gauss-Manin / Amari-Schwarzian, ranks 2/4/4/8 (Paper 7)
+  5. Conformity   — D(t) stability on curve families (Paper 4, doi:10.5281/zenodo.19510026)
+  6. Period       — Gauss-Manin / Amari-Schwarzian, ranks 2/4/4/8 (Paper 7, doi:10.5281/zenodo.20129361)
 
 Test Phases:
   Phase 1: Geometric Depth Probe (conformity, Hasse bound, curve auditor)
@@ -506,7 +506,9 @@ ECPoint ec_mul(ECPoint P,uint64_t k,uint64_t a,uint64_t p){ECPoint R={0,0,1};whi
 """
 
 # ================================================================
-# ENGINE 5: Conformity Gradient
+# ENGINE 5: Conformity Gradient  (Paper 4, Maino 2026, doi:10.5281/zenodo.19510026)
+# Checks its Theorem 7.1 (covariant first integral), Theorem 10.1
+# (Amari-Hodge identity) and Theorem 10.3 (Amari-Schwarzian cubic).
 # ================================================================
 
 CONFORMITY_C = r"""
@@ -3589,7 +3591,7 @@ def main(quick=False):
 
 
 # ================================================================
-# ENGINE 6: PERIOD / GAUSS-MANIN  (Paper 7, Maino 2026)
+# ENGINE 6: PERIOD / GAUSS-MANIN  (Paper 7, Maino 2026, doi:10.5281/zenodo.20129361)
 # Self-contained sixth engine: four C/C++ period engines embedded
 # gzip+base64, compiled inline (gcc + g++).  Reuses the harness
 # AuditResult / CFL pipeline / Coq daemon above.
@@ -4219,7 +4221,10 @@ def audit_engine6_quintic(lib):
 def audit_engine6_genus4(lib):
     """Theorem 1 entry-wise at rank 8; Observation 4 extended to rank 8
     (a NEW rank class — Paper 7 verifies only through rank 6); and the
-    Conjecture 6 lower bound at genus 4 (f2,f4,f6,f8 independent over C)."""
+    Conjecture 6 lower bound at genus 4 (f2,f4,f6,f8 independent over C).
+    U is not a companion matrix here (U' has full rank), so the companion
+    commutator theorem (doi:10.5281/zenodo.21857156) does not cover this
+    rank; see ARCHITECTURE.md, "Engines and where they are heading"."""
     r = _AuditResult('Engine 6d: rank-8 genus-4 (NEW)')
     # Samples >= 2 from any singularity z = 0..7 (rank-8 double-precision floor)
     samples = [-1.5, -2.5, -5.0, 9.5, 10.0, 12.0, 15.0]
