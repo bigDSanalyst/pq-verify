@@ -79,7 +79,7 @@ The research track holds two different kinds of work, and neither is
 evidence about an implementation. **Infrastructure:** the CFL/DQBF pipeline,
 which turns standards constraints into SAT/QBF obligations and could carry
 PQC checks once they are written as such. **Analysis:** the conformity
-gradient D(t) and Engine 6, mathematics over ℂ with no post-quantum target
+gradient D(t) [3] and Engine 6, mathematics over ℂ with no post-quantum target
 yet.
 
 **Which of Engine 6's commutator checks a theorem covers.** Engine 6 checks
@@ -102,6 +102,10 @@ Genus 1, Genus 2, and the Mirror Quintic*, Zenodo, 2026,
 [2] N. C. Maino, *The Commutator of Two Companion Matrices Has Rank at Most
 Two, with Spectral Consequences over Arbitrary Fields*, Zenodo, 2026,
 [doi:10.5281/zenodo.21857156](https://doi.org/10.5281/zenodo.21857156).
+[3] N. Maino, *The Conformity Gradient on Calabi–Yau Moduli: From Statistical
+Rigidity to an Integrable System on the Fermat Quintic*, Zenodo, 2026,
+[doi:10.5281/zenodo.19510026](https://doi.org/10.5281/zenodo.19510026).
+Engine 5 checks its Theorems 7.1, 10.1 and 10.3.
 
 ---
 

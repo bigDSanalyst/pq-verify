@@ -126,7 +126,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   not in the repository. AUDITS.md's scope no longer says no audit checks
   constant time.
 - Engine 6's paper is cited with its DOI (Paper 7, 10.5281/zenodo.20129361),
-  in ARCHITECTURE.md, `core.py` and CITATION.cff. The companion-commutator
+  and Engine 5's (Paper 4, 10.5281/zenodo.19510026, whose Theorems 7.1, 10.1
+  and 10.3 it checks), in ARCHITECTURE.md, `core.py` and CITATION.cff. The companion-commutator
   theorem (10.5281/zenodo.21857156) is cited for what it covers: the odd
   power-trace checks on the companion-form Legendre and mirror-quintic
   connections confirm it. The genus-2 and genus-4 connections are not

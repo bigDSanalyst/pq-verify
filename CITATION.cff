@@ -22,6 +22,12 @@ references:
         given-names: "Nicholas"
     doi: "10.5281/zenodo.19302050"
   - type: article
+    title: "The Conformity Gradient on Calabi–Yau Moduli: From Statistical Rigidity to an Integrable System on the Fermat Quintic"
+    authors:
+      - family-names: "Maino"
+        given-names: "Nicholas"
+    doi: "10.5281/zenodo.19510026"
+  - type: article
     title: "A Matrix Amari–Schwarzian Identity, with Witnesses at Genus 1, Genus 2, and the Mirror Quintic"
     authors:
       - family-names: "Maino"

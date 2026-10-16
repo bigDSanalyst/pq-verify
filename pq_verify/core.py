@@ -9,8 +9,8 @@ Engines (all C, compiled inline at runtime):
   2. Z_3329       — Kyber ML-KEM NTT verification (libzq)
   3. Z_8380417    — Dilithium ML-DSA NTT verification (libzq32)
   4. Cubic+ECC    — B(a,b) formula + elliptic curve point validation
-  5. Conformity   — D(t) stability on curve families (Paper 4)
-  6. Period       — Gauss-Manin / Amari-Schwarzian, ranks 2/4/4/8 (Paper 7)
+  5. Conformity   — D(t) stability on curve families (Paper 4, doi:10.5281/zenodo.19510026)
+  6. Period       — Gauss-Manin / Amari-Schwarzian, ranks 2/4/4/8 (Paper 7, doi:10.5281/zenodo.20129361)
 
 Test Phases:
   Phase 1: Geometric Depth Probe (conformity, Hasse bound, curve auditor)
@@ -506,7 +506,9 @@ ECPoint ec_mul(ECPoint P,uint64_t k,uint64_t a,uint64_t p){ECPoint R={0,0,1};whi
 """
 
 # ================================================================
-# ENGINE 5: Conformity Gradient
+# ENGINE 5: Conformity Gradient  (Paper 4, Maino 2026, doi:10.5281/zenodo.19510026)
+# Checks its Theorem 7.1 (covariant first integral), Theorem 10.1
+# (Amari-Hodge identity) and Theorem 10.3 (Amari-Schwarzian cubic).
 # ================================================================
 
 CONFORMITY_C = r"""
