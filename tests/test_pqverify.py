@@ -5999,9 +5999,84 @@ def test_mceliece_check_key_names_what_is_wrong():
 _MCE_KEEP = []
 
 
-def _mceliece_shim(tmp_path, ps, fault=""):
+def _mce_control_bits(P, pi):
+    """Benes control bits in permutation_from_control_bits' layout whose
+    network, applied to the identity, gives pi (the looping algorithm)."""
+    w, q = P.m, P.q
+    bits = [0] * ((2 * w - 1) * (q // 2))
+
+    def route(d, base, vin, vout):
+        # Depth d: local position l is global position base + l * 2^d.
+        half, first, last = len(vin) // 2, d * (q // 2), (2 * w - 2 - d) * (q // 2)
+        if half == 1:
+            bits[first + base] = int(vin[0] != vout[0])
+            return
+        pin = {x: vin[i ^ 1] for i, x in enumerate(vin)}
+        pout = {x: vout[i ^ 1] for i, x in enumerate(vout)}
+        odd = {}
+        for x in vin:                 # each cycle alternates subnetworks
+            while x not in odd:
+                odd[x], odd[pout[x]] = False, True
+                x = pin[pout[x]]
+        halves = ([], [], [], [])     # even in, odd in, even out, odd out
+        for k in range(half):
+            for v, layer, ev, od in ((vin, first, 0, 1), (vout, last, 2, 3)):
+                a, b = v[2 * k], v[2 * k + 1]
+                bits[layer + k * (1 << d) + base] = int(odd[a])
+                halves[ev].append(b if odd[a] else a)
+                halves[od].append(a if odd[a] else b)
+        route(d + 1, base, halves[0], halves[2])
+        route(d + 1, base + (1 << d), halves[1], halves[3])
+
+    route(0, 0, list(range(q)), list(pi))
+    out = bytearray(len(bits) // 8)
+    for i, bit in enumerate(bits):
+        out[i >> 3] |= bit << (i & 7)
+    return bytes(out)
+
+
+def _mce_key(P, delta):
+    """(pk, sk) SeededKeyGen gives for delta, with its control bits."""
+    from pq_verify import mceliece as M
+    kp = M.keygen(P, delta)
+    f = kp.sk_fields()
+    sk = f["delta"] + f["c"] + f["g"] + _mce_control_bits(P, kp.pi) + f["s"]
+    assert all(ok for _, ok, _ in M.check_key(P, kp.pk, sk, kp))
+    return kp.pk, sk
+
+
+def _mce_whole_field_any_weight(P, sk, C):
+    """The AVX2 decoders' algebra without their weight check: the locator
+    x^t sigma(1/x) has its roots taken on the whole field, so 0 is one
+    whenever sigma's degree is below t, and C is accepted, at any weight,
+    when those roots' syndrome is C's. A root outside the support changes
+    that syndrome."""
+    from pq_verify import mceliece as M
+    g, support, _ = M.support_from_sk(P, sk)
+    cv = int.from_bytes(C, "little") & ((1 << P.mt) - 1)
+    S = M._syndromes(P, [i for i in range(P.mt) if (cv >> i) & 1], g, support)
+    sigma, L = M._berlekamp_massey(P, S)
+    if L > P.t:
+        return None
+    sigma = (sigma + [0] * (P.t + 1))[:P.t + 1]
+
+    def root(a):                      # x^t sigma(1/x) at a
+        r = 0
+        for c in sigma:
+            r = P.mul(r, a) ^ c
+        return r == 0
+    where = {a: i for i, a in enumerate(support)}
+    roots = [a for a in range(P.q) if root(a)]
+    if any(a not in where for a in roots):
+        return None
+    pos = [where[a] for a in roots]
+    return M.e_bytes(P, pos) if M._syndromes(P, pos, g, support) == S else None
+
+
+def _mceliece_shim(tmp_path, ps, fault="", keys=None):
     """A NIST-API Classic McEliece library over pq-verify's reference serving
-    the pinned KAT key. Faults: accept-any-weight, reject-prefix-1, repeat-e,
+    the pinned KAT key, or keys, [(pk, sk)] in turn (the last one repeated).
+    Faults: accept-any-weight, avx2-any-weight, reject-prefix-1, repeat-e,
     enc-prefix-0, bad-s, ignore-c-padding, ignore-pk-padding."""
     import ctypes as C, random, shutil, subprocess
     from pq_verify import mceliece as M
@@ -6014,16 +6089,19 @@ def _mceliece_shim(tmp_path, ps, fault=""):
                    check=True, capture_output=True)
     lib = C.CDLL(str(so))
     P = M.Params(ps)
-    b, _ = M.load_vectors()
-    sk = bytes.fromhex(b[ps]["sk"])
-    pk = M.keygen(P, sk[:32]).pk
-    if fault == "bad-s":
-        sk = sk[:-P.n // 8] + bytes(P.n // 8)
+    if keys is None:
+        b, _ = M.load_vectors()
+        sk = bytes.fromhex(b[ps]["sk"])
+        if fault == "bad-s":
+            sk = sk[:-P.n // 8] + bytes(P.n // 8)
+        keys = [(M.keygen(P, sk[:32]).pk, sk)]
+    served = list(keys)
     rng, last = random.Random(7), []
     U8 = C.POINTER(C.c_uint8)
 
     @C.CFUNCTYPE(C.c_int, U8, U8)
     def kp(pkp, skp):
+        pk, sk = served.pop(0) if len(served) > 1 else served[0]
         C.memmove(pkp, pk, len(pk))
         C.memmove(skp, sk, len(sk))
         return 0
@@ -6052,6 +6130,8 @@ def _mceliece_shim(tmp_path, ps, fault=""):
             if not M.padding_zero(P, ct) and fault != "ignore-c-padding":
                 return -1
             e = M.decode(P, skb, ct)
+            if fault == "avx2-any-weight":
+                e = _mce_whole_field_any_weight(P, skb, ct)
             if e is None and fault == "accept-any-weight":
                 err, S = M.locate(P, skb, ct)
                 g, support, _ = M.support_from_sk(P, skb)
@@ -6105,6 +6185,66 @@ def test_mceliece_audit_padding_6960119(tmp_path, fault):
     r = _mce_audit(_mceliece_shim(tmp_path, "mceliece6960119", fault), "mceliece6960119")
     p, t = r["detail"]["padding"]
     assert t == 2 and (p == 2 if not fault else p == 1), (fault, r["detail"])
+
+
+# A mceliece348864 seed whose key's support lacks the zero element (the
+# pinned KAT key's support has it).
+_MCE_LACKS_ZERO = "9b8a9f34136967cf3e26d72e6dc85acc814dc01b20b5a7237ab99220e53a810e"
+
+
+def _mce_keys(served):
+    """'A': a key whose support lacks 0; 'K': the KAT key, whose support has
+    it; 'B': the KAT key with s zeroed, which keyGen's checks refuse."""
+    from pq_verify import mceliece as M
+    from pq_verify.mceliece_audit import zero_position
+    P = M.Params("mceliece348864")
+    b, _ = M.load_vectors()
+    kat = bytes.fromhex(b[P.name]["sk"])
+    kat_pk = M.keygen(P, kat[:32]).pk
+    lacks = _mce_key(P, bytes.fromhex(_MCE_LACKS_ZERO))
+    assert zero_position(P, lacks[1]) is None and zero_position(P, kat) is not None
+    by = {"A": lacks, "K": (kat_pk, kat), "B": (kat_pk, kat[:-P.n // 8] + bytes(P.n // 8))}
+    return [by[c] for c in served]
+
+
+@pytest.mark.parametrize("served,fault,decaps,on", [
+    ("AAK", "", (24, 24), [2, 2]),                 # both lack 0: a third key has it
+    ("AAK", "avx2-any-weight", (22, 24), [2, 2]),
+    ("AK", "avx2-any-weight", (22, 24), [1, None]),  # the other audit key has it
+    ("A", "avx2-any-weight", (20, 20), [])])        # none has it: not applicable
+def test_mceliece_audit_zero_element_cases_go_through_zero(tmp_path, served, fault, decaps, on):
+    """A decoder that evaluates the locator on the whole field (the AVX2 ones)
+    without its weight check is seen only through the support's zero element:
+    any other weight t-1 error gets a spurious root at 0, and is rejected
+    anyway. A key whose support lacks 0 (15% of mceliece348864 keys) has
+    those cases built on a key that has it, never on another element."""
+    from pq_verify.mceliece_audit import ZERO_CASES
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece348864", fault, _mce_keys(served)),
+                   "mceliece348864")
+    assert r["detail"]["keyGen"] == (10, 10) and r["detail"]["decaps"] == decaps
+    if fault:
+        assert [f["case"] for f in r["failures"]] == [
+            f"key {k}: {ZERO_CASES[1]}"
+            + (f", built on key {j} (key {k}'s support lacks 0)" if j else "")
+            + " (expected: rejected)" for k, j in enumerate(on)]
+    if on:
+        assert not r["not_applicable"]
+    else:                                    # the audit says so, and passes nothing in their place
+        assert r["not_applicable"]["decaps"][0] == 4 and r["verified"]
+        assert "no key had the zero element in its support" in r["not_applicable"]["decaps"][1]
+
+
+def test_mceliece_audit_checks_a_drawn_key_before_using_it(tmp_path):
+    """The key drawn for the zero element is regenerated from its seed first:
+    one keyGen's checks refuse fails those cases, and says why."""
+    from pq_verify.mceliece_audit import ZERO_CASES
+    r = _mce_audit(_mceliece_shim(tmp_path, "mceliece348864", keys=_mce_keys("AAB")),
+                   "mceliece348864")
+    assert r["detail"]["keyGen"] == (10, 10) and r["detail"]["decaps"] == (20, 24)
+    assert [f["case"] for f in r["failures"]] == [f"key {k}: {c}" for k in (0, 1)
+                                                  for c in ZERO_CASES]
+    assert all("key 2, drawn for its zero element, fails keyGen's checks: private key s"
+               in f["detail"] for f in r["failures"])
 
 
 def test_mceliece_symbols_tell_f_variants_apart():

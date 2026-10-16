@@ -58,8 +58,11 @@ versioning](https://semver.org/spec/v2.0.0.html).
   string byte-exact, control bits encoding the permutation); its ciphertexts
   decoded; ciphertexts built against its key (weight t, t−1, t+1, zero,
   random, another key's) decapsulated to the exact expected key -- including errors through the
-  support's zero element, where the locator's degree drops; and, for
-  6960119, padding bits refused as the submitters' reference does.
+  support's zero element, where the locator's degree drops. A key whose
+  support lacks 0 has those cases built on another of the library's keys
+  whose support has it, regenerated from its seed first. They are never built
+  on another element; if no key has 0, they are not applicable. For
+  6960119, padding bits are refused as the submitters' reference does.
 - **PQClean's Classic McEliece is pinned and re-audited in CI**, all ten sets:
   404/404, and eight planted bugs (a decoder accepting any weight, implicit
   rejection hashing the wrong string or prefix, a zero `s`, missing pivots,

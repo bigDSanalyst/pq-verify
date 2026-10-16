@@ -663,8 +663,13 @@ its own key pairs:
   again through the zero element, t + 1, C = 0, random C (2), and a valid
   ciphertext for the library's other key → SHAKE256(0 ‖ s ‖ C). An error at
   the zero element drops the error locator's degree, the classic place for a
-  decoder to slip. A key whose support lacks 0 uses its smallest element, so
-  the count never varies.
+  decoder to slip. A key's support lacks 0 with probability 1 − n/2^m (15% of
+  mceliece348864 keys and 44% of mceliece460896's; none of mceliece8192128's,
+  where n = 2^m). Such a key has its two zero-element cases built on another
+  of the library's keys whose support has it: the audit's other key, or one
+  more drawn from the library (at most 24), regenerated from its seed as
+  keyGen does before it is used. If no key has it, those two cases are not
+  applicable. They are never built on another element.
 - **padding** (mceliece6960119 and 6960119f, where mt = 1547 and k = 5413 end
   mid-byte): a valid ciphertext with a padding bit set, and a public key with
   one, must be refused (nonzero return). The rule is taken from the
@@ -699,12 +704,16 @@ is why the through-zero cases exist), implicit rejection hashing the
 decoder's output instead of s, or with prefix 1; a key generator storing a
 zero s, or (f variant) no pivots; encapsulation hashing with prefix 0; and,
 for 6960119, decapsulation and encapsulation ignoring padding bits. In
-liboqs, on the AVX2 path: the AVX2 decoder's weight check passing any weight,
-implicit rejection hashing the decoder's output, encapsulation hashing with
-prefix 0, the f variant recording no pivots, decapsulation ignoring the
-ciphertext's padding bits, and liboqs's own wrapper turning the backend's
-refusal into success (a 6960119 ciphertext with a padding bit set is then
-accepted); on the clean path: the decoder accepting any weight, the same
+liboqs, on the AVX2 path: the AVX2 decoder's weight check passing any weight
+(seen only through the support's zero element: that decoder finds the
+locator's roots on the whole field, so any other weight t − 1 error gains a
+spurious root at 0 and is rejected anyway; while a key lacking 0 had those
+cases moved to its smallest support element, CI missed this mutant on about
+2% of runs), implicit rejection hashing the decoder's output, encapsulation
+hashing with prefix 0, the f variant recording no pivots, decapsulation
+ignoring the ciphertext's padding bits, and liboqs's own wrapper turning the
+backend's refusal into success (a 6960119 ciphertext with a padding bit set is
+then accepted); on the clean path: the decoder accepting any weight, the same
 wrapper bug for 6960119f, and encapsulation ignoring the public key's padding
 bits. That the AVX2 mutants fail the distribution build and the clean ones
 the portable build shows each row runs the backend it names.
