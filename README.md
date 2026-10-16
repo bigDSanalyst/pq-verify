@@ -572,7 +572,10 @@ else can never have it.
 The SBOM is short: **pq-verify has no unconditional runtime dependencies.**
 `kyber-py`, `dilithium-py`, `sympy` and `slh-dsa` are optional extras used to
 cross-check against independent implementations; the package itself installs
-with none of them.
+with none of them. So the SBOM lists pq-verify itself, with its licence, its
+purl and each file the wheel installs with its SHA-256, and no dependency. The
+SBOMs attached to 2.11.0 and 2.12.0 are empty: they name only the build folder
+that was scanned.
 
 ---
 

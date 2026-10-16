@@ -5,6 +5,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release SBOM was empty.** syft reads installed package metadata, not
+  wheel archives, so the SBOM attached to 2.11.0 and 2.12.0, and attested,
+  names a package "dist/" and nothing else. The release workflow now scans
+  the unpacked wheel, so the SBOM names pq-verify at the released version,
+  its licence and purl, and each file with its SHA-256. The workflow refuses
+  an SBOM that does not.
+
 ## [2.12.0] — 2026-10-16
 
 ### Added — HQC's error-correcting code (HQC's standard is not final)
