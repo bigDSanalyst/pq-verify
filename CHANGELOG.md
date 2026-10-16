@@ -5,6 +5,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **v2.12.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.23419951](https://doi.org/10.5281/zenodo.23419951).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.9.0's.
+
 ### Fixed
 
 - **The release SBOM was empty.** syft reads installed package metadata, not
