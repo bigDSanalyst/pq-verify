@@ -4878,6 +4878,54 @@ def test_workflows_pin_their_runner_image():
     assert not floating, floating
 
 
+def _actions_files():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    files = sorted((root / ".github" / "workflows").glob("*.yml"))
+    files += [p for p in [root / "action.yml"] if p.exists()]
+    if not files:
+        pytest.skip("no workflows in this layout")
+    return files
+
+
+def test_every_action_is_pinned_to_a_commit():
+    """A tag can be moved to someone else's code; a commit cannot. Every
+    action the workflows here and the Action itself use is pinned to a full
+    commit SHA, with the version it is in a comment for Dependabot. CI's
+    zizmor job checks this and more."""
+    import re
+    loose = []
+    for f in _actions_files():
+        for line in f.read_text().splitlines():
+            m = re.search(r"\buses:\s*(\S+)(.*)$", line)
+            if not m or m.group(1).startswith(("./", "docker://")):
+                continue
+            if not (re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", m.group(1))
+                    and re.search(r"#\s*\S", m.group(2))):
+                loose.append(f"{f.name}: {line.strip()}")
+    assert not loose, loose
+
+
+def test_every_checkout_says_whether_it_keeps_the_token():
+    """actions/checkout leaves the job's token in .git/config unless told not
+    to, where every later step, a build dependency's install script included,
+    can read it. Each checkout says so; only the vector watcher, which pushes
+    its baseline, keeps it."""
+    import re
+    unsaid, keeps = [], []
+    for f in _actions_files():
+        lines = f.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if re.search(r"\buses:\s*actions/checkout@", line):
+                m = re.search(r"persist-credentials:\s*(true|false)", "\n".join(lines[i + 1:i + 4]))
+                if not m:
+                    unsaid.append(f"{f.name}:{i + 1}")
+                elif m.group(1) == "true":
+                    keeps.append(f.name)
+    assert not unsaid, unsaid
+    assert keeps == ["watch-nist-vectors.yml"], keeps
+
+
 # ----------------------------------------------------------------------
 # LMS in the prompt/response path: an HSM signs with its own key
 # ----------------------------------------------------------------------

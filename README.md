@@ -274,6 +274,8 @@ reference chain:
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
 template substitution, and every action the Action uses is pinned to a commit.
+So is every action in this repository's own workflows, and a zizmor job fails
+CI on any workflow finding.
 Pin the Action itself to a full release tag, as the examples above do, or to a
 commit SHA. Do not use `@v1`: it marks the first upload and does not move to
 new releases.

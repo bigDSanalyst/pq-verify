@@ -42,6 +42,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes a run; main and the weekly
+# run each finish.
+concurrency:
+  group: vendor-audits-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # The runner image is pinned, not ubuntu-latest: these pinned results depend on
 # the toolchain that builds each library (gcc, OpenSSL). Moving to a new image
 # is a deliberate change in its own PR, re-recording any row that moves.
@@ -51,8 +57,10 @@ jobs:
     name: vendor audits (pinned libraries)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: System dependencies
@@ -70,11 +78,13 @@ jobs:
     name: harness audits (Crucible protocol, pinned)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.26.1"
       - name: Install

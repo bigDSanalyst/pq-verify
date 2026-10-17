@@ -5,6 +5,31 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security — the CI workflows
+
+- **Every action in every workflow is pinned to a full commit SHA**, with its
+  version in a comment. Before, only the release workflow and the Action
+  were; a tag can be moved to someone else's code, a commit cannot.
+  Dependabot keeps the pins current, now proposing a release only once it
+  is seven days old.
+- **No checkout leaves the job's token on disk** (`persist-credentials:
+  false`), where any later step, a build dependency's install script
+  included, could read it. The exception is the NIST vector watcher, which
+  pushes its baseline; it says so explicitly.
+- **Inputs reach scripts through the environment, never by template
+  expansion**, which pastes them into the script before it runs. That
+  covers the release workflow's version input. It also covers the vector
+  watcher's report, which quotes NIST's upstream data and was pasted into
+  JavaScript running with write access. The report's output delimiter is
+  now random, so no line in it can end the report early.
+- **No pip cache in the tests, release or SLH-DSA sigGen workflows.** Caches
+  written on main were restored by the release run.
+- The watcher's write permissions are its job's, not the whole workflow's.
+  The vendor audits and the watcher limit concurrent runs.
+- **A zizmor job** (pinned, 1.31.1) fails CI on any workflow finding, with
+  its online audits on. Two unit tests hold the pins and the checkout
+  settings in the regular suite too.
+
 ### Changed
 
 - **v2.12.0 has its own Zenodo deposit**,
