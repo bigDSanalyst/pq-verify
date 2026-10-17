@@ -61,10 +61,11 @@ jobs:
         python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
       - run: |
           python -m pip install --upgrade pip
           pip install -c constraints-reference.txt pytest kyber-py dilithium-py sympy slh-dsa
@@ -89,12 +90,17 @@ jobs:
       sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: The version must agree with the repository
         id: meta
+        # Inputs reach the shell through the environment, never by template
+        # expansion: a template is pasted into the script before it runs.
+        env:
+          WANT: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          WANT="${{ inputs.version }}"
           # A release whose metadata disagrees with its tag is the same class of
           # defect as a requires-python that does not match the code.
           HAVE=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
@@ -196,12 +202,16 @@ jobs:
           cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Release notes from the changelog
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ steps.meta.outputs.sha }}
         run: |
           # One source of truth: the notes are the CHANGELOG section, not a
           # second description that can drift from it.
-          awk '/^## \[${{ inputs.version }}\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > NOTES.md
+          awk -v head="## [$VERSION]" 'index($0, head) == 1 {f=1; next} /^## \[/ {f=0} f' \
+            CHANGELOG.md > NOTES.md
           if [ ! -s NOTES.md ]; then
-            echo "::error::CHANGELOG.md has no section for ${{ inputs.version }}"
+            echo "::error::CHANGELOG.md has no section for $VERSION"
             exit 1
           fi
           {
@@ -211,11 +221,11 @@ jobs:
             echo "### Verifying this release"
             echo ""
             echo '```bash'
-            echo "gh attestation verify pq_verify-${{ inputs.version }}-py3-none-any.whl \\"
-            echo "   --repo ${{ github.repository }}"
+            echo "gh attestation verify pq_verify-$VERSION-py3-none-any.whl \\"
+            echo "   --repo $GITHUB_REPOSITORY"
             echo '```'
             echo ""
-            echo "Built by \`.github/workflows/release.yml\` from commit \`${{ steps.meta.outputs.sha }}\`,"
+            echo "Built by \`.github/workflows/release.yml\` from commit \`$SHA\`,"
             echo "after the full suite and all 1566 NIST ACVP vectors passed on Python 3.9 through 3.13."
             echo "An SPDX SBOM is attached and attested."
           } >> NOTES.md
@@ -223,13 +233,15 @@ jobs:
       - name: Create the tag and the release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ steps.meta.outputs.sha }}
         run: |
-          gh release create "v${{ inputs.version }}" \
-            --target "${{ steps.meta.outputs.sha }}" \
-            --title "pq-verify v${{ inputs.version }}" \
+          gh release create "v$VERSION" \
+            --target "$SHA" \
+            --title "pq-verify v$VERSION" \
             --notes-file NOTES.md \
             dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt \
-            "pq-verify-${{ inputs.version }}.spdx.json"
+            "pq-verify-$VERSION.spdx.json"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -272,11 +284,12 @@ jobs:
       - name: Fetch the released artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          gh release download "v${{ inputs.version }}" \
-            --repo "${{ github.repository }}" \
+          gh release download "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
             --pattern '*.whl' --pattern '*.tar.gz' --pattern 'SHA256SUMS.txt' \
             --dir dist
           ls -la dist

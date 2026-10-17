@@ -11,19 +11,28 @@ on:
     - cron: "0 6 * * 1"   # 06:00 UTC every Monday
   workflow_dispatch: {}    # allow manual "Run workflow" from the Actions tab
 
-permissions:
-  contents: write          # to commit the updated baseline
-  issues: write            # to open an issue on change
+permissions: {}
+
+# Two runs at once would race to push the baseline.
+concurrency:
+  group: watch-nist-vectors
+  cancel-in-progress: false
 
 jobs:
   check:
+    name: check NIST vectors for drift
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write        # to commit the updated baseline
+      issues: write          # to open an issue on change
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true   # zizmor: ignore[artipacked] the baseline commit below pushes with it
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -34,11 +43,13 @@ jobs:
           OUT=$(python3 tools/check_vectors.py)
           CODE=$?
           echo "$OUT"
-          # save output for the issue body
+          # save output for the issue body. The report quotes upstream data,
+          # so its delimiter is random: a line of its own cannot end it early.
+          EOF_MARK="EOF_$(openssl rand -hex 16)"
           {
-            echo 'report<<EOF'
+            echo "report<<$EOF_MARK"
             echo "$OUT"
-            echo 'EOF'
+            echo "$EOF_MARK"
           } >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           exit 0
@@ -54,13 +65,17 @@ jobs:
 
       - name: Open an issue (if changed)
         if: steps.check.outputs.code == '1'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        # The report quotes upstream data: it reaches the script as an
+        # environment variable, never pasted into the JavaScript itself.
+        env:
+          REPORT: ${{ steps.check.outputs.report }}
         with:
           script: |
             const body = `A scheduled check detected that NIST's ACVP vectors changed upstream.
 
             \`\`\`
-            ${{ steps.check.outputs.report }}
+            ${process.env.REPORT}
             \`\`\`
 
             **This does not change the shipped frozen vectors.** pq-verify stays
