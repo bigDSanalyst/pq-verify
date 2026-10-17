@@ -1583,7 +1583,7 @@ ENGINE_TRACKS = (
     ('Cubic B(a,b) + ECC',     'classical', _NO_PQC_CURVES),
     ('Curve ',                 'classical', _NO_PQC_CURVES),
     ('SafeCurves Database',    'classical', _NO_PQC_CURVES),
-    ('Conformity Gradient',    'research', 'correctness checks for NTT/FFT side-channel countermeasures'),
+    ('Conformity Gradient',    'research', _NO_PQC_YET),
     ('CFL Front-End',          'research', 'standards constraints as SAT/QBF obligations'),
     ('DQBF Pipeline',          'research', 'standards constraints as SAT/QBF obligations'),
     ('C CFL Pipeline',         'research', 'standards constraints as SAT/QBF obligations'),

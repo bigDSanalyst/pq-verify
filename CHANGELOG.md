@@ -42,6 +42,18 @@ versioning](https://semver.org/spec/v2.0.0.html).
   and does not move to new releases.
 - SECURITY.md's supported versions stopped at 2.10.x, so 2.11 and 2.12 were
   not listed. 2.12.x is supported; 2.10.x and 2.11.x get security fixes only.
+- **The NTT side-channel direction moved to the PQC track.** The track table
+  listed the research track's conformity-gradient engine as being realigned
+  toward "correctness checks for NTT/FFT side-channel countermeasures", but
+  that engine checks identities of D(t) in double precision and never runs
+  an NTT. The direction now sits in the PQC row, beside the engines that
+  verify the NTTs, and names its countermeasures: the masking and shuffling
+  `--leakage` allocates. A masked NTT (run on each arithmetic share) and a
+  shuffled one must still compute the FIPS 203/204 transform; nothing checks
+  that yet. "FFT" is dropped: FN-DSA's FFT is used in signing, which
+  pq-verify does not check. The conformity gradient now has no PQC target
+  yet, as ARCHITECTURE.md's prose already said, and the JSON report's
+  `realigns_to` for its checks says so.
 
 ### Fixed
 
