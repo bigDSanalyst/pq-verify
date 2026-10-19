@@ -9,9 +9,9 @@ authors:
 # This names the archived Zenodo deposit. It moves when a NEW DEPOSIT EXISTS,
 # not when the package version changes — advertising a DOI that does not
 # resolve to the stated version would be worse than lagging a release behind.
-version: 2.12.0
-doi: "10.5281/zenodo.23419951"
-date-released: 2026-10-16
+version: 2.12.1
+doi: "10.5281/zenodo.23464836"
+date-released: 2026-10-19
 license: MIT
 repository-code: "https://github.com/bigDSanalyst/pq-verify"
 references:

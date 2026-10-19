@@ -5,6 +5,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **v2.12.1 has its own Zenodo deposit**,
+  [10.5281/zenodo.23464836](https://doi.org/10.5281/zenodo.23464836).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.12.0's.
+
 ## [2.12.1] — 2026-10-19
 
 A maintenance release. The release SBOM now describes the package, the CI
