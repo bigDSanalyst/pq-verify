@@ -2,141 +2,91 @@
 """
 pq-verify — VENDOR AUDIT TEMPLATE
 ==================================
-Audit your compiled ML-KEM / ML-DSA implementation and produce a
-machine-readable verification report with a reproducible fingerprint.
+Audit the NTT that your compiled ML-KEM or ML-DSA library exports, and get
+pq-verify's JSON report. This file runs one command:
 
-USAGE (Google Colab or any Linux + Python 3.9+ + gcc):
-    1. Install:           pip install "pq-verify[full]"
+    pq-verify --audit-so <library> <symbol> --json pqverify_vendor_report.json
+
+pq-verify loads the library in a child process with a timeout, checks its NTT
+against the FIPS 203 or FIPS 204 definition, and binds the verdict to the
+sha256 of every shared object that ran. Only the library's own code is judged.
+
+The NTT is one function of the scheme. To audit a whole ML-KEM or ML-DSA
+implementation against NIST's ACVP vectors, run `pq-verify --audit-kem` or
+`pq-verify --audit-dsa` on it (README.md).
+
+USAGE (Linux, Python 3.9+, gcc):
+    1. Install:           pip install pq-verify
     2. Edit the CONFIG block below (3 lines).
     3. Run this file:     python vendor_audit_template.py
 
-Output: console report + pqverify_vendor_report.json
+Output: pq-verify's console report, pqverify_vendor_report.json, and its exit
+code: 0 verified; 1 not verified (findings, or an NTT that could not be run:
+a symbol not found, which the report answers with the library's NTT symbols,
+a crash or a hang); 2 not audited (the library could not be read or loaded).
+
+Auditing a library runs its code. Audit one you do not trust inside a
+container or a VM (SECURITY.md).
 """
 
-import json, hashlib
-from datetime import datetime, timezone
+import os
+import subprocess
+import sys
 
 # ============================================================
 # CONFIG — edit these three lines
 # ============================================================
-SO_PATH    = "./libkyber_ntt.so"     # path to your compiled .so
-NTT_SYMBOL = "ntt"                    # exported NTT symbol (see discover_symbols below)
-ALGORITHM  = "ML-KEM-1024"           # ML-KEM-512/768/1024 or ML-DSA-44/65/87
+SO_PATH    = "./libkyber_ntt.so"   # path to your compiled library
+NTT_SYMBOL = "ntt"                 # its exported NTT: nm -D <library> | grep -i ntt
+SCHEME     = "ML-KEM"              # "ML-KEM" or "ML-DSA"
 
-_PARAMS = {
-    "ML-KEM-512":  dict(q=3329,    zeta=17,   n=256, k=2, family="kyber"),
-    "ML-KEM-768":  dict(q=3329,    zeta=17,   n=256, k=3, family="kyber"),
-    "ML-KEM-1024": dict(q=3329,    zeta=17,   n=256, k=4, family="kyber"),
-    "ML-DSA-44":   dict(q=8380417, zeta=1753, n=256, k=4, family="dilithium"),
-    "ML-DSA-65":   dict(q=8380417, zeta=1753, n=256, k=6, family="dilithium"),
-    "ML-DSA-87":   dict(q=8380417, zeta=1753, n=256, k=8, family="dilithium"),
-}
+REPORT = "pqverify_vendor_report.json"
+
+_SCHEMES = {"ML-KEM": "mlkem", "ML-DSA": "mldsa"}
 
 
-def discover_symbols(so_path):
-    """List exported NTT-related symbols if you don't know the symbol name."""
-    import subprocess
+def scheme_problem(so_path, symbol, scheme):
+    """Why --audit-so would audit this NTT as the other scheme, or None.
+
+    --audit-so tells ML-DSA from ML-KEM by name: for ML-DSA, the symbol or
+    the library's path must contain mldsa, ml_dsa, ml-dsa, dilithium or
+    fips204, and any other name is audited as ML-KEM. The two differ in more
+    than the modulus: ML-DSA's coefficients are int32 and ML-KEM's int16, so
+    an ML-DSA NTT read as ML-KEM writes past the buffer it is given. This asks
+    the function --audit-so itself uses."""
+    from pq_verify.core import _detect_scheme
+    if scheme not in _SCHEMES:
+        return f"SCHEME must be 'ML-KEM' or 'ML-DSA', not {scheme!r}"
+    seen = _detect_scheme(symbol, os.path.abspath(os.path.expanduser(so_path))) or "mlkem"
+    if seen != _SCHEMES[scheme]:
+        other = "ML-DSA" if seen == "mldsa" else "ML-KEM"
+        return (f"--audit-so would audit {symbol} in {so_path} as {other}, not "
+                f"{scheme}: it tells the two apart by name. Name the library or the "
+                f"symbol so that it contains {_SCHEMES[scheme]}")
+    return None
+
+
+def main():
     try:
-        out = subprocess.check_output(['nm', '-D', so_path], stderr=subprocess.DEVNULL).decode()
-        syms = [l.strip() for l in out.splitlines() if 'ntt' in l.lower() and ' T ' in l]
-        print(f"Exported NTT symbols in {so_path}:")
-        for s in syms[:30]: print(f"  {s}")
-        if not syms:
-            print("  (none — NTT may be static/inlined; expose void ntt(int16_t[256]) in a small .so)")
-        return syms
-    except Exception as e:
-        print(f"nm failed: {e}"); return []
-
-
-def run_vendor_audit():
-    p = _PARAMS[ALGORITHM]
-    report = {
-        "tool": "pq-verify", "version": "2.9.0",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "target": {"so_path": SO_PATH, "symbol": NTT_SYMBOL, "algorithm": ALGORITHM, **p},
-        "results": {},
-    }
-    print("=" * 64)
-    print(f"  pq-verify VENDOR AUDIT — {ALGORITHM}")
-    print(f"  Library: {SO_PATH}   Symbol: {NTT_SYMBOL}")
-    print("=" * 64)
-
-    # 1. Load the NTT
-    try:
-        ntt = pqverify_load_so(SO_PATH, NTT_SYMBOL, q=p["q"], n=p["n"])
-    except Exception as e:
-        print(f"\n  LOAD FAILED: {e}")
-        print("  Run discover_symbols(SO_PATH) to list available symbols.")
-        report["results"]["load"] = {"ok": False, "error": str(e)}
-        _save(report); return report
-    report["results"]["load"] = {"ok": True}
-
-    # 2. Non-circular KAT vs FIPS definition
-    print("\n[1/4] Non-circular Known Answer Test")
-    report["results"]["kat"] = pqverify_kat(ntt, q=p["q"], zeta=p["zeta"],
-                                             n=p["n"], k=p["k"], family=p["family"])
-
-    # 3. Parameter security (the lattice estimator covers ML-KEM parameter sets)
-    print("\n[2/4] Parameter security")
-    if p["family"] == "kyber":
-        report["results"]["params"] = pqverify_params(ALGORITHM)
+        why = scheme_problem(SO_PATH, NTT_SYMBOL, SCHEME)
+    except ImportError:
+        print("  pq-verify is not installed: pip install pq-verify")
+        return 2
+    if why:
+        print(f"  cannot audit: {why}")
+        return 2
+    # This script's own output from an earlier run would otherwise be taken
+    # for the report of a run that wrote none.
+    if os.path.exists(REPORT):
+        os.remove(REPORT)
+    code = subprocess.call([sys.executable, "-m", "pq_verify.cli",
+                            "--audit-so", SO_PATH, NTT_SYMBOL, "--json", REPORT])
+    if os.path.exists(REPORT):
+        print(f"  report: {REPORT} (exit code {code})")
     else:
-        print(f"  Parameter-set sizes for {ALGORITHM} validated in the self-suite")
-        print(f"  (FIPS 204 pk/sk/sig sizes). Lattice estimator targets ML-KEM sets;")
-        print(f"  ML-DSA security is covered by the FIPS 204 ACVP run below.")
-        report["results"]["params"] = {"note": f"{ALGORITHM} sizes validated; "
-                                       "ACVP covers FIPS 204 compliance", "verified": True}
-
-    # 4. Native full-KEM (Kyber) or note (Dilithium = signature)
-    if p["family"] == "kyber":
-        print("\n[3/4] Native algebraic full-KEM")
-        report["results"]["kem"] = pqverify_kem(k=p["k"], verbose=True)
-    else:
-        print("\n[3/4] ML-DSA signature scheme — NTT + KAT cover the arithmetic")
-        report["results"]["kem"] = {"note": "signature scheme", "verified": True}
-
-    # 5. NIST ACVP — algorithm-aware: ML-KEM (240) or ML-DSA (615)
-    if p["family"] == "kyber":
-        print("\n[4/4] NIST ACVP end-to-end — ML-KEM (FIPS 203, all 12 groups)")
-        try:
-            acvp = pqverify_acvp(verbose=True)
-            report["results"]["acvp"] = acvp if acvp is not None else {
-                "note": "kyber-py not installed — pip install kyber-py", "verified": None}
-        except Exception as e:
-            report["results"]["acvp"] = {"error": str(e), "note": "needs kyber-py + network"}
-    else:
-        print("\n[4/4] NIST ACVP end-to-end — ML-DSA (FIPS 204, all interfaces)")
-        try:
-            acvp = pqverify_mldsa_acvp(verbose=True)
-            report["results"]["acvp"] = acvp if acvp is not None else {
-                "note": "dilithium-py not installed — pip install dilithium-py", "verified": None}
-        except Exception as e:
-            report["results"]["acvp"] = {"error": str(e), "note": "needs dilithium-py + network"}
-
-    # Fingerprint + verdict
-    blob = json.dumps(report["results"], sort_keys=True, default=str).encode()
-    report["fingerprint_sha256"] = hashlib.sha256(blob).hexdigest()
-    def _ok(key, default):
-        r = report["results"].get(key)
-        return r.get("verified", default) if isinstance(r, dict) else default
-    kat_ok = _ok("kat", False)
-    kem_ok = _ok("kem", True)
-    acvp_ok = _ok("acvp", True)
-    report["verdict"] = "VERIFIED" if (kat_ok and kem_ok and acvp_ok) else "FINDINGS"
-
-    print(f"\n{'='*64}")
-    print(f"  VERDICT: {report['verdict']}  ({ALGORITHM})")
-    print(f"  Fingerprint: {report['fingerprint_sha256'][:32]}...")
-    print(f"  Report: pqverify_vendor_report.json")
-    print("=" * 64)
-    _save(report); return report
-
-
-def _save(report):
-    with open("pqverify_vendor_report.json", "w") as f:
-        json.dump(report, f, indent=2, default=str)
+        print(f"  no report: the library was not audited (exit code {code})")
+    return code
 
 
 if __name__ == "__main__":
-    # discover_symbols(SO_PATH)   # uncomment if you don't know the symbol name
-    run_vendor_audit()
+    sys.exit(main())

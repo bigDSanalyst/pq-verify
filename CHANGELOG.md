@@ -5,6 +5,19 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.0] — 2026-10-19
+
+A feature release. ML-DSA gains a constant-time check, judged against the
+library's own declassifications, and HQC's Reed–Muller decoder is checked
+against its own symmetries, with no reference decoder. Every constant-time
+check now also sees a secret-indexed load whose value is discarded, which
+memcheck missed before. No pinned vector or exit code changes. A verdict can:
+the HQC audit has a new stage and the constant-time checks are stricter, so a
+library that passed under 2.12.1 can fail under 2.13.0. Every recorded vendor
+row and mutant reproduced. pq-verify's JSON reports gain fields and lose none.
+`vendor_audit_template.py`, which had not worked since 2.8.1, now runs
+`--audit-so` and writes its report.
+
 ### Added
 
 - **Constant time for ML-DSA**: `--audit-dsa ... --constant-time` runs key
@@ -45,6 +58,23 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`vendor_audit_template.py` had not worked since 2.8.1, and would have
+  overclaimed if it had.** It called pq-verify's functions without importing
+  them. They came from the standalone script its instructions said to
+  `exec()`, and when 2.8.1 removed that instruction nothing replaced it. Run
+  as documented, every audit stopped at "LOAD FAILED: name 'pqverify_load_so'
+  is not defined", which blamed the library; from 2.10.0 its report also said
+  2.9.0, whatever was installed. Importing them would not have been enough:
+  three of its four checks ran pq-verify's own references (its native KEM
+  pipeline, and NIST's vectors against kyber-py), in-process, and counted
+  them toward the library's verdict. It is now a thin wrapper over
+  `pq-verify --audit-so`: only the library's NTT is judged, in a child
+  process with a timeout, and the JSON report is bound to the library's
+  sha256. It refuses a library and symbol whose names `--audit-so` would
+  read as the other scheme (ML-DSA's coefficients are int32, ML-KEM's
+  int16). Tests run it against a C NTT, correct and corrupted.
+  `sample_report.json`, its example output, was a 2.6.0 report in the old
+  format; it is now 2.13.0's report for PQClean's ML-KEM-1024 NTT (3/3).
 - **memcheck missed a secret-indexed load whose value is discarded**, in
   every constant-time check: ML-KEM's and Classic McEliece's too. By default
   Valgrind's translator deletes such a load before memcheck instruments it,
@@ -81,6 +111,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   CITATION.cff only mentions it in a comment: cffconvert takes the first DOI
   under `identifiers` over the top-level `doi`, so listing it there would
   print this version beside a DOI that resolves to the latest release.
+- SECURITY.md: 2.13.x is supported; 2.12.x joins 2.10.x and 2.11.x in getting
+  security fixes only.
 
 ## [2.12.1] — 2026-10-19
 

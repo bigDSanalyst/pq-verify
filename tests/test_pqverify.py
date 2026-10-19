@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.12.1"
+    assert pq_verify.__version__ == VERSION == "2.13.0"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
@@ -2256,6 +2256,118 @@ def test_no_file_claims_a_python_floor_the_package_does_not(  ):
                 f"{name}:{lineno}: claims Python {got[0]}.{got[1]}+, "
                 f"package declares {floor[0]}.{floor[1]}+")
     assert not offenders, "\n  " + "\n  ".join(offenders)
+
+
+# ----------------------------------------------------------------------
+# vendor_audit_template.py: the file a vendor is told to run
+#
+# It called pq-verify's functions without importing them. They came from the
+# standalone script its instructions said to exec() until 2.8.1, and when
+# that instruction went (above) nothing replaced it: from then on every run
+# as documented stopped at "LOAD FAILED: name 'pqverify_load_so' is not
+# defined", blaming the library. From 2.10.0 its report also said 2.9.0,
+# whatever was installed. Importing them would not have been enough: three
+# of its four checks ran pq-verify's own references (its native KEM, NIST's
+# vectors against kyber-py) and counted them toward the library's verdict.
+# It now runs --audit-so in a child process, and these run it.
+# ----------------------------------------------------------------------
+
+_TEMPLATE_NTT_C = r"""
+#include <stdint.h>
+static int32_t zeta(int k) {            /* 17^BitRev7(k) mod 3329 */
+    int r = 0, x = k;
+    for (int i = 0; i < 7; i++) { r = (r << 1) | (x & 1); x >>= 1; }
+    int32_t z = 1;
+    for (int i = 0; i < r; i++) z = (z * 17) % 3329;
+    return z;
+}
+void ntt(int16_t f[256]) {              /* FIPS 203, Algorithm 9 */
+    int k = 1;
+    for (int len = 128; len >= 2; len >>= 1)
+        for (int s = 0; s < 256; s += 2 * len) {
+            int32_t z = zeta(k++);
+            for (int j = s; j < s + len; j++) {
+                int32_t t = (z * f[j + len]) % 3329, a = f[j];
+                f[j + len] = (int16_t)(((a - t) % 3329 + 3329) % 3329);
+                f[j] = (int16_t)(((a + t) % 3329 + 3329) % 3329);
+            }
+        }
+    @CORRUPT@
+}
+"""
+
+
+def _vendor_template(monkeypatch, **config):
+    import importlib.util, os
+    spec = importlib.util.spec_from_file_location(
+        "vendor_audit_template", _REPO / "vendor_audit_template.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for k, v in config.items():
+        setattr(mod, k, v)
+    # The child it starts must import this checkout's pq_verify.
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(
+        p for p in (str(_REPO), os.environ.get("PYTHONPATH")) if p))
+    return mod
+
+
+@pytest.mark.parametrize("corrupt, code", [
+    ("", 0),
+    ("f[0] = (int16_t)((f[0] + 1) % 3329);", 1),
+])
+def test_vendor_template_audits_the_library_in_a_child(tmp_path, monkeypatch,
+                                                       corrupt, code):
+    import hashlib, json, shutil, subprocess
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    src = tmp_path / "ntt.c"
+    src.write_text(_TEMPLATE_NTT_C.replace("@CORRUPT@", corrupt))
+    so = tmp_path / "libmlkem_ntt.so"
+    subprocess.run(["gcc", "-O2", "-fPIC", "-shared", "-o", str(so), str(src)],
+                   check=True)
+    report = tmp_path / "report.json"
+    mod = _vendor_template(monkeypatch, SO_PATH=str(so), NTT_SYMBOL="ntt",
+                           SCHEME="ML-KEM", REPORT=str(report))
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert mod.main() == code
+    doc = json.loads(report.read_text())
+    assert doc["schema"] == "pq-verify/scan-result"
+    assert doc["artifact"]["sha256"] == hashlib.sha256(so.read_bytes()).hexdigest()
+    assert doc["summary"]["checks_total"] > 0
+    assert doc["summary"]["verified"] is (code == 0)
+
+
+def test_vendor_template_refuses_a_name_the_audit_would_misread(tmp_path,
+                                                                monkeypatch):
+    """--audit-so tells ML-DSA from ML-KEM by name, and an ML-DSA NTT read as
+    ML-KEM writes int32 coefficients into an int16 buffer. The template asks
+    the function --audit-so uses before it starts anything."""
+    import sys
+    calls = []
+    report = tmp_path / "report.json"
+    mod = _vendor_template(monkeypatch, SO_PATH=str(tmp_path / "libvendor.so"),
+                           NTT_SYMBOL="ntt", SCHEME="ML-DSA", REPORT=str(report))
+    monkeypatch.setattr(mod.subprocess, "call", lambda cmd: calls.append(cmd) or 0)
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert mod.main() == 2
+    assert not calls and "as ML-KEM, not ML-DSA" in out.getvalue()
+    mod.SCHEME = "Kyber"
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert mod.main() == 2
+    assert not calls and "SCHEME must be" in out.getvalue()
+    # Named so that --audit-so reads it as ML-DSA, it runs that and nothing
+    # else, and an earlier run's report is not passed off as this run's.
+    mod.SO_PATH, mod.SCHEME = str(tmp_path / "libmldsa65.so"), "ML-DSA"
+    report.write_text("{}")
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        assert mod.main() == 0
+    assert calls == [[sys.executable, "-m", "pq_verify.cli", "--audit-so",
+                      mod.SO_PATH, "ntt", "--json", str(report)]]
+    assert not report.exists() and "no report" in out.getvalue()
+    text = (_REPO / "vendor_audit_template.py").read_text()
+    for name in ("pqverify_load_so", "pqverify_kat", "pqverify_kem",
+                 "pqverify_acvp"):
+        assert name not in text, f"the template runs {name} in-process"
 
 
 # ----------------------------------------------------------------------
