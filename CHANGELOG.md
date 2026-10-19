@@ -5,6 +5,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.1] — 2026-10-19
+
+A maintenance release. The release SBOM now describes the package, the CI
+workflows are hardened, and the documentation is corrected. No check,
+verdict, exit code or pinned vector changes. One JSON report label does:
+`realigns_to` for the conformity gradient's checks, below.
+
 ### Security — the CI workflows
 
 - **Every action in every workflow is pinned to a full commit SHA**, with its
@@ -29,6 +36,12 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - **A zizmor job** (pinned, 1.31.1) fails CI on any workflow finding, with
   its online audits on. Two unit tests hold the pins and the checkout
   settings in the regular suite too.
+- **The release's SBOM step no longer runs an installer from syft's main
+  branch.** anchore/sbom-action 0.24.3 pins syft's install script to the
+  syft release it installs, 1.54.0; before 0.24.1 it fetched the script from
+  main, inside the release job. The release's SBOM guard passes with syft
+  1.54.0. The same update moved upload-artifact to 7.0.2, download-artifact
+  to 8.0.2 and setup-go to 7.0.0.
 
 ### Changed
 
@@ -42,6 +55,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   and does not move to new releases.
 - SECURITY.md's supported versions stopped at 2.10.x, so 2.11 and 2.12 were
   not listed. 2.12.x is supported; 2.10.x and 2.11.x get security fixes only.
+- The Action's SARIF upload uses github/codeql-action/upload-sarif 4.38.3
+  (was 4.38.2).
 - **The NTT side-channel direction moved to the PQC track.** The track table
   listed the research track's conformity-gradient engine as being realigned
   toward "correctness checks for NTT/FFT side-channel countermeasures", but
