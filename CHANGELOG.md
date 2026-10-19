@@ -5,6 +5,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **v2.13.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.23484320](https://doi.org/10.5281/zenodo.23484320).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.12.1's.
+
 ## [2.13.0] — 2026-10-19
 
 A feature release. ML-DSA gains a constant-time check, judged against the
