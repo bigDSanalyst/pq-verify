@@ -710,23 +710,79 @@ _OP_OF_STAGE = {
 
 def pqverify_audit_dsa(so_path, param_set='ML-DSA-65', abi=None, symbols=None,
                        prompt_dir=None, vector_dir=None, live=False, verbose=True,
-                       edge=True, accumulated=10_000, prefix=None):
+                       edge=True, accumulated=10_000, prefix=None, constant_time=False):
     """Audit a third-party ML-DSA library end to end; see the module docstring.
 
     Returns None when the library cannot be audited at all (an ambiguous
     symbol, or no entry point for any stage). Otherwise a dict with
     'detail' {stage: (p, t)}, 'not_applicable' {stage: (count, reason)},
-    'via' {stage: symbol}, 'failures', 'rng' findings and 'edge'.
+    'via' {stage: symbol}, 'failures', 'rng' findings, 'edge', 'status' and,
+    with constant_time, 'constant_time' (pq_verify/ct_dsa.py, CONSTANT-TIME.md).
     """
     v = VendorDSA(so_path, param_set, abi=abi, symbols=symbols, prefix=prefix)
     try:
         return _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge,
-                          accumulated)
+                          accumulated, constant_time)
     finally:
         v.close()
 
 
-def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumulated):
+def _constant_time(v, param_set):
+    """--constant-time: ({stage: (p, t)}, result). Key generation and signing
+    under memcheck, judged by the library's own declassifications. A library
+    that cannot be judged that way is CANNOT VERIFY, never a pass."""
+    from . import ct_dsa
+    from .ct_audit import Unavailable
+    if not ct_dsa.hooked(v.path):
+        why = ("the library does not carry pq-verify's constant-time shim: ML-DSA's "
+               "rejection loop branches on secret-derived values by design, and only the "
+               "library's own declarations of what is public, compiled in and hooked, "
+               "tell those branches from a leak (CONSTANT-TIME.md, section 1)")
+        return {'cannot-verify': (0, 1)}, {'cannot_verify': why}
+    kp, sg = v.sym.get('keypair_seed'), v.sym.get('sign_internal')
+    if v.abi != 'mldsa-native' or not (kp and sg):
+        why = ("the declassification policy covers mldsa-native 2.x's internal API "
+               "(keypair_internal, signature_internal) only (CONSTANT-TIME.md, section 3)")
+        return {'cannot-verify': (0, 1)}, {'cannot_verify': why}
+    try:
+        r = ct_dsa.run_dsa(v.path, param_set, kp, sg)
+    except ct_dsa.NotHooked as exc:
+        return {'cannot-verify': (0, 1)}, {'cannot_verify': str(exc)}
+    except Unavailable as exc:
+        # Asked for and not run is not a pass: a stage that fails, saying why.
+        return {'unavailable': (0, 1)}, {'unavailable': str(exc)}
+    return dict(r['stages']), r
+
+
+def _print_constant_time(ct):
+    if 'cannot_verify' in ct:
+        print(f"  CANNOT VERIFY  constant time: {ct['cannot_verify']}")
+        return
+    if 'unavailable' in ct:
+        print(f"  FAIL  constant time: could not run ({ct['unavailable']})")
+        return
+    c = ct['coverage']
+    print(f"  constant time: {ct['policy']} site table; {c['native_calls']} signing calls "
+          f"judged outside Valgrind, {c['memcheck_calls']} under memcheck "
+          f"({c['memcheck_attempts']} attempts, hint-weight rejection "
+          f"{'exercised' if c['hint_rejections'] else 'NOT exercised'})")
+    for op in ('keyGen', 'sign'):
+        p, t = ct['stages'][op]
+        print(f"  {'PASS' if p == t else 'FAIL'}  ct:{op:12s} {p}/{t}   no secret-dependent branch "
+              f"or address beyond what the library declared public")
+        for lk in ct['leaks'][op][:3]:
+            print(f"        ✗ {lk['kind']} in {lk['function']} ({lk['count']} report(s))")
+        for f in ct['findings'][op][:3]:
+            print(f"        ✗ {f}")
+        if len(ct['findings'][op]) > 3:
+            print(f"        ... and {len(ct['findings'][op]) - 3} more; see the JSON report")
+    if ct.get('divisions'):
+        print(f"        division instructions (not checked for timing): "
+              f"{', '.join(sorted(ct['divisions']))}")
+
+
+def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumulated,
+               constant_time=False):
     from .core import (DEGRADED, _load_vector_json, _pkg_dir, _vector_label,
                        _ACVP_BASE)
     import json as _j
@@ -786,10 +842,22 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
 
     acc_res = run_accumulated(v, param_set, accumulated, tally, na)
 
+    ct_res = None
+    if constant_time:
+        ct_stages, ct_res = _constant_time(v, param_set)
+        for op, st in ct_stages.items():
+            tally['ct:' + op] = st
+
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     na_all = sum(c for c, _ in na.values()) + (edge_res or {}).get('not_applicable', 0)
     verified = p_all == t_all and t_all > 0 and not v.rng_findings
+    # An unhooked library is CANNOT VERIFY for constant time; when nothing
+    # else fails, that is the result, not FINDINGS PRESENT.
+    others_fail = v.rng_findings or any(p < t for s, (p, t) in tally.items()
+                                        if s != 'ct:cannot-verify')
+    status = ('VERIFIED' if verified else
+              'CANNOT VERIFY' if not t_all or not others_fail else 'FINDINGS PRESENT')
     if verbose:
         for s in STAGES:
             if s in tally:
@@ -817,19 +885,21 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
                   f"{f.get('detail')}")
         for r in v.rng_findings[:3]:
             print(f"        ✗ randomness: {r}")
+        if ct_res is not None:
+            _print_constant_time(ct_res)
         print("=" * 68)
-        status = ('VERIFIED' if verified else
-                  'FINDINGS PRESENT' if t_all else 'CANNOT VERIFY')
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
         print("  This audits the vendor's OWN keygen/sign/verify against NIST's")
-        print("  vectors and Wycheproof's edge cases. It is not a side-channel review.")
+        print("  vectors and Wycheproof's edge cases. " + (
+            "Constant time: branches and addresses only, not timing, power or "
+            "intermediate values." if constant_time else "It is not a side-channel review."))
         print("=" * 68)
-    return {'verified': verified, 'passed': p_all, 'total': t_all,
+    return {'verified': verified, 'status': status, 'passed': p_all, 'total': t_all,
             'detail': tally, 'not_applicable': {k: list(x) for k, x in na.items()},
             'not_applicable_total': na_all, 'via': via, 'abi': v.abi,
             'harness': v.has('rng'), 'failures': failures,
             'rng': list(v.rng_findings), 'edge': edge_res, 'library': v.path,
-            'accumulated': acc_res,
+            'accumulated': acc_res, 'constant_time': ct_res,
             'vectors': _vector_label(_local, *dirs),
             'symbols': {k: s for k, s in v.sym.items() if s}}

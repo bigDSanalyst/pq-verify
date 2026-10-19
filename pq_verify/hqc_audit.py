@@ -13,6 +13,15 @@ generator polynomials and to their own decoders' answers (`pq-verify --hqc`):
                  GF(2^7) inversion word, tied 14 ways) broken to the lowest
                  index as the submitters' code does; one exact copy outvoting
                  noisy ones; random blocks (maximum likelihood)
+    rm-symmetry  the inner decoder against itself, with no reference decoder:
+                 each of those blocks moved by eight random symmetries of the
+                 code (an affine map of the seven position bits, a codeword
+                 added, the copies permuted) must decode to the image of its
+                 own answer. An answer that depends on how positions or
+                 codewords are numbered fails it. Blocks with two nearest
+                 codewords (ties) are skipped: there the lowest-index rule
+                 picks by numbering, as it should. A defect that is itself
+                 symmetric passes it, which rm-decode then catches
     rs-decode    the outer decoder within its radius: random errors, all in
                  the parity or the message part, and patterns whose leading
                  Hankel minors vanish -- the Berlekamp-Massey branch a random
@@ -41,7 +50,8 @@ import re as _re
 
 from . import hqc as H
 
-STAGES = ("encode", "rm-decode", "rs-decode", "code-decode", "bounds")
+STAGES = ("encode", "rm-decode", "rm-symmetry", "rs-decode", "code-decode", "bounds")
+SYMMETRY_ROUNDS = 8
 _ROLES = {
     "rs_encode": r"reed_solomon_encode$",
     "rs_decode": r"reed_solomon_decode$",
@@ -160,7 +170,38 @@ def _other_profile(C, role, inp, got):
     return ""
 
 
-def run(v, C, cases):
+def _rm_symmetry(C, words, decoded, call, T, s, rounds=SYMMETRY_ROUNDS):
+    """rm-symmetry: every block's answer must follow `rounds` random
+    symmetries of the code. The verdict uses no reference decoder; the
+    reference only recognises exact ties."""
+    skipped = 0
+    for (word, labels, _), got in zip(words, decoded):
+        blocks = C.blocks(word)
+        live = [i for i, b in enumerate(blocks) if not H.tied(C, b)]
+        skipped += len(blocks) - len(live)
+        wrong = {}
+        for r in range(rounds):
+            gs = [H.Symmetry(C, s) for _ in blocks]
+            img = call("rm_decode", C.word([g.block(b) for g, b in zip(gs, blocks)]), C.n1,
+                       f"{labels[0]} (symmetric image {r + 1})")
+            for i in live:
+                if i not in wrong and img[i] != gs[i].symbol(got[i]):
+                    wrong[i] = (gs[i].symbol(got[i]), img[i])
+        for i in live:
+            if i in wrong:
+                want, x = wrong[i]
+                T.rec("rm-symmetry", False, labels[i],
+                      f"returned {got[i]:#04x}, but {x:#04x} for an image of the block under a "
+                      f"symmetry of the code that maps {got[i]:#04x} to {want:#04x}: the answer "
+                      f"depends on how the code's positions or codewords are numbered")
+            else:
+                T.rec("rm-symmetry", True, labels[i])
+    return skipped
+
+
+def run(v, C, cases, sym=None):
+    """The audit's stages; `sym` is the stream the rm-symmetry stage draws
+    its symmetries from (None: the stage does not run)."""
     T = _Tally()
 
     def call(role, data, n, case):
@@ -180,9 +221,12 @@ def run(v, C, cases):
             T.rec("encode", ok, f"{role}({inp[:6].hex()}...)",
                   "" if ok else f"differs from byte {next(i for i in range(n) if got[i] != want[i])}"
                   + _other_profile(C, role, inp, got))
+    T.ties_skipped = 0
     if v.has("rm_decode"):
+        decoded = []
         for word, labels, want in cases["rm_decode"]:
             got = call("rm_decode", word, C.n1, labels[0])
+            decoded.append(got)
             blocks = C.blocks(word)
             for i, (lab, g, w) in enumerate(zip(labels, got, want)):
                 if g == w:
@@ -193,6 +237,8 @@ def run(v, C, cases):
                 else:
                     T.rec("rm-decode", False, lab, f"returned {g:#04x}; {w:#04x}'s codeword "
                           f"is nearer (not maximum likelihood)")
+        if sym is not None:
+            T.ties_skipped = _rm_symmetry(C, cases["rm_decode"], decoded, call, T, sym)
     if v.has("rs_decode"):
         for lab, word, m in cases["rs_decode"]:
             got = call("rs_decode", word, C.k, lab)
@@ -241,13 +287,14 @@ def pqverify_audit_hqc(so_path, param_set="HQC-1", symbols=None, verbose=True,
         print(f"  library : {v.name}   profile: {profile} ({H.PROFILE_NOTES[profile]})")
         print(f"  reference: pq_verify.hqc   seed: {seed}")
         print("=" * 68)
-    T = run(v, C, cases)
+    T = run(v, C, cases, H.Stream(f"pq-verify hqc symmetry {seed}"))
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     verified = p_all == t_all and t_all > 0
     via = {"encode": ", ".join(v.sym[r] for r in ("rs_encode", "rm_encode", "code_encode")
                                if v.sym.get(r)) or None,
-           "rm-decode": v.sym.get("rm_decode"), "rs-decode": v.sym.get("rs_decode"),
+           "rm-decode": v.sym.get("rm_decode"), "rm-symmetry": v.sym.get("rm_decode"),
+           "rs-decode": v.sym.get("rs_decode"),
            "code-decode": v.sym.get("code_decode"), "bounds": "every call"}
     missing = [r for r in _ROLES if not v.has(r)]
     if verbose:
@@ -255,6 +302,9 @@ def pqverify_audit_hqc(so_path, param_set="HQC-1", symbols=None, verbose=True,
             if s in T.detail:
                 p, t = T.detail[s]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {s:11s} {p}/{t}   via {via[s]}")
+        if "rm-symmetry" in T.detail:
+            print(f"        rm-symmetry: {SYMMETRY_ROUNDS} symmetries per block, no reference "
+                  f"decoder; {T.ties_skipped} tied blocks skipped")
         if missing:
             print(f"  not exported (not audited): {', '.join(missing)}")
         for f in T.failures[:5]:
@@ -268,6 +318,7 @@ def pqverify_audit_hqc(so_path, param_set="HQC-1", symbols=None, verbose=True,
     return {"verified": verified, "passed": p_all, "total": t_all, "detail": T.detail,
             "via": via, "not_exported": missing, "failures": T.failures,
             "library": v.path, "profile": profile, "seed": seed,
+            "rm_symmetry": {"rounds": SYMMETRY_ROUNDS, "ties_skipped": T.ties_skipped},
             "parameter_set": name, "track": "hqc",
             "standard": "HQC code layer (selected by NIST; standard not final)",
             "symbols": {k: s for k, s in v.sym.items() if s}}

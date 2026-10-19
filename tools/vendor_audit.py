@@ -46,6 +46,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TABLE = REPO / "tools" / "vendor_audits.json"
 HARNESS = REPO / "pq_verify" / "harness" / "pqv_randombytes.c"
+# pq-verify's constant-time shim (CONSTANT-TIME.md, section 2): its directory
+# goes first on a hooked build's include path, its C file into the library.
+CT_SHIM_DIR = REPO / "pq_verify" / "harness" / "ct"
+CT_SHIM_C = CT_SHIM_DIR / "pqv_ct_shim.c"
 STAGES = ("keyGen", "encaps", "decaps", "ekCheck", "dkCheck")
 # Wycheproof/CCTV edge cases (pq_verify/edge.py). Their counts differ per
 # parameter set, so each row records them per set under "edge".
@@ -66,7 +70,7 @@ FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
 MCE_BEGIN, MCE_END = "<!-- vendor-audits-mceliece:begin -->", "<!-- vendor-audits-mceliece:end -->"
 HQC_BEGIN, HQC_END = "<!-- vendor-audits-hqc:begin -->", "<!-- vendor-audits-hqc:end -->"
 HQC_BUILDS = ("pqclean-hqc", "hqc-ref", "hqc-avx256")
-HQC_STAGES = ("encode", "rm-decode", "rs-decode", "code-decode", "bounds")
+HQC_STAGES = ("encode", "rm-decode", "rm-symmetry", "rs-decode", "code-decode", "bounds")
 MCE_BUILDS = ("pqclean-mceliece", "liboqs", "liboqs-generic")
 MCE_STAGES = ("keyGen", "encaps", "decaps", "padding")
 
@@ -184,9 +188,14 @@ def build(recipe, src, param_set, out_dir, tag=""):
     return str(so)
 
 
-def build_dsa(recipe, src, param_set, out_dir, tag=""):
+def build_dsa(recipe, src, param_set, out_dir, tag="", ct=False):
     """Compile one ML-DSA parameter set, linked with the randomness harness
-    (liboqs: its own RNG hook supplies the randomness instead)."""
+    (liboqs: its own RNG hook supplies the randomness instead). ct=True is
+    the hooked build of CONSTANT-TIME.md, section 2: the library's
+    constant-time annotations compiled in, pq-verify's shim in front of
+    them, and -g, which changes no code, for function names in reports."""
+    if ct and recipe != "mldsa-native":
+        raise ValueError(f"no hooked build recipe for {recipe!r}")
     if recipe == "liboqs":
         return build_liboqs(src, out_dir, tag)
     level = param_set.rsplit("-", 1)[1]
@@ -194,8 +203,11 @@ def build_dsa(recipe, src, param_set, out_dir, tag=""):
     cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared"]
     src = Path(src)
     if recipe == "mldsa-native":
-        cmd = cc + [f"-DMLD_CONFIG_PARAMETER_SET={level}", "-I", str(src / "mldsa"),
-                    "-o", str(so), str(src / "mldsa" / "mldsa_native.c"), str(HARNESS)]
+        hook = (["-g", "-DMLD_CONFIG_CT_TESTING_ENABLED", "-I", str(CT_SHIM_DIR)]
+                if ct else [])
+        cmd = cc + [f"-DMLD_CONFIG_PARAMETER_SET={level}", *hook, "-I", str(src / "mldsa"),
+                    "-o", str(so), str(src / "mldsa" / "mldsa_native.c"), str(HARNESS),
+                    *([str(CT_SHIM_C)] if ct else [])]
     elif recipe == "pqcrystals-ref":
         mode = {"44": 2, "65": 3, "87": 5}[level]
         ref = src / "ref"
@@ -241,19 +253,21 @@ def build_hbs(recipe, src, out_dir, tag=""):
 
 
 def mutate(src, mutant, dest):
-    """A copy of the source tree with one planted bug. The change must apply
-    exactly once: a pattern that no longer matches would test nothing."""
+    """A copy of the source tree with one planted bug: the mutant's find /
+    replace, or each of its "edits" in turn. Each change must apply exactly
+    once: a pattern that no longer matches would test nothing."""
     dest = Path(dest)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".git"))
-    f = dest / mutant["file"]
-    text = f.read_text()
-    n = text.count(mutant["find"])
-    if n != 1:
-        raise RuntimeError(f"mutant {mutant['name']!r}: pattern found {n} times in "
-                           f"{mutant['file']}, expected once")
-    f.write_text(text.replace(mutant["find"], mutant["replace"]))
+    for e in mutant.get("edits") or [mutant]:
+        f = dest / e["file"]
+        text = f.read_text()
+        n = text.count(e["find"])
+        if n != 1:
+            raise RuntimeError(f"mutant {mutant['name']!r}: pattern found {n} times in "
+                               f"{e['file']}, expected once")
+        f.write_text(text.replace(e["find"], e["replace"]))
     return dest
 
 
@@ -316,7 +330,7 @@ def build_hqc(recipe, src, param_set, out_dir, tag=""):
     randombytes() without defining it; a getrandom() stub is linked then.
     The submitters' code is built at -O3, as their CMake does: their AVX2
     Reed-Muller decoder reads an __m256i through a uint16_t pointer, and GCC
-    13 at -O2 then returns the wrong sign bit for every block (AUDITS.md).
+    13 at -O2 then sets the sign bit of every block it decodes (AUDITS.md).
     The decoder is deterministic, so no randomness harness is needed."""
     old, new = HQC_DIRS[param_set]
     so = Path(out_dir) / f"{recipe}-{new}{tag}.so"
@@ -452,6 +466,97 @@ def audit_ct(so, param_set, prefix=None):
     r = run_kem(so, param_set, f["keypair"], f["encaps"], f["decaps"])
     return ({"ct:" + k: list(v) for k, v in r["stages"].items()},
             {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()})
+
+
+def audit_ct_dsa(so, param_set, prefix=None):
+    """--audit-dsa --constant-time's stages alone: ({stage: [p, t]}, [what
+    each report and policy finding says], the full result)."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.dsa_audit import VendorDSA, _constant_time
+    v = VendorDSA(so, param_set, prefix=prefix)
+    try:
+        stages, r = _constant_time(v, param_set)
+    finally:
+        v.close()
+    texts = []
+    for op in ("keyGen", "sign"):
+        texts += [f"{x['kind']} in {x['function']}" for x in (r.get("leaks") or {}).get(op, [])]
+        texts += (r.get("findings") or {}).get(op, [])
+    if "cannot_verify" in r:
+        texts.append("cannot verify: " + r["cannot_verify"])
+    if "unavailable" in r:
+        texts.append("could not run: " + r["unavailable"])
+    return {f"ct:{k}": list(x) for k, x in stages.items()}, texts, r
+
+
+def check_ct_dsa(rows, workdir):
+    """ML-DSA rows' "ct" results (CONSTANT-TIME.md), and every "ct_mutants"
+    control giving exactly its recorded result: the stages in "fails" fail
+    and no others; every "expect" text appears among the memcheck reports
+    and policy findings and no "absent" one does; "silent" means memcheck
+    reported nothing, so only the policy saw it; "divisions" names functions
+    the division list must show."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        print(f"  ERROR  ML-DSA constant-time rows cannot run: {why}")
+        return 2
+    failures = 0
+    for row in rows:
+        if "ct" not in row:
+            continue
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        if not (src / ".git").exists():
+            fetch(row["url"], row["commit"], src)
+        hooked = row.get("ct_build") == "hooked"
+        for ps in row["sets"]:
+            if ps not in row["ct"]:
+                continue
+            label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
+            so = build_dsa(row["build"], src, ps, workdir, tag="-ct" if hooked else "",
+                           ct=hooked)
+            got, texts, _ = audit_ct_dsa(so, ps, prefix_for(row, ps))
+            if got == row["ct"][ps]:
+                print(f"  ok     {label}: "
+                      + ", ".join(f"{k} {p}/{t}" for k, (p, t) in sorted(got.items()))
+                      + ", as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}: recorded {row['ct'][ps]}  now {got}  {texts[:4]}")
+        for i, m in enumerate(row.get("ct_mutants", [])):
+            label = f"{row['library']} ct control {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build_dsa(row["build"], msrc, m["set"], workdir, tag=f"-ctmut{i}",
+                               ct=True)
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got, texts, r = audit_ct_dsa(so, m["set"], prefix_for(row, m["set"], m))
+            wrong = [f"{s} {p}/{t} did not fail" for s in m["fails"]
+                     for p, t in [got.get(s, [0, 0])] if not (t and p < t)]
+            wrong += [f"{s} failed" for s, (p, t) in got.items()
+                      if p < t and s not in m["fails"]]
+            wrong += [f"no {x!r}" for x in m.get("expect", [])
+                      if not any(x in y for y in texts)]
+            wrong += [f"unexpected {x!r}" for x in m.get("absent", [])
+                      if any(x in y for y in texts)]
+            if m.get("silent") and any((r.get("leaks") or {}).values()):
+                wrong.append("memcheck reported it, so the control does not test the policy")
+            wrong += [f"no division instruction listed in {x}" for x in m.get("divisions", [])
+                      if not any(x in f for f in (r.get("divisions") or {}))]
+            if not wrong:
+                seen = "; ".join(texts[:2]) or "divisions listed in " + ", ".join(
+                    sorted(r.get("divisions") or {}))
+                print(f"  {'caught' if m['fails'] else 'ok    '} {label}: {seen}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: {'; '.join(wrong)}")
+    if failures:
+        print(f"\n  {failures} ML-DSA constant-time row(s) or control(s) differ.")
+        return 1
+    return 0
 
 
 def check_ct(rows, workdir):
@@ -876,7 +981,10 @@ def check_mceliece(rows, workdir):
 def check_hqc(rows, workdir):
     """HQC's code layer (standard not final): each row's sets as recorded --
     a row may record findings, the library's own defects, which must then
-    reproduce exactly -- and every mutant failed in the stages it names."""
+    reproduce exactly -- and every mutant failed in the stages it names. A
+    mutant's "passes" names stages that must still pass it: a blind spot,
+    recorded so that it stays known (a tie rule, or a symmetric defect, is
+    invisible to rm-symmetry by construction)."""
     failures = 0
     for row in rows:
         src = Path(workdir) / f"hqc-{row['build']}" / row["commit"][:12]
@@ -921,6 +1029,10 @@ def check_hqc(rows, workdir):
             missed = [f"{st} {p}/{t}" for st in m["fails"]
                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
                       if not (t and p < t)]
+            missed += [f"{st} {p}/{t} (recorded as a blind spot, but it failed now)"
+                       for st in m.get("passes", [])
+                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                       if not (t and p == t)]
             if got is not None and not missed:
                 bad = sorted(st for st, (p, t) in got["results"].items() if p < t)
                 print(f"  caught {label}: fails {', '.join(bad)}")
@@ -1020,8 +1132,8 @@ def markdown(rows):
 def dsa_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ "
              "| sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length "
-             "| Accumulated | Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| Accumulated | Constant time | Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stages):
             out = []
@@ -1033,17 +1145,23 @@ def dsa_markdown(rows):
         p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
                 for i in (0, 1))
         na = sum(row["not_applicable"][ps] for ps in row["sets"])
-        muts = row.get("mutants", [])
+        muts = row.get("mutants", []) + row.get("ct_mutants", [])
         sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
+        ct = row.get("ct") or {}
+        cp, cq = (sum(x[i] for v in ct.values() for x in v.values()) for i in (0, 1))
+        if any("ct:cannot-verify" in v for v in ct.values()):
+            ct_cell, ct_ok = "cannot verify", True
+        else:
+            ct_cell, ct_ok = (f"{cp}/{cq}" if cq else "—"), cp == cq
         lines.append(" | ".join([
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             sets, cell(["keyGen"]),
             cell(["sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGenMu"]),
             cell(["sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu"]),
-            cell(list(DSA_EDGE_STAGES)), cell(["accumulated"]), f"{na:,}",
+            cell(list(DSA_EDGE_STAGES)), cell(["accumulated"]), ct_cell, f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
-            f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
+            f"{p:,}/{t:,} {'**VERIFIED**' if p == t and ct_ok else 'findings'} |"]))
     return "\n".join(lines)
 
 
@@ -1121,9 +1239,9 @@ def mceliece_markdown(rows):
 
 
 def hqc_markdown(rows):
-    lines = ["| Library | Commit | Profile | Sets | encode | rm-decode | rs-decode "
-             "| code-decode | bounds | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| Library | Commit | Profile | Sets | encode | rm-decode | rm-symmetry "
+             "| rs-decode | code-decode | bounds | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stage):
             p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
@@ -1137,7 +1255,7 @@ def hqc_markdown(rows):
         lines.append(" | ".join([
             f"| {row['library']}", f"[`{row['commit'][:7]}`]({url}) ({row['date']})",
             row["profile"], ", ".join(row["sets"]), cell("encode"), cell("rm-decode"),
-            cell("rs-decode"), cell("code-decode"), cell("bounds"),
+            cell("rm-symmetry"), cell("rs-decode"), cell("code-decode"), cell("bounds"),
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else '**findings**'} |"]))
     return "\n".join(lines)
@@ -1178,6 +1296,7 @@ def main(argv=None):
             code = max(code, check_ct(rows, work))
         if a.only in (None, "ML-DSA"):
             code = max(code, check_dsa(dsa_rows, work))
+            code = max(code, check_ct_dsa(dsa_rows, work))
         if a.only in (None, "LMS/XMSS"):
             code = max(code, check_hbs(hbs_rows, work))
         if a.only in (None, "FN-DSA"):

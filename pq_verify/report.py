@@ -429,8 +429,22 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
         return doc
     p, t = result.get("passed", 0), result.get("total", 0)
     doc["verified"] = bool(result.get("verified"))
-    doc["status"] = "VERIFIED" if doc["verified"] else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["status"] = result.get("status") or ("VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY"))
+    ct = result.get("constant_time")
+    if ct:
+        doc["constant_time"] = ct
+        if "cannot_verify" not in ct and "unavailable" not in ct:
+            doc["side_channel"]["constant_time_checked"] = {
+                "operations": sorted(ct["stages"]), "tool": ct.get("tool"),
+                "policy": ct.get("policy"),
+                "scope": ("secret-dependent branches and memory addresses in this "
+                          "binary, by Valgrind memcheck taint, and every "
+                          "declassification judged by the implementation's site "
+                          "table (CONSTANT-TIME.md); not instruction timing "
+                          "(division), intermediate values, power, EM or "
+                          "microarchitecture"),
+                "leak_free": all(p == t for p, t in ct["stages"].values())}
     doc["calling_convention"] = result.get("abi")
     doc["randomness_harness"] = bool(result.get("harness"))
     doc["symbols"] = result.get("symbols", {})
@@ -451,6 +465,26 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
         if k == "accumulated" and v[0] != v[1]:
             findings.append("ML-DSA: stage accumulated: " + (result.get("accumulated") or {})
                             .get("detail", "CCTV accumulated vectors did not match"))
+            continue
+        if k.startswith("ct:") and v[0] != v[1]:
+            ct = ct or {}
+            if "cannot_verify" in ct:
+                findings.append(f"ML-DSA: constant time: cannot verify: {ct['cannot_verify']}")
+            elif "unavailable" in ct:
+                findings.append(f"ML-DSA: constant time: requested but could not run "
+                                f"({ct['unavailable']})")
+            else:
+                op = k[3:]
+                leaks = "; ".join(f"{lk['kind']} in {lk['function']}"
+                                  for lk in (ct.get("leaks") or {}).get(op, []))
+                pol = (ct.get("findings") or {}).get(op, [])
+                parts = []
+                if leaks:
+                    parts.append(f"memcheck: {leaks}")
+                if pol:
+                    parts.append(f"declassification policy: {pol[0]}"
+                                 + (f" (and {len(pol) - 1} more)" if len(pol) > 1 else ""))
+                findings.append(f"ML-DSA: stage {k}: " + "; ".join(parts))
             continue
         if v[0] != v[1]:
             what = ("Wycheproof edge cases handled as specified" if k.startswith("edge:")
@@ -711,6 +745,8 @@ def to_json_hqc_audit(result, artifact=None, param_set=None, library=None, reaso
         "FINDINGS PRESENT" if t else "CANNOT VERIFY")
     doc["profile"] = result.get("profile")
     doc["seed"] = result.get("seed")
+    if result.get("rm_symmetry"):
+        doc["rm_symmetry"] = result["rm_symmetry"]
     doc["symbols"] = result.get("symbols", {})
     doc["not_exported"] = result.get("not_exported", [])
     doc["stages"] = {k: {"passed": v[0], "total": v[1],

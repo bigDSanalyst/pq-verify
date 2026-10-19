@@ -28,8 +28,18 @@ What is not, and why -- each reported as not applicable, never passed:
     This is a software check on one compiled binary, not a lab measurement.
 
 A self-test runs first: a deliberate branch on a marked secret inside the
-driver must be reported. If memcheck does not see it, nothing it says is
-trusted and the stage is CANNOT VERIFY.
+driver, and a read indexed by one whose value is discarded, must both be
+reported. If memcheck does not see them, nothing it says is trusted and the
+stage is CANNOT VERIFY. The second needs
+--vex-iropt-register-updates=allregs-at-each-insn: by default Valgrind's
+translator deletes a load whose value is never used before memcheck
+instruments it, though the processor still performs the load and it still
+leaks through the cache (CONSTANT-TIME.md, section 5). With every
+instruction's result committed, no load can be deleted. Two weaker settings
+were rejected: allregs-at-mem-access keeps such a load only while its
+register survives to the next memory access, and --vex-iropt-level=0 costs
+memcheck precision and reports false branches. Prefetch instructions are
+not translated at all, so a secret-indexed prefetch stays invisible.
 """
 import os
 import re
@@ -37,6 +47,26 @@ import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+
+# The self-test's discarded secret-indexed read. The loaded register is
+# overwritten by the very next instruction, so memcheck sees the load only
+# when every instruction's result is committed (MEMCHECK below).
+DISCARDED_READ_C = r"""
+static const volatile uint8_t lut[16];
+static void discarded_read(const uint8_t *s) {
+#if defined(__x86_64__)
+    uint32_t t;
+    __asm__ volatile("movzbl (%1,%2), %0\n\txorl %0, %0"
+                     : "=&r"(t) : "r"(lut), "r"((uintptr_t)(s[0] & 15)) : "cc");
+#elif defined(__aarch64__)
+    uint32_t t;
+    __asm__ volatile("ldrb %w0, [%1, %2]\n\tmov %w0, #0"
+                     : "=&r"(t) : "r"(lut), "r"((uintptr_t)(s[0] & 15)));
+#else
+    (void)lut[s[0] & 15];
+#endif
+}
+"""
 
 DRIVER_C = r"""
 #include <dlfcn.h>
@@ -60,6 +90,7 @@ static void fill(uint8_t *p, size_t n) {
 #define SECRET(p, n) VALGRIND_MAKE_MEM_UNDEFINED((p), (n))
 #define PUBLIC(p, n) VALGRIND_MAKE_MEM_DEFINED((p), (n))
 static volatile int sink;
+@DISCARDED_READ@
 
 int main(int argc, char **argv) {
     if (argc != 11) { fprintf(stderr, "usage\n"); return 2; }
@@ -70,7 +101,9 @@ int main(int argc, char **argv) {
     st = 0x9E3779B97F4A7C15ULL;
     if (!strcmp(mode, "selftest")) {
         uint8_t s[1]; fill(s, 1); SECRET(s, 1);
-        if (s[0] & 1) sink = 1;               /* must be reported */
+        if (s[0] & 1) sink = 1;               /* a branch: must be reported */
+        discarded_read(s);                    /* a discarded secret-indexed read:
+                                                 must be reported too */
         return 0;
     }
     void *h = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
@@ -104,8 +137,18 @@ int main(int argc, char **argv) {
 }
 """
 
+DRIVER_C = DRIVER_C.replace("@DISCARDED_READ@", DISCARDED_READ_C)
+
 KINDS = {"UninitCondition": "branch on a secret",
          "UninitValue": "secret used as a memory address"}
+# memcheck's options for every constant-time run. allregs-at-each-insn
+# keeps a secret-indexed load whose value is discarded visible to memcheck
+# (see the module docstring); the self-test plants one.
+MEMCHECK = ("--track-origins=yes", "--error-limit=no", "--leak-check=no",
+            "--vex-iropt-register-updates=allregs-at-each-insn")
+SELFTEST_KINDS = {"UninitCondition", "UninitValue"}
+SELFTEST_MISSED = ("memcheck did not report the self-test's deliberate secret branch "
+                   "and secret-indexed read, so its silence would mean nothing")
 _RANK = {"ML-KEM-512": 2, "ML-KEM-768": 3, "ML-KEM-1024": 4}
 OPS = ("encaps", "decaps")
 
@@ -141,8 +184,8 @@ def _driver(work):
 
 def _run(exe, args, work, tag, timeout):
     xml = os.path.join(work, f"memcheck-{tag}.xml")
-    cmd = ["valgrind", "--tool=memcheck", "--xml=yes", f"--xml-file={xml}",
-           "--track-origins=yes", "--error-limit=no", "--leak-check=no", exe, *args]
+    cmd = ["valgrind", "--tool=memcheck", *MEMCHECK, "--xml=yes", f"--xml-file={xml}",
+           exe, *args]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if p.returncode not in (0,):
         raise RuntimeError(f"the driver failed ({tag}, exit {p.returncode}): "
@@ -211,9 +254,8 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
         base = [lib, kp, enc, dec, str(ek_n), str(dk_n), str(ct_n),
                 str(_RANK[param_set]), str(iterations)]
         st = _run(exe, ["selftest", *base], work, "selftest", timeout)
-        if not any(kind == "UninitCondition" for kind, _ in st):
-            raise Unavailable("memcheck did not report the self-test's deliberate "
-                              "secret branch, so its silence would mean nothing")
+        if not SELFTEST_KINDS <= {kind for kind, _ in st}:
+            raise Unavailable(SELFTEST_MISSED)
         stages, leaks = {}, {}
         for op in OPS:
             found = _attribute(_run(exe, [op, *base], work, op, timeout), lib)
@@ -265,6 +307,7 @@ static void fill(uint8_t *p, size_t n) {
 #define SECRET(p, n) VALGRIND_MAKE_MEM_UNDEFINED((p), (n))
 #define PUBLIC(p, n) VALGRIND_MAKE_MEM_DEFINED((p), (n))
 static volatile int sink;
+@DISCARDED_READ@
 
 int randombytes(uint8_t *out, size_t n) {
     fill(out, n);
@@ -294,7 +337,9 @@ int main(int argc, char **argv) {
     st = 0x9E3779B97F4A7C15ULL;
     if (!strcmp(mode, "selftest")) {
         uint8_t s[1]; fill(s, 1); SECRET(s, 1);
-        if (s[0] & 1) sink = 1;               /* must be reported */
+        if (s[0] & 1) sink = 1;               /* a branch: must be reported */
+        discarded_read(s);                    /* a discarded secret-indexed read:
+                                                 must be reported too */
         return 0;
     }
     void *h = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
@@ -334,6 +379,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 """
+MCE_DRIVER_C = MCE_DRIVER_C.replace("@DISCARDED_READ@", DISCARDED_READ_C)
 MCE_OPS = ("encaps", "decaps")
 
 
@@ -412,9 +458,8 @@ def run_mceliece(lib, param_set, enc, dec, material, timeout=1800):
         base = [lib, enc, dec, str(P.pk_bytes), str(P.sk_bytes), str(P.ct_bytes),
                 str(pad), str(len(material)), work]
         st = _parse(_run_or_refuse(exe, ["selftest", *base], work, "selftest", timeout))
-        if not any(kind == "UninitCondition" for kind, _ in st):
-            raise Unavailable("memcheck did not report the self-test's deliberate "
-                              "secret branch, so its silence would mean nothing")
+        if not SELFTEST_KINDS <= {kind for kind, _ in st}:
+            raise Unavailable(SELFTEST_MISSED)
         stages, leaks, sampling = {}, {}, {}
         for op in MCE_OPS:
             found, excused = _classify(
@@ -444,8 +489,8 @@ def _run_or_refuse(exe, args, work, tag, timeout):
     exercise the library (no randomness through it, a failed call) raises
     Unavailable: silence from a call that did not run is not a pass."""
     xml = os.path.join(work, f"memcheck-{tag}.xml")
-    cmd = ["valgrind", "--tool=memcheck", "--xml=yes", f"--xml-file={xml}",
-           "--track-origins=yes", "--error-limit=no", "--leak-check=no", exe, *args]
+    cmd = ["valgrind", "--tool=memcheck", *MEMCHECK, "--xml=yes", f"--xml-file={xml}",
+           exe, *args]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if p.returncode:
         last = (p.stderr or "").strip().splitlines()[-1:] or [""]
