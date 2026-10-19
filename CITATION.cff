@@ -12,6 +12,10 @@ authors:
 version: 2.12.1
 doi: "10.5281/zenodo.23464836"
 date-released: 2026-10-19
+# The all-versions DOI, 10.5281/zenodo.21739510, is deliberately not listed
+# under identifiers: cffconvert takes the first DOI there over `doi` above, so
+# its BibTeX, APA and RIS would print this version beside a DOI that resolves
+# to whatever release is latest. The README gives it for citing all versions.
 license: MIT
 repository-code: "https://github.com/bigDSanalyst/pq-verify"
 references:

@@ -50,7 +50,8 @@ dev = ["pytest>=7.0", "kyber-py", "dilithium-py", "sympy", "slh-dsa"]
 [project.urls]
 Homepage = "https://github.com/bigDSanalyst/pq-verify"
 Repository = "https://github.com/bigDSanalyst/pq-verify"
-"Zenodo DOI" = "https://doi.org/10.5281/zenodo.19302050"
+"Zenodo (all versions)" = "https://doi.org/10.5281/zenodo.21739510"
+"Companion paper" = "https://doi.org/10.5281/zenodo.19302050"
 
 [project.scripts]
 pq-verify = "pq_verify.cli:main"

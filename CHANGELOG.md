@@ -11,6 +11,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.23464836](https://doi.org/10.5281/zenodo.23464836).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.12.0's.
+- **The all-versions DOI is given too**,
+  [10.5281/zenodo.21739510](https://doi.org/10.5281/zenodo.21739510), for
+  citing pq-verify rather than one release. It always resolves to the latest
+  release, so it never lags. The README's citation section names it, and so
+  do the project links in pyproject.toml; the link there that was labelled
+  "Zenodo DOI" points to the companion paper, and is now labelled so.
+  CITATION.cff only mentions it in a comment: cffconvert takes the first DOI
+  under `identifiers` over the top-level `doi`, so listing it there would
+  print this version beside a DOI that resolves to the latest release.
 
 ## [2.12.1] — 2026-10-19
 
