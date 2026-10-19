@@ -6745,9 +6745,10 @@ _HQC_NS = {"HQC-1": "PQCLEAN_HQC128_CLEAN", "HQC-3": "PQCLEAN_HQC192_CLEAN",
 def _hqc_shim(tmp_path, name="HQC-1", fault=""):
     """An HQC code layer over pq-verify's reference. Faults: tie-high (ties to
     the highest index), drop-copy (one copy not summed), cap (the submitters'
-    AVX2 search width, 1 << (5 + copies / 2)), defective-chain (wrong whenever
-    a leading Hankel minor of the errors vanishes), overflow (one byte past
-    the output), next-profile (encodes the other code)."""
+    AVX2 search width, 1 << (5 + copies / 2)), sign-flip (every answer the
+    complementary codeword), defective-chain (wrong whenever a leading Hankel
+    minor of the errors vanishes), overflow (one byte past the output),
+    next-profile (encodes the other code)."""
     import ctypes as C, shutil, subprocess
     from pq_verify import hqc as H
     if not shutil.which("gcc"):
@@ -6762,6 +6763,8 @@ def _hqc_shim(tmp_path, name="HQC-1", fault=""):
     E = H.Code(name, "next") if fault == "next-profile" else R
 
     def rm_block(copies):
+        if fault == "sign-flip":
+            return R.rm_decode_block(copies) ^ 0x80
         if fault not in ("tie-high", "drop-copy", "cap"):
             return R.rm_decode_block(copies)
         Y = R.correlations(copies[:-1] if fault == "drop-copy" else copies)
@@ -6812,8 +6815,10 @@ def _hqc_audit(so, name="HQC-1", **kw):
 def test_hqc_audit_verifies_a_correct_decoder(tmp_path):
     r, _ = _hqc_audit(_hqc_shim(tmp_path))
     assert r["verified"], r["failures"]
-    assert r["detail"] == {"encode": (18, 18), "rm-decode": (414, 414), "rs-decode": (28, 28),
-                           "code-decode": (9, 9), "bounds": (66, 66)}
+    assert r["detail"] == {"encode": (18, 18), "rm-decode": (414, 414),
+                           "rm-symmetry": (391, 391), "rs-decode": (28, 28),
+                           "code-decode": (9, 9), "bounds": (138, 138)}
+    assert r["rm_symmetry"] == {"rounds": 8, "ties_skipped": 23}
     assert r["symbols"]["rm_decode"] == "PQCLEAN_HQC128_CLEAN_reed_muller_decode"
     assert r["track"] == "hqc" and r["seed"] == "test" and not r["not_exported"]
 
@@ -6844,6 +6849,58 @@ def test_hqc_audit_sees_the_avx2_search_width(tmp_path, name, rm, code):
     assert r["detail"]["rs-decode"][0] == r["detail"]["rs-decode"][1]
     assert all("flips from" in f["case"] or f["stage"] == "code-decode"
                for f in r["failures"])
+
+
+def test_hqc_symmetries_are_symmetries_of_the_code():
+    """Each drawn symmetry (an affine map of the position bits, a codeword
+    added, the copies permuted) maps every codeword onto the codeword of the
+    symbol it claims, for three copies and for five."""
+    from pq_verify import hqc as H
+    s = H.Stream("symmetry test")
+    for name in ("HQC-1", "HQC-5"):
+        C = H.Code(name)
+        for _ in range(12):
+            g = H.Symmetry(C, s)
+            assert sorted(g.to) == list(range(128))        # a permutation of positions
+            images = {g.symbol(b) for b in range(256)}
+            assert len(images) == 256                       # and of symbols
+            for b in range(256):
+                assert g.block([C.codeword(b)] * C.copies) == [C.codeword(g.symbol(b))] * C.copies
+
+
+def test_hqc_reference_decoder_commutes_with_the_symmetries():
+    from pq_verify import hqc as H
+    C = H.Code("HQC-3")
+    s = H.Stream("symmetry test")
+    words = H.suite(C, H.Stream("symmetry test vectors"))["rm_decode"]
+    blocks = [b for w, _, _ in words for b in C.blocks(w)]
+    live = [b for b in blocks if not H.tied(C, b)]
+    assert 0 < len(live) < len(blocks)                       # the suite has ties too
+    for b in live[::4]:
+        g = H.Symmetry(C, s)
+        assert C.rm_decode_block(g.block(b)) == g.symbol(C.rm_decode_block(b))
+
+
+@pytest.mark.parametrize("fault,symmetric,rm_ok", [
+    ("cap", False, False),        # the AVX2 search width: the answer follows the numbering
+    ("drop-copy", False, False),  # one copy not summed: the copies' order matters
+    ("tie-high", True, False),    # ties are skipped by design: rm-decode catches it
+    ("sign-flip", True, False)])  # a symmetric defect commutes: rm-decode catches it
+def test_hqc_rm_symmetry_needs_no_reference_and_has_known_blind_spots(tmp_path, fault,
+                                                                      symmetric, rm_ok):
+    """rm-symmetry judges the decoder against itself under symmetries of the
+    code (Lemma 5 of the cultivation paper, for hard decisions). It certifies
+    that the decoder is symmetric, not that it is right."""
+    r, out = _hqc_audit(_hqc_shim(tmp_path, fault=fault))
+    p, t = r["detail"]["rm-symmetry"]
+    assert (p == t) is symmetric, (fault, r["detail"])
+    p, t = r["detail"]["rm-decode"]
+    assert (p == t) is rm_ok
+    if not symmetric:
+        said = [f["detail"] for f in r["failures"] if f["stage"] == "rm-symmetry"]
+        assert said and all("depends on how the code's positions or codewords are numbered" in x
+                            for x in said)
+    assert "rm-symmetry: 8 symmetries per block, no reference decoder" in out
 
 
 def test_hqc_symbols_resolve_across_namings():
@@ -6894,7 +6951,11 @@ def test_hqc_vendor_rows_and_mutants_are_well_formed_and_published():
         for m in row.get("mutants", []):
             assert m["set"] in row["sets"], m["name"]
             assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+            # a recorded blind spot: a stage that must still pass the mutant
+            assert set(m.get("passes", [])) <= set(row["results"][m["set"]]) - set(m["fails"])
     assert any(r.get("mutants") for r in rows)
+    blind = {m["name"] for r in rows for m in r.get("mutants", []) if "rm-symmetry" in m.get("passes", [])}
+    assert len(blind) == 2, blind      # the tie rule, and a symmetric defect
     text = (root / "AUDITS.md").read_text()
     published = text.split(mod.HQC_BEGIN, 1)[1].split(mod.HQC_END, 1)[0].strip()
     assert published == mod.hqc_markdown(rows).strip(), (

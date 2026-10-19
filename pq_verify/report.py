@@ -745,6 +745,8 @@ def to_json_hqc_audit(result, artifact=None, param_set=None, library=None, reaso
         "FINDINGS PRESENT" if t else "CANNOT VERIFY")
     doc["profile"] = result.get("profile")
     doc["seed"] = result.get("seed")
+    if result.get("rm_symmetry"):
+        doc["rm_symmetry"] = result["rm_symmetry"]
     doc["symbols"] = result.get("symbols", {})
     doc["not_exported"] = result.get("not_exported", [])
     doc["stages"] = {k: {"passed": v[0], "total": v[1],

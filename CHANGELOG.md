@@ -25,6 +25,23 @@ versioning](https://semver.org/spec/v2.0.0.html).
   all three sets. Six controls planted in it give exactly their specified
   results in the vendor audits. Every other pinned ML-DSA row records CANNOT
   VERIFY. The ML-DSA table in AUDITS.md gains a Constant time column.
+- **HQC: the Reed–Muller decoder is checked against itself**, with no
+  reference decoder (`--audit-hqc`, stage `rm-symmetry`). A maximum-likelihood
+  decoder commutes with every symmetry of its code. So each built block is
+  moved by eight random symmetries of the duplicated RM(1,7) code: an affine
+  map of the seven position bits, a codeword added, the copies permuted. Each
+  image must decode to the image of the block's own answer; ties are skipped.
+  The idea is Lemma 5 of N. C. Maino, *Post-Selection Verification,
+  Information Geometry, and Clifford Symmetries in Magic State Cultivation*
+  (October 2026), there for a matching decoder's soft output. On its own it
+  finds both defects in the submitters' AVX2 decoder (12, 8 and 8 blocks on
+  HQC-1, -3 and -5) and three of PQClean's five Reed–Muller mutants, and it
+  passes every correct decoder. It certifies symmetry, not correctness, and
+  two mutants now hold its blind spots in CI through a new `passes` field:
+  the tie rule, and a new tenth mutant whose every answer is the
+  complementary codeword, a symmetric defect that rm-decode catches. The
+  recorded HQC rows gain the stage; every earlier stage reproduced unchanged,
+  and only the bounds counts grew, with the new calls.
 
 ### Fixed
 
@@ -40,6 +57,11 @@ versioning](https://semver.org/spec/v2.0.0.html).
   register survives. The self-test now plants such a read and refuses a run
   that misses it. Every recorded ML-KEM and Classic McEliece row and leak
   mutant reproduced unchanged.
+- **AUDITS.md misdescribed the AVX2 HQC decoder's `-O2` defect.** It does not
+  return the wrong sign bit for every block: it sets the sign bit of every
+  block it decodes, so it is wrong for every block whose answer has it clear
+  (half of the 256 codewords; 0x00 decodes as 0x80). The defect, the fix and
+  the KEM's failed round trips are as reported.
 - The README's audit totals for mldsa-native, pq-crystals ref and PQClean
   ML-DSA predated the accumulated stage: 1,506, 1,338 and 1,068, as in
   AUDITS.md, not 1,503, 1,335 and 1,065.

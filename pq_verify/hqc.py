@@ -341,6 +341,86 @@ class Stream:
         return int.from_bytes(self.bytes((n + 7) // 8), "little") & ((1 << n) - 1)
 
 
+# ── symmetries of the inner code ────────────────────────────────────────
+# A decoder that is exactly maximum likelihood commutes with every symmetry of
+# its code: decode(g(y)) = g(decode(y)) whenever y's nearest codeword is
+# unique. Checking that needs no reference decoder, and an answer that depends
+# on how positions or codewords are numbered breaks it. The idea is Lemma 5 of
+# N. C. Maino, "Post-Selection Verification, Information Geometry, and
+# Clifford Symmetries in Magic State Cultivation" (October 2026), there for a
+# matching decoder's soft gap; here for HQC's hard Reed-Muller decisions. It
+# certifies that the decoder is symmetric, not that it is right: a defect that
+# is itself symmetric (an answer always the complementary codeword, say)
+# commutes too, which is why it runs beside the exact answers, not instead.
+
+def _parity(x):
+    return bin(x).count("1") & 1
+
+
+def _gf2_inverse(rows, n=7):
+    """The inverse of an n x n matrix over GF(2) (row i as a bit mask, bit c =
+    column c), or None if it is singular. Gauss-Jordan on [A | I]."""
+    M = [(rows[i] << n) | (1 << i) for i in range(n)]
+    for col in range(n):
+        piv = next((i for i in range(col, n) if M[i] >> (n + col) & 1), None)
+        if piv is None:
+            return None
+        M[col], M[piv] = M[piv], M[col]
+        for i in range(n):
+            if i != col and M[i] >> (n + col) & 1:
+                M[i] ^= M[col]
+    return [m & ((1 << n) - 1) for m in M]
+
+
+class Symmetry:
+    """One symmetry of the duplicated RM(1,7) code, drawn from `s`: position j
+    of every copy moves to A j + v (A invertible over GF(2)), the codeword of
+    `a` is added, and the copies are permuted. It maps the codeword of b to
+    the codeword of symbol(b): with u the low seven bits of b, u' = (A^-1)^T u,
+    the top bit gains <u', v>, and a is added."""
+
+    def __init__(self, C, s):
+        while True:
+            A = [s.below(128) for _ in range(7)]
+            self.inv = _gf2_inverse(A)
+            if self.inv is not None:
+                break
+        self.v, self.a = s.below(128), s.below(256)
+        self.order = list(range(C.copies))
+        for i in range(C.copies - 1, 0, -1):
+            j = s.below(i + 1)
+            self.order[i], self.order[j] = self.order[j], self.order[i]
+        self.to = [sum(_parity(A[r] & j) << r for r in range(7)) ^ self.v for j in range(128)]
+        self.add = C.codeword(self.a)
+
+    def block(self, copies):
+        moved = []
+        for c in copies:
+            n = 0
+            while c:
+                low = c & -c
+                n |= 1 << self.to[low.bit_length() - 1]
+                c ^= low
+            moved.append(n ^ self.add)
+        return [moved[i] for i in self.order]
+
+    def symbol(self, b):
+        u = 0
+        for i in range(7):
+            if b >> i & 1:
+                u ^= self.inv[i]
+        top = (b >> 7) ^ _parity(u & self.v)
+        return ((top << 7) | u) ^ self.a
+
+
+def tied(C, copies):
+    """More than one codeword is nearest: the lowest-index rule then picks by
+    numbering, which no symmetry respects."""
+    Y = C.correlations(copies)
+    best = max(abs(y) for y in Y)
+    return sum(1 for y in Y if abs(y) == best) > 1
+
+
 def hankel_minor(C, errors, m):
     """det of the m x m leading Hankel matrix of the syndromes of `errors`
     ({position: value}) -- zero exactly when Berlekamp-Massey meets a zero

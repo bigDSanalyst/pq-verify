@@ -38,7 +38,12 @@
     "fail exactly the stages under \"fails\", with every \"expect\" text and no",
     "\"absent\" one among the reports; \"silent\": memcheck reports nothing, so only",
     "the policy sees it; \"divisions\": functions the division list must name.",
-    "\"edits\" applies several find/replace pairs where one is not enough."
+    "\"edits\" applies several find/replace pairs where one is not enough.",
+    "hqc_audits: HQC's code layer (standard not final) with --audit-hqc, one seed per",
+    "row so its vectors are fixed. A row may record findings, the library's own",
+    "defects, which must then reproduce exactly. A mutant must fail every stage in",
+    "\"fails\" and pass every stage in \"passes\": a blind spot, recorded so that it",
+    "stays known (rm-symmetry skips ties and cannot see a symmetric defect)."
   ],
   "audits": [
     {
@@ -3690,8 +3695,8 @@
       "results": {
         "HQC-1": {
           "bounds": [
-            66,
-            66
+            138,
+            138
           ],
           "encode": [
             18,
@@ -3700,6 +3705,10 @@
           "rm-decode": [
             414,
             414
+          ],
+          "rm-symmetry": [
+            392,
+            392
           ],
           "rs-decode": [
             28,
@@ -3712,8 +3721,8 @@
         },
         "HQC-3": {
           "bounds": [
-            65,
-            65
+            129,
+            129
           ],
           "encode": [
             17,
@@ -3722,6 +3731,10 @@
           "rm-decode": [
             448,
             448
+          ],
+          "rm-symmetry": [
+            420,
+            420
           ],
           "rs-decode": [
             29,
@@ -3734,8 +3747,8 @@
         },
         "HQC-5": {
           "bounds": [
-            74,
-            74
+            122,
+            122
           ],
           "encode": [
             15,
@@ -3744,6 +3757,10 @@
           "rm-decode": [
             540,
             540
+          ],
+          "rm-symmetry": [
+            501,
+            501
           ],
           "rs-decode": [
             42,
@@ -3819,6 +3836,9 @@
           "replace": "mask = -(((uint16_t)(peak_abs - abs - 1)) >> 15);",
           "fails": [
             "rm-decode"
+          ],
+          "passes": [
+            "rm-symmetry"
           ]
         },
         {
@@ -3829,7 +3849,8 @@
           "replace": "for (size_t copy = 1; copy < MULTIPLICITY - 1; ++copy) {\n        for (size_t part = 0; part < 2; ++part) {\n            for (size_t bit = 0; bit < 64; ++bit) {\n                dest",
           "fails": [
             "code-decode",
-            "rm-decode"
+            "rm-decode",
+            "rm-symmetry"
           ]
         },
         {
@@ -3840,7 +3861,8 @@
           "replace": "for (uint16_t i = 0; i < 127; ++i) {",
           "fails": [
             "code-decode",
-            "rm-decode"
+            "rm-decode",
+            "rm-symmetry"
           ]
         },
         {
@@ -3850,7 +3872,22 @@
           "find": "transform[0] -= 64 * MULTIPLICITY;",
           "replace": "transform[0] -= 64 * (MULTIPLICITY - 1);",
           "fails": [
+            "rm-decode",
+            "rm-symmetry"
+          ]
+        },
+        {
+          "name": "the sign test is inverted: every answer the complementary codeword",
+          "set": "HQC-1",
+          "file": "crypto_kem/hqc-128/clean/reed_muller.c",
+          "find": "pos |= 128 & (uint16_t)((peak >> 15) - 1);",
+          "replace": "pos |= 128 & (uint16_t)(-(peak >> 15));",
+          "fails": [
+            "code-decode",
             "rm-decode"
+          ],
+          "passes": [
+            "rm-symmetry"
           ]
         }
       ]
@@ -3872,8 +3909,8 @@
       "results": {
         "HQC-1": {
           "bounds": [
-            66,
-            66
+            138,
+            138
           ],
           "encode": [
             18,
@@ -3882,6 +3919,10 @@
           "rm-decode": [
             414,
             414
+          ],
+          "rm-symmetry": [
+            392,
+            392
           ],
           "rs-decode": [
             28,
@@ -3894,8 +3935,8 @@
         },
         "HQC-3": {
           "bounds": [
-            65,
-            65
+            129,
+            129
           ],
           "encode": [
             17,
@@ -3904,6 +3945,10 @@
           "rm-decode": [
             448,
             448
+          ],
+          "rm-symmetry": [
+            420,
+            420
           ],
           "rs-decode": [
             29,
@@ -3916,8 +3961,8 @@
         },
         "HQC-5": {
           "bounds": [
-            74,
-            74
+            122,
+            122
           ],
           "encode": [
             15,
@@ -3926,6 +3971,10 @@
           "rm-decode": [
             540,
             540
+          ],
+          "rm-symmetry": [
+            501,
+            501
           ],
           "rs-decode": [
             42,
@@ -3955,8 +4004,8 @@
       "results": {
         "HQC-1": {
           "bounds": [
-            66,
-            66
+            138,
+            138
           ],
           "encode": [
             18,
@@ -3965,6 +4014,10 @@
           "rm-decode": [
             408,
             414
+          ],
+          "rm-symmetry": [
+            380,
+            392
           ],
           "rs-decode": [
             28,
@@ -3977,8 +4030,8 @@
         },
         "HQC-3": {
           "bounds": [
-            65,
-            65
+            129,
+            129
           ],
           "encode": [
             17,
@@ -3987,6 +4040,10 @@
           "rm-decode": [
             444,
             448
+          ],
+          "rm-symmetry": [
+            412,
+            420
           ],
           "rs-decode": [
             29,
@@ -3999,8 +4056,8 @@
         },
         "HQC-5": {
           "bounds": [
-            74,
-            74
+            122,
+            122
           ],
           "encode": [
             15,
@@ -4009,6 +4066,10 @@
           "rm-decode": [
             536,
             540
+          ],
+          "rm-symmetry": [
+            493,
+            501
           ],
           "rs-decode": [
             42,
@@ -4038,8 +4099,8 @@
       "results": {
         "HQC-1": {
           "bounds": [
-            66,
-            66
+            138,
+            138
           ],
           "encode": [
             18,
@@ -4048,6 +4109,10 @@
           "rm-decode": [
             414,
             414
+          ],
+          "rm-symmetry": [
+            388,
+            388
           ],
           "rs-decode": [
             28,
@@ -4060,8 +4125,8 @@
         },
         "HQC-3": {
           "bounds": [
-            65,
-            65
+            129,
+            129
           ],
           "encode": [
             17,
@@ -4070,6 +4135,10 @@
           "rm-decode": [
             448,
             448
+          ],
+          "rm-symmetry": [
+            420,
+            420
           ],
           "rs-decode": [
             29,
@@ -4082,8 +4151,8 @@
         },
         "HQC-5": {
           "bounds": [
-            74,
-            74
+            122,
+            122
           ],
           "encode": [
             15,
@@ -4092,6 +4161,10 @@
           "rm-decode": [
             540,
             540
+          ],
+          "rm-symmetry": [
+            501,
+            501
           ],
           "rs-decode": [
             42,
@@ -4121,8 +4194,8 @@
       "results": {
         "HQC-1": {
           "bounds": [
-            66,
-            66
+            138,
+            138
           ],
           "encode": [
             18,
@@ -4131,6 +4204,10 @@
           "rm-decode": [
             408,
             414
+          ],
+          "rm-symmetry": [
+            376,
+            388
           ],
           "rs-decode": [
             28,
@@ -4143,8 +4220,8 @@
         },
         "HQC-3": {
           "bounds": [
-            65,
-            65
+            129,
+            129
           ],
           "encode": [
             17,
@@ -4153,6 +4230,10 @@
           "rm-decode": [
             444,
             448
+          ],
+          "rm-symmetry": [
+            412,
+            420
           ],
           "rs-decode": [
             29,
@@ -4165,8 +4246,8 @@
         },
         "HQC-5": {
           "bounds": [
-            74,
-            74
+            122,
+            122
           ],
           "encode": [
             15,
@@ -4175,6 +4256,10 @@
           "rm-decode": [
             536,
             540
+          ],
+          "rm-symmetry": [
+            493,
+            501
           ],
           "rs-decode": [
             42,

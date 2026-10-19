@@ -64,7 +64,10 @@ about the library is claimed.
   parameter set is secure ([README](README.md#not-a-fips-standard-classic-mceliece)).
 - **HQC.** The code layer only: the Reed–Solomon and Reed–Muller encoders and
   decoders. Not the KEM around it (key generation, encryption, sampling,
-  hashing), and not constant time. The KEM's formats are not settled: HQC-1's
+  hashing), and not constant time. Its rm-symmetry stage certifies that the
+  inner decoder commutes with the code's symmetries, not that it is right: it
+  skips ties and cannot see a defect that is itself symmetric, which the
+  exact rm-decode stage catches. The KEM's formats are not settled: HQC-1's
   secret key is 2,305 bytes in the 2023 submission PQClean carries, 2,321 in
   v5.0.0 (August 2025) and 32, a seed, on the unreleased next-release branch.
 - **Sampled and budgeted checks.** Where a check is sampled (xmss-reference's

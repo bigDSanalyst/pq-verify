@@ -70,7 +70,7 @@ FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
 MCE_BEGIN, MCE_END = "<!-- vendor-audits-mceliece:begin -->", "<!-- vendor-audits-mceliece:end -->"
 HQC_BEGIN, HQC_END = "<!-- vendor-audits-hqc:begin -->", "<!-- vendor-audits-hqc:end -->"
 HQC_BUILDS = ("pqclean-hqc", "hqc-ref", "hqc-avx256")
-HQC_STAGES = ("encode", "rm-decode", "rs-decode", "code-decode", "bounds")
+HQC_STAGES = ("encode", "rm-decode", "rm-symmetry", "rs-decode", "code-decode", "bounds")
 MCE_BUILDS = ("pqclean-mceliece", "liboqs", "liboqs-generic")
 MCE_STAGES = ("keyGen", "encaps", "decaps", "padding")
 
@@ -330,7 +330,7 @@ def build_hqc(recipe, src, param_set, out_dir, tag=""):
     randombytes() without defining it; a getrandom() stub is linked then.
     The submitters' code is built at -O3, as their CMake does: their AVX2
     Reed-Muller decoder reads an __m256i through a uint16_t pointer, and GCC
-    13 at -O2 then returns the wrong sign bit for every block (AUDITS.md).
+    13 at -O2 then sets the sign bit of every block it decodes (AUDITS.md).
     The decoder is deterministic, so no randomness harness is needed."""
     old, new = HQC_DIRS[param_set]
     so = Path(out_dir) / f"{recipe}-{new}{tag}.so"
@@ -981,7 +981,10 @@ def check_mceliece(rows, workdir):
 def check_hqc(rows, workdir):
     """HQC's code layer (standard not final): each row's sets as recorded --
     a row may record findings, the library's own defects, which must then
-    reproduce exactly -- and every mutant failed in the stages it names."""
+    reproduce exactly -- and every mutant failed in the stages it names. A
+    mutant's "passes" names stages that must still pass it: a blind spot,
+    recorded so that it stays known (a tie rule, or a symmetric defect, is
+    invisible to rm-symmetry by construction)."""
     failures = 0
     for row in rows:
         src = Path(workdir) / f"hqc-{row['build']}" / row["commit"][:12]
@@ -1026,6 +1029,10 @@ def check_hqc(rows, workdir):
             missed = [f"{st} {p}/{t}" for st in m["fails"]
                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
                       if not (t and p < t)]
+            missed += [f"{st} {p}/{t} (recorded as a blind spot, but it failed now)"
+                       for st in m.get("passes", [])
+                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                       if not (t and p == t)]
             if got is not None and not missed:
                 bad = sorted(st for st, (p, t) in got["results"].items() if p < t)
                 print(f"  caught {label}: fails {', '.join(bad)}")
@@ -1232,9 +1239,9 @@ def mceliece_markdown(rows):
 
 
 def hqc_markdown(rows):
-    lines = ["| Library | Commit | Profile | Sets | encode | rm-decode | rs-decode "
-             "| code-decode | bounds | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| Library | Commit | Profile | Sets | encode | rm-decode | rm-symmetry "
+             "| rs-decode | code-decode | bounds | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stage):
             p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
@@ -1248,7 +1255,7 @@ def hqc_markdown(rows):
         lines.append(" | ".join([
             f"| {row['library']}", f"[`{row['commit'][:7]}`]({url}) ({row['date']})",
             row["profile"], ", ".join(row["sets"]), cell("encode"), cell("rm-decode"),
-            cell("rs-decode"), cell("code-decode"), cell("bounds"),
+            cell("rm-symmetry"), cell("rs-decode"), cell("code-decode"), cell("bounds"),
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else '**findings**'} |"]))
     return "\n".join(lines)

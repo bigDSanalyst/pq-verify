@@ -780,6 +780,20 @@ built fresh each run (the seed is reported; the rows below use a fixed one):
   outvoting noisy ones, in each copy position; random blocks. Each answer
   exact. A wrong answer is reported as either not maximum likelihood (a
   nearer codeword exists) or a tie broken differently.
+- **rm-symmetry:** the inner decoder against itself, with no reference
+  decoder. Each of those blocks is moved by eight random symmetries of the
+  code: an affine map of the seven position bits (which renumbers the
+  codewords), a codeword added, the copies permuted. Each image must decode
+  to the image of the block's own answer. A maximum-likelihood decoder always
+  does, so an answer that depends on how positions or codewords are numbered
+  fails. Blocks with two nearest codewords are skipped: there the
+  lowest-index rule picks by numbering, as it should. It certifies that the
+  decoder is symmetric, not that it is right: a defect that is itself
+  symmetric passes it, and rm-decode catches that (see the mutants). The idea
+  is Lemma 5 of N. C. Maino, *Post-Selection Verification, Information
+  Geometry, and Clifford Symmetries in Magic State Cultivation* (October
+  2026), an audit of a matching decoder's soft output under the surface
+  code's automorphisms, here for hard decisions.
 - **rs-decode:** errors up to the radius δ (no errors; 1, 2, δ − 1 and δ at
   random positions; δ all in the parity part; δ all in the message part), and
   error patterns whose m-th leading Hankel minor vanishes, for every m below
@@ -794,13 +808,13 @@ built fresh each run (the seed is reported; the rows below use a fixed one):
   of 64-byte-aligned buffers).
 
 <!-- vendor-audits-hqc:begin -->
-| Library | Commit | Profile | Sets | encode | rm-decode | rs-decode | code-decode | bounds | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | 9/9 | 1,783/1,783 **VERIFIED** |
-| HQC reference | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
-| HQC optimized (AVX2) | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
-| HQC reference | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 99/99 | 27/27 | 205/205 | — | 1,783/1,783 **VERIFIED** |
-| HQC optimized (AVX2) | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | 99/99 | **21/27** | 205/205 | — | 1,763/1,783 **findings** |
+| Library | Commit | Profile | Sets | encode | rm-decode | rm-symmetry | rs-decode | code-decode | bounds | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 1313/1313 | 99/99 | 27/27 | 389/389 | 10/10 | 3,280/3,280 **VERIFIED** |
+| HQC reference | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 1313/1313 | 99/99 | 27/27 | 389/389 | — | 3,280/3,280 **VERIFIED** |
+| HQC optimized (AVX2) | [`f46e542`](https://gitlab.com/pqc-hqc/hqc/-/commit/f46e54222ffb76706678a9ec8a43cd2188a12ab1) (2025-08-22) | v5 | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | **1285/1313** | 99/99 | **21/27** | 389/389 | — | 3,232/3,280 **findings** |
+| HQC reference | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | 1402/1402 | 1309/1309 | 99/99 | 27/27 | 389/389 | — | 3,276/3,276 **VERIFIED** |
+| HQC optimized (AVX2) | [`71090d4`](https://gitlab.com/pqc-hqc/hqc/-/commit/71090d4679837a0de1e6946284818184994d952a) (2026-08-05) | next | HQC-1, HQC-3, HQC-5 | 50/50 | **1388/1402** | **1281/1309** | 99/99 | **21/27** | 389/389 | — | 3,228/3,276 **findings** |
 <!-- vendor-audits-hqc:end -->
 
 **Two defects in the submitters' optimized (AVX2) Reed–Muller decoder**, in
@@ -822,14 +836,21 @@ all three parameter sets. The reference decoder (`src/ref`) has neither.
    message. In 40 800 blocks (HQC-1 and HQC-3; uniformly random words, and
    codewords with independent bit flips at rates 0.30, 0.35 and 0.40) it
    never differed from the reference: random testing, KATs and round trips
-   do not see it. Starting the search at
+   do not see it. rm-symmetry, which uses no reference decoder, sees it too.
+   Moving the same blocks through symmetries of the code renumbers their
+   codewords, and the decoder's answer follows the numbering: 12, 8 and 8
+   blocks for HQC-1, -3 and -5, against rm-decode's 6, 4 and 4, because a
+   block it decodes right can come back wrong once its codewords are
+   renumbered. Starting the search at
    `1 << (6 + MULTIPLICITY / 2)` fixes it (no differences on the same
    vectors). Its effect on HQC's decryption failure rate was not estimated.
 2. *It reads a vector through a `uint16_t` pointer.* The sign lookup does
    `uint16_t *ptr = (uint16_t *)&tmp;` on an `__m256i`, which strict aliasing
-   does not allow. GCC 13.3 at `-O2` then returns the wrong sign bit for every
-   block (the codeword 0x00 decodes as 0x80) and the KEM fails every round
-   trip (0 of 50 shared secrets agree). At `-O3`, the submitters' CMake
+   does not allow. GCC 13.3 at `-O2` then sets the sign bit of every block it
+   decodes, so every block whose answer has it clear comes back wrong: half of
+   the 256 codewords, 0x00 as 0x80. The KEM fails every round trip (0 of 50
+   shared secrets agree). rm-symmetry fails all 392 blocks of an HQC-1 build
+   with only this defect: a constant bit does not follow the symmetries. At `-O3`, the submitters' CMake
    default, at `-O2 -fno-strict-aliasing`, and with clang 18 it works; copying
    the vector out with `memcpy` fixes it under both compilers. The rows above
    build the submitters' code at `-O3`, as they do, so they record the first
@@ -841,13 +862,19 @@ both defects and a standalone reproduction that uses only
 tracked upstream as [HQC issue #46](https://gitlab.com/pqc-hqc/hqc/-/issues/46),
 with the patch under review.
 
-**Mutants.** Nine one-line changes to PQClean's decoder, each caught in the
+**Mutants.** Ten one-line changes to PQClean's decoder, each caught in the
 stages recorded: Berlekamp–Massey acting on a zero discrepancy, skipping its
 length test, or moving the saved locator's degree on any nonzero discrepancy;
 syndromes ignoring position 0; Forney's denominator dropping a factor;
 Reed–Muller ties going to the highest index; one copy left out of the sum;
 index 127 never a peak; the first transform entry corrected for one copy too
-few.
+few; the sign test inverted, so that every answer is the complementary
+codeword. rm-symmetry catches three of the five Reed–Muller ones with no
+reference decoder: the copy left out, index 127 and the first transform
+entry. The other two are its blind spots, and CI holds them as such (the
+mutant's `passes`): ties are skipped by design, and the inverted sign is a
+symmetric defect, which commutes with every symmetry. rm-decode catches
+both.
 
 The first three are why the Hankel-built patterns exist. Measured on HQC-1
 (δ = 15), 20 000 random weight-15 patterns each: 1 078, 1 078 and 1 882 wrong

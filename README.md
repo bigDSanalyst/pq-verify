@@ -352,7 +352,7 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 | PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding, **constant-time Encaps and Decaps**; 24 mutants, including liboqs's wrapper and 7 planted leaks | 404/404 each; constant time 20/20 each; every mutant caught |
-| PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words; 9 mutants | references 5,349/5,349; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](AUDITS.md)); every mutant caught |
+| PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words, and the inner decoder against its own symmetries with no reference decoder; 10 mutants | references 9,836/9,836; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](AUDITS.md)); the symmetry check finds both on its own; every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
 vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
@@ -489,6 +489,7 @@ next` for the next-release code):
 |---|---|
 | encode | Reed–Solomon, Reed–Muller and concatenated encoders, byte for byte |
 | rm-decode | every codeword; noise up to the radius; blocks between two codewords at every distance up to the radius; ties broken to the lowest index, as the submitters' code does (equidistant blocks, and the GF(2⁷) inversion word, tied 14 ways); one exact copy outvoting noisy ones; random blocks. Each answer exact |
+| rm-symmetry | the same blocks, each moved by eight random symmetries of the code (an affine map of the position bits, a codeword added, the copies permuted): each image must decode to the image of the block's own answer. No reference decoder; ties skipped |
 | rs-decode | random errors up to the radius δ, all in the parity or all in the message part, and patterns whose leading Hankel minors vanish: the Berlekamp–Massey branch random patterns rarely reach |
 | code-decode | whole received words within both radii → the message |
 | bounds | no call writes outside its output buffer |
@@ -498,7 +499,11 @@ Built vectors, not random ones: four planted Berlekamp–Massey bugs fail on
 decryptions; the Hankel-built patterns trigger three of them every time.
 The blocks between two codewords found a defect in the submitters' AVX2
 decoder that 40 800 random and noisy blocks did not trigger once
-([AUDITS.md](AUDITS.md)). liboqs builds these functions with hidden
+([AUDITS.md](AUDITS.md)). rm-symmetry finds it again with no reference
+decoder at all: a maximum-likelihood decoder commutes with every symmetry of
+its code, and that one's answer follows how the codewords are numbered. It
+certifies symmetry, not correctness: a defect that is itself symmetric (every
+answer the complementary codeword) passes it, and rm-decode catches that. liboqs builds these functions with hidden
 visibility, so its shared library cannot be audited this way: build its HQC
 sources with default visibility. Not a side-channel review.
 
