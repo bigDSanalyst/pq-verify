@@ -329,6 +329,25 @@ it cannot see) records exactly its scope:
 }
 ```
 
+`--audit-dsa ... --constant-time` records the same, with the site table its
+declassifications were judged by ([CONSTANT-TIME.md](CONSTANT-TIME.md)):
+
+```json
+"side_channel": {
+  "measured": false,
+  "constant_time_checked": {
+    "operations": ["keyGen", "sign"],
+    "policy": "mldsa-native @ 159509d",
+    "scope": "secret-dependent branches and memory addresses in this binary, by Valgrind memcheck taint, and every declassification judged by the implementation's site table (CONSTANT-TIME.md); not instruction timing (division), intermediate values, power, EM or microarchitecture",
+    "leak_free": true
+  }
+}
+```
+
+A library without its constant-time annotations and pq-verify's shim gets the
+stage `ct:cannot-verify` and the status `CANNOT VERIFY`, with the reason under
+`constant_time.cannot_verify`, and no `constant_time_checked`.
+
 Without the flag, nothing is claimed:
 
 ```json
@@ -356,7 +375,7 @@ here is a certification.
 | Requirement | What is checked | How |
 |---|---|---|
 | FIPS 203 (ML-KEM) | 240 ACVP vectors; a library's keyGen, Encaps and Decaps byte-exact, the §7.2/§7.3 input checks, Wycheproof and CCTV edge cases, 10 000 accumulated cases; Encaps and Decaps constant time | `--acvp-all`; `--audit-kem LIB SET`, `--constant-time` |
-| FIPS 204 (ML-DSA) | 615 ACVP vectors; a library's keyGen, signing and verification on every interface it exports, and Wycheproof's verify vectors | `--acvp-all`; `--audit-dsa LIB SET` |
+| FIPS 204 (ML-DSA) | 615 ACVP vectors; a library's keyGen, signing and verification on every interface it exports, and Wycheproof's verify vectors; in a hooked build, key generation and signing constant time ([CONSTANT-TIME.md](CONSTANT-TIME.md)) | `--acvp-all`; `--audit-dsa LIB SET`, `--constant-time` |
 | FIPS 205 (SLH-DSA) | 1,248 ACVP vectors for pq-verify's reference; a third-party implementation through fresh ACVP questions | `--slhdsa-acvp`; `--emit-prompt`, `--verify-response` |
 | SP 800-208 (LMS/HSS, XMSS) | ACVP and RFC vectors; a library's keyGen and signing byte-exact, malformed signatures, and key state | `--lms-xmss`; `--audit-hbs LIB` |
 | CNSA 2.0 | its post-quantum algorithms (ML-KEM-1024, ML-DSA-87, LMS and XMSS), through the rows above | as above |
@@ -380,6 +399,7 @@ pq_verify/
   isolate.py               Runs a vendor audit in a child process
   dsa_audit.py             ML-DSA library audit
   ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
+  ct_dsa.py                ML-DSA constant time, judged by the library's declassifications
   edge.py                  Wycheproof and CCTV edge-case vectors
   accumulated.py           Accumulated vectors: 10 000 random cases, one digest
   fresh.py                 Fresh, unpublished ACVP question sets
@@ -398,7 +418,8 @@ pq_verify/
   proofs.py                Runs the Coq proofs (--proofs)
   coq/                     NTT.v, Reduce.v: the proofs
   harness/                 C files linked into a test build of a library: deterministic
-                           randombytes(), LMS/XMSS adapters. Never in production
+                           randombytes(), LMS/XMSS adapters, the constant-time shim
+                           (ct/). Never in production
   vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor
@@ -407,7 +428,7 @@ DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in .so audit → JSON report
 sample_report.json         Example output (what your auditors receive)
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
-REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE / CITATION.cff
+CONSTANT-TIME.md / REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE / CITATION.cff
 ```
 
 The wheel and source distribution are not in the repository: they are built

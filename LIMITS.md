@@ -84,13 +84,20 @@ electromagnetic or microarchitectural behaviour
 | Audit | Checked under Valgrind memcheck | Not checked |
 |---|---|---|
 | `--audit-kem` (ML-KEM) | Encaps and Decaps: secret-dependent branches and memory addresses | key generation (the public matrix seed is derived from the secret seed) |
+| `--audit-dsa` (ML-DSA) | key generation and signing, in a build with the library's own declassifications compiled in and pq-verify's shim in front of them; every declassification is judged by the site table for that implementation ([CONSTANT-TIME.md](CONSTANT-TIME.md)) | any other build, which is CANNOT VERIFY: Sign branches on secret-derived values by design. Today only mldsa-native's portable C backend has a site table |
 | `--audit-mceliece` (Classic McEliece) | Encaps and Decaps, the same way | key generation (its retries are declassified by design); inside the error-vector sampler, reports are listed, not judged |
 
-Not covered by it at all: ML-DSA, SLH-DSA, LMS/HSS, XMSS, FN-DSA, HQC and the
-hybrid groups. Within its scope memcheck cannot see instruction timing
-(KyberSlash's secret division; the library's division instructions are listed
-for a reviewer instead) or anything below the instruction level, and it
-checks the one binary and code path described above
+Not covered by it at all: SLH-DSA, LMS/HSS, XMSS, FN-DSA, HQC and the hybrid
+groups. Within its scope memcheck cannot see instruction timing (KyberSlash's
+secret division; the library's division instructions are listed for a
+reviewer instead), the values a computation produces (Berzati et al.'s
+template attack on ML-DSA's signing-time values,
+[CONSTANT-TIME.md](CONSTANT-TIME.md#5-scope)) or anything below the
+instruction level. It sees only the memory accesses Valgrind translates:
+every run commits each instruction's result, so a secret-indexed load whose
+value is discarded is still seen, but prefetch instructions are not
+translated, so a secret-indexed prefetch is not. It checks the one binary
+and code path described above
 ([AUDITS.md](AUDITS.md#constant-time---constant-time)).
 
 `--leakage` is not a measurement: it computes, from the NTT's structure,

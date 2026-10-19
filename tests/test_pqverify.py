@@ -5820,6 +5820,311 @@ def test_ct_vendor_rows_and_mutants_are_well_formed():
             assert m["set"] in row["sets"] and set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
 
 
+def test_constant_time_catches_a_discarded_secret_table_read(tmp_path):
+    """A secret-indexed load whose register is overwritten at once: Valgrind's
+    default translation deletes it before memcheck sees it, though the
+    processor performs it. Every constant-time run commits each instruction's
+    result (ct_audit.MEMCHECK), which keeps it."""
+    import platform
+    if platform.machine() not in ("x86_64", "aarch64"):
+        pytest.skip("the planted read is written in x86-64 and AArch64 assembly")
+    r = _ct_run(_ct_shim(tmp_path, "LEAK_DISCARDED"))
+    assert r["stages"] == {"encaps": (1, 1), "decaps": (0, 1)}
+    assert [(x["kind"], x["function"]) for x in r["leaks"]["decaps"]] == [
+        ("secret used as a memory address", "shim_kem_dec")]
+
+
+def test_constant_time_refuses_memcheck_that_deletes_discarded_loads(tmp_path, monkeypatch):
+    """Without allregs-at-each-insn the self-test's discarded read goes
+    unreported, and the run is refused rather than trusted."""
+    from pq_verify import ct_audit as C
+    so = _ct_shim(tmp_path)
+    for weaker in ((), ("--vex-iropt-register-updates=allregs-at-mem-access",)):
+        monkeypatch.setattr(C, "MEMCHECK", C.MEMCHECK[:-1] + weaker)
+        with pytest.raises(C.Unavailable, match="secret-indexed read"):
+            _ct_run(so)
+
+
+# ----------------------------------------------------------------------
+# --audit-dsa --constant-time: pq_verify/ct_dsa.py, specified by
+# CONSTANT-TIME.md. The policy is tested here on synthetic shim logs; the
+# pinned mldsa-native builds and the section 4 controls run in the vendor
+# audits (tools/vendor_audit.py, check_ct_dsa).
+# ----------------------------------------------------------------------
+
+_SIGN_FN = "mld_attempt_signature_generation"
+
+
+def _dsa_ev(site, data, where="sign.c:1"):
+    return ("D", site, len(data), data, where)
+
+
+def _dsa_flag(v):
+    return _dsa_ev(("mld_compute_pack_z" if v[0] == "z" else _SIGN_FN,
+                    {"z": "&z_invalid", "w0": "&w0_invalid", "h": "&h_invalid"}[v[0]]),
+                   v[1].to_bytes(4, "little"))
+
+
+def _dsa_call(plan, param_set="ML-DSA-44"):
+    """A signing call's declassifications as mldsa-native at 159509d makes
+    them, for attempts that are rejected at the first z check ('z'), rejected
+    by the hint weight after every check passed ('hint'), or accepted ('ok').
+    -> (events, signature, sk, message, P)."""
+    import hashlib
+    from pq_verify import ct_dsa as C
+    P = C.SETS[param_set]
+    k, ell, ct_n = P["k"], P["l"], P["ctilde"]
+    sk = hashlib.shake_256(b"sk").digest(P["sk"])
+    message = b"pq-verify"
+    mu = hashlib.shake_256(sk[64:128] + C.PRE + message).digest(64)
+    ev, sig = [_dsa_ev(("signature_internal", "rho"), sk[:32])], None
+    for n, how in enumerate(plan):
+        w1 = hashlib.shake_256(b"w1 %d" % n).digest(k * P["w1"])
+        ctilde = hashlib.shake_256(mu + w1).digest(ct_n)
+        ev.append(_dsa_ev((_SIGN_FN, "challenge_bytes"), ctilde))
+        if how == "z":
+            ev.append(_dsa_flag(("z", 0xFFFFFFFF)))
+            continue
+        ev += [_dsa_flag(("z", 0)) for _ in range(ell)]
+        for _ in range(k):
+            ev += [_dsa_flag(("w0", 0)), _dsa_flag(("h", 0))]
+        ev += [_dsa_ev((_SIGN_FN, "w0"), bytes(k * 1024)), _dsa_ev((_SIGN_FN, "w1_packed"), w1)]
+        if how == "ok":
+            sig = ctilde + hashlib.shake_256(b"rest").digest(P["sig"] - ct_n)
+            ev.append(_dsa_ev((_SIGN_FN, "sig"), sig))
+    return ev, sig, sk, message, P
+
+
+def _dsa_at(ev, expr, nth=0):
+    """Index of the nth declassification of `expr`."""
+    return [i for i, e in enumerate(ev) if e[1][1] == expr][nth]
+
+
+def test_ct_dsa_policy_accepts_mldsa_natives_attempt_structure():
+    from pq_verify.ct_dsa import check_sign, label
+    ev, sig, sk, m, P = _dsa_call(["z", "hint", "ok"])
+    findings, stats = check_sign(ev, sig, sk, m, P)
+    assert findings == [] and stats == {"attempts": 3, "hint_rejections": 1}
+    assert label(stats) == "3 attempts, with a hint-weight rejection"
+    ev, sig, sk, m, P = _dsa_call(["ok"])
+    findings, stats = check_sign(ev, sig, sk, m, P)
+    assert findings == [] and label(stats) == "accepted at its first attempt"
+
+
+def _swap(ev, i, j):
+    ev[i], ev[j] = ev[j], ev[i]
+
+
+@pytest.mark.parametrize("change, finding", [
+    # an undocumented site: memcheck is blind after it, only the log sees it
+    (lambda ev, sig: ev.insert(2, _dsa_ev(("mld_compute_pack_z", "z"), bytes(1024))),
+     "undocumented site: mld_compute_pack_z (z) at sign.c:1"),
+    # value: the right site at the right place, the wrong bytes
+    (lambda ev, sig: ev.__setitem__(-1, _dsa_ev((_SIGN_FN, "sig"), bytes(len(sig)))),
+     "the signature declassified is not the one returned"),
+    # position: the signature published by an attempt that was rejected
+    (lambda ev, sig: ev.insert(_dsa_at(ev, "w1_packed", 0) + 1, _dsa_ev((_SIGN_FN, "sig"), sig)),
+     "the signature declassified in an attempt that was rejected"),
+    (lambda ev, sig: ev.__setitem__(_dsa_at(ev, "&z_invalid", 3), _dsa_flag(("z", 5))),
+     "is not 0 or 0xFFFFFFFF"),
+    (lambda ev, sig: ev.insert(_dsa_at(ev, "&z_invalid") + 1, _dsa_flag(("w0", 0))),
+     "declassified after a check rejected its attempt"),
+    (lambda ev, sig: ev.__setitem__(_dsa_at(ev, "w1_packed", 1),
+                                    _dsa_ev((_SIGN_FN, "w1_packed"), bytes(4 * 192))),
+     "w1_packed declassified does not hash to its attempt's challenge"),
+    (lambda ev, sig: ev.insert(_dsa_at(ev, "challenge_bytes", 2) + 1,
+                               ev.pop(_dsa_at(ev, "w0", 1))),
+     "declassified before every check of its attempt passed"),
+    (lambda ev, sig: _swap(ev, _dsa_at(ev, "&w0_invalid", 4), _dsa_at(ev, "&h_invalid", 4)),
+     "the w0 and h checks out of turn"),
+    (lambda ev, sig: ev.insert(0, ev[0]), "rho declassified 2 times, expected once"),
+    (lambda ev, sig: ev.__setitem__(_dsa_at(ev, "challenge_bytes", 1),
+                                    _dsa_ev((_SIGN_FN, "challenge_bytes"), bytes(16))),
+     "a challenge of 16 bytes, expected 32"),
+    (lambda ev, sig: ev.pop(_dsa_at(ev, "&z_invalid", 0)),
+     "an attempt ended with no declassified reason"),
+])
+def test_ct_dsa_policy_finds_each_kind_of_wrong_declassification(change, finding):
+    from pq_verify.ct_dsa import check_sign
+    ev, sig, sk, m, P = _dsa_call(["z", "hint", "ok"])
+    change(ev, sig)
+    findings, _ = check_sign(ev, sig, sk, m, P)
+    assert any(finding in f for f in findings), findings
+
+
+def test_ct_dsa_policy_checks_key_generation():
+    import hashlib
+    from pq_verify.ct_dsa import SETS, check_keygen
+    P = SETS["ML-DSA-65"]
+    pk = hashlib.shake_256(b"pk").digest(P["pk"])
+    one, zero = (1).to_bytes(4, "little"), (0).to_bytes(4, "little")
+
+    def run(accepted=256 * 11, value=one, last=None):
+        ev = [_dsa_ev(("keypair_internal", "rho"), pk[:32])]
+        ev += [_dsa_ev(("mld_rej_eta_c", "&t_valid"), value) for _ in range(accepted)]
+        ev += [_dsa_ev(("mld_rej_eta_c", "&t_valid"), zero) for _ in range(50)]
+        ev.append(_dsa_ev(("keypair_internal", "pk"), last or pk))
+        return check_keygen(ev, pk, P)
+    assert run() == []
+    # the four-way sampler draws a twelfth polynomial for ML-DSA-65 and discards it
+    assert run(accepted=12 * 256 + 5) == []
+    assert any("accepted sampling outcomes" in f for f in run(accepted=256 * 11 - 1))
+    assert any("accepted sampling outcomes" in f for f in run(accepted=12 * 257 + 1))
+    assert any("not 0 or 1" in f for f in run(value=(2).to_bytes(4, "little")))
+    assert any("not the one returned" in f for f in run(last=bytes(P["pk"])))
+
+
+def test_ct_dsa_w0_is_the_public_value_dilithium_py_verifies_with():
+    """On the accepting attempt the policy recomputes w0 from the public key
+    and the signature: w0 + 2*gamma2*w1 = Az - c*t1*2^d (mod q), the value
+    FIPS 204's verifier computes."""
+    dpy = pytest.importorskip("dilithium_py.ml_dsa")
+    from pq_verify import ct_dsa as C
+    for name in ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87"):
+        O, P = getattr(dpy, name.replace("-", "_")), C.SETS[name]
+        pk, sk = O._keygen_internal(bytes(range(32)))
+        sig = O._sign_internal(sk, C.PRE + b"pq-verify", bytes(32))
+        rho, t1 = O._unpack_pk(pk)
+        c_tilde, z, h = O._unpack_sig(sig)
+        ch = O.R.sample_in_ball(c_tilde, O.tau)
+        assert [x % C.Q for x in ch.coeffs] == [x % C.Q for x in C._sample_in_ball(c_tilde, P["tau"])]
+        w = ((O._expand_matrix_from_seed(rho) @ z.to_ntt())
+             - t1.scale(1 << O.d).to_ntt().scale(ch.to_ntt())).from_ntt()
+        w1 = h.use_hint(w, 2 * O.gamma_2)
+        flat = lambda mod: [list(p.coeffs) for row in mod._data for p in row]
+        got = C.w0_public(pk, sig, w1.bit_pack_w(O.gamma_2), P)
+        assert all((g + 2 * P["g2"] * a - b) % C.Q == 0
+                   for gr, ar, br in zip(got, flat(w1), flat(w))
+                   for g, a, b in zip(gr, ar, br)), name
+
+
+def test_ct_dsa_shim_logs_each_site_and_its_bytes(tmp_path):
+    """The shim header in front of <valgrind/memcheck.h> records each secret
+    mark and declassification with its site; outside Valgrind the requests
+    are no-ops and the log is still written."""
+    import os, shutil, subprocess
+    from pq_verify import ct_dsa as C
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        pytest.skip(why)
+    src = tmp_path / "use.c"
+    src.write_text(
+        "#include <valgrind/memcheck.h>\n#include <stdint.h>\n"
+        "int touch(void) {\n"
+        "  uint8_t secret[4] = {1, 2, 3, 4};\n  uint32_t flag = 0xFFFFFFFFu;\n"
+        "  VALGRIND_MAKE_MEM_UNDEFINED(secret, sizeof secret);\n"
+        "  VALGRIND_MAKE_MEM_DEFINED(&flag, sizeof flag);\n"
+        "  return (int)(flag & 1);\n}\n"
+        "int main(void) { return touch() != 1; }\n")
+    exe = tmp_path / "use"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-I", C.shim_include(), "-o", str(exe),
+                    str(src), C.shim_source()], check=True, capture_output=True)
+    log = tmp_path / "ct.log"
+    subprocess.run([str(exe)], check=True, env=dict(os.environ, PQV_CT_LOG=str(log)))
+    assert C.parse_log(str(log)) == [
+        ("S", ("touch", "secret"), 4, b"", "use.c:6"),
+        ("D", ("touch", "&flag"), 4, b"\xff\xff\xff\xff", "use.c:7")]
+    subprocess.run([str(exe)], check=True, env={k: v for k, v in os.environ.items()
+                                                if k != "PQV_CT_LOG"})
+
+
+def _ct_dsa_fake(tmp_path, hooked):
+    import shutil, subprocess
+    from pq_verify import ct_dsa as C
+    if not (shutil.which("cc") or shutil.which("gcc")):
+        pytest.skip("no C compiler")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"ct_dsa_fake_{'hooked' if hooked else 'plain'}.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
+                    str(root / "tests" / "data" / "ct_dsa_fake.c"),
+                    *([C.shim_source()] if hooked else [])], check=True, capture_output=True)
+    return str(so)
+
+
+def _ct_dsa_run(so):
+    from pq_verify.ct_dsa import run_dsa
+    return run_dsa(so, "ML-DSA-44", "PQCP_MLDSA_NATIVE_MLDSA44_keypair_internal",
+                   "PQCP_MLDSA_NATIVE_MLDSA44_signature_internal")
+
+
+def test_ct_dsa_unhooked_library_cannot_be_verified(tmp_path):
+    from pq_verify.ct_dsa import NotHooked
+    with pytest.raises(NotHooked, match="shim"):
+        _ct_dsa_run(_ct_dsa_fake(tmp_path, hooked=False))
+
+
+def test_ct_dsa_hooked_library_that_declares_nothing_cannot_be_verified(tmp_path):
+    from pq_verify.ct_audit import available
+    from pq_verify.ct_dsa import NotHooked
+    if available():
+        pytest.skip(available())
+    with pytest.raises(NotHooked, match="declared nothing public"):
+        _ct_dsa_run(_ct_dsa_fake(tmp_path, hooked=True))
+
+
+def test_ct_dsa_refuses_memcheck_that_deletes_discarded_loads(tmp_path, monkeypatch):
+    from pq_verify import ct_audit, ct_dsa
+    if ct_audit.available():
+        pytest.skip(ct_audit.available())
+    so = _ct_dsa_fake(tmp_path, hooked=True)
+    monkeypatch.setattr(ct_dsa, "MEMCHECK", ct_audit.MEMCHECK[:-1])
+    with pytest.raises(ct_audit.Unavailable, match="self-test"):
+        _ct_dsa_run(so)
+
+
+def test_dsa_audit_constant_time_on_an_unhooked_library_is_cannot_verify(tmp_path):
+    """Every functional stage passes; constant time cannot be judged. The
+    result is CANNOT VERIFY, not VERIFIED and not FINDINGS PRESENT."""
+    from pq_verify.report import to_json_dsa
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path, edge=False, constant_time=True)
+    assert r["detail"]["ct:cannot-verify"] == (0, 1)
+    assert not r["verified"] and r["status"] == "CANNOT VERIFY"
+    assert "shim" in r["constant_time"]["cannot_verify"]
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert doc["status"] == "CANNOT VERIFY" and doc["verified"] is False
+    assert any("constant time: cannot verify" in f for f in doc["findings"])
+    assert "constant_time_checked" not in doc["side_channel"]
+
+
+def test_dsa_report_states_the_constant_time_scope_when_it_ran():
+    from pq_verify.report import to_json_dsa
+    ct = {"stages": {"keyGen": (1, 1), "sign": (0, 1)},
+          "leaks": {"keyGen": [], "sign": [{"kind": "branch on a secret",
+                                            "function": "mld_poly_chknorm_c", "count": 3}]},
+          "findings": {"keyGen": [], "sign": ["message 1 (accepted at its first attempt): x"]},
+          "policy": "mldsa-native @ 159509d", "tool": "valgrind-3.22.0"}
+    doc = to_json_dsa({"verified": False, "status": "FINDINGS PRESENT", "passed": 1,
+                       "total": 2, "detail": {"ct:keyGen": (1, 1), "ct:sign": (0, 1)},
+                       "constant_time": ct}, param_set="ML-DSA-65")
+    seen = doc["side_channel"]["constant_time_checked"]
+    assert seen["leak_free"] is False and seen["policy"] == "mldsa-native @ 159509d"
+    assert doc["findings"] == [
+        "ML-DSA: stage ct:sign: memcheck: branch on a secret in mld_poly_chknorm_c; "
+        "declassification policy: message 1 (accepted at its first attempt): x"]
+
+
+def test_ct_dsa_vendor_rows_and_controls_are_well_formed():
+    """Hooked rows record both stages per set; every other ML-DSA row records
+    CANNOT VERIFY, never a pass. The controls are CONSTANT-TIME.md's."""
+    mod, root = _vendor_audit()
+    for row in mod.load_dsa_table():
+        assert set(row["ct"]) == set(row["sets"]), row["library"]
+        want = ({"ct:keyGen": [1, 1], "ct:sign": [1, 1]} if row.get("ct_build") == "hooked"
+                else {"ct:cannot-verify": [0, 1]})
+        assert all(row["ct"][ps] == want for ps in row["sets"]), row["library"]
+        for m in row.get("ct_mutants", []):
+            assert row.get("ct_build") == "hooked" and m["set"] in row["sets"]
+            assert set(m["fails"]) <= {"ct:keyGen", "ct:sign"}
+            assert m.get("expect") or m.get("divisions"), m["name"]
+            for e in m.get("edits") or [m]:
+                assert e["find"] != e["replace"] and e["file"].startswith("mldsa/")
+    controls = [m for r in mod.load_dsa_table() for m in r.get("ct_mutants", [])]
+    assert len(controls) == 6 and sum(not m["fails"] for m in controls) == 1
+    assert "Proof of concept" in (root / "CONSTANT-TIME.md").read_text()
+
+
 # ----------------------------------------------------------------------
 # liboqs: its public ML-DSA API, its RNG hook, and choosing an implementation
 # ----------------------------------------------------------------------
@@ -6677,9 +6982,9 @@ def test_mceliece_constant_time_unavailable_is_a_finding():
     assert "constant_time_checked" not in doc.get("side_channel", {})
 
 
-def test_constant_time_flag_names_both_audits():
+def test_constant_time_flag_names_every_audit_it_runs_with():
     code, out = _cli("--constant-time", "--acvp")
-    assert code == 2 and "--audit-kem or --audit-mceliece" in out
+    assert code == 2 and "--audit-kem, --audit-dsa or --audit-mceliece" in out
 
 
 def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():

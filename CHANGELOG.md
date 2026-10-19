@@ -5,6 +5,45 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Constant time for ML-DSA**: `--audit-dsa ... --constant-time` runs key
+  generation and signing under Valgrind memcheck and judges them against the
+  library's own declarations of what is public. Sign's rejection loop
+  branches on secret-derived values by design, so a driver outside the
+  library cannot tell those branches from a leak. The library is built with
+  its declassifications compiled in and pq-verify's shim
+  (`pq_verify/harness/ct`) in front of them, which logs each one with its call
+  site and bytes. Every memcheck report fails. Every declassification must be
+  at a site in the table for the pinned implementation, in its place in the
+  attempt, and equal to the value the public key and signature determine
+  wherever they do. On the accepting attempt that is the challenge, `w0`, `w1`
+  and the signature; `w0` is recomputed as `Az − c·t1·2^d − 2γ2·w1`. A build
+  without the declarations is CANNOT VERIFY, never a pass.
+  [CONSTANT-TIME.md](CONSTANT-TIME.md) is the specification, revised where
+  the proof of concept disagreed with it. mldsa-native `159509d` passes for
+  all three sets. Six controls planted in it give exactly their specified
+  results in the vendor audits. Every other pinned ML-DSA row records CANNOT
+  VERIFY. The ML-DSA table in AUDITS.md gains a Constant time column.
+
+### Fixed
+
+- **memcheck missed a secret-indexed load whose value is discarded**, in
+  every constant-time check: ML-KEM's and Classic McEliece's too. By default
+  Valgrind's translator deletes such a load before memcheck instruments it,
+  though the processor still performs it, and it still leaks through the
+  cache. ML-DSA's control 5 exposed it. Every run now commits each
+  instruction's result (`--vex-iropt-register-updates=allregs-at-each-insn`),
+  which keeps the load. Two weaker settings were rejected:
+  `--vex-iropt-level=0` reported 7,527 false branches in liboqs's mlkem-native
+  C backend, and `allregs-at-mem-access` keeps the load only while its
+  register survives. The self-test now plants such a read and refuses a run
+  that misses it. Every recorded ML-KEM and Classic McEliece row and leak
+  mutant reproduced unchanged.
+- The README's audit totals for mldsa-native, pq-crystals ref and PQClean
+  ML-DSA predated the accumulated stage: 1,506, 1,338 and 1,068, as in
+  AUDITS.md, not 1,503, 1,335 and 1,065.
+
 ### Changed
 
 - **v2.12.1 has its own Zenodo deposit**,

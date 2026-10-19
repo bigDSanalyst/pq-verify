@@ -248,8 +248,12 @@ def build_parser():
     p.add_argument("--constant-time", action="store_true",
                    help="with --audit-kem or --audit-mceliece: run Encaps and Decaps "
                         "under Valgrind memcheck with the secret inputs marked, and fail "
-                        "on any branch or memory access that depends on them (Linux, "
-                        "needs valgrind). Not a measurement of timing, power or EM")
+                        "on any branch or memory access that depends on them. With "
+                        "--audit-dsa: key generation and signing, judged against the "
+                        "library's own declarations of what is public; a library built "
+                        "without them and pq-verify's shim is CANNOT VERIFY "
+                        "(CONSTANT-TIME.md). Linux, needs valgrind. Not a measurement "
+                        "of timing, power or EM")
     p.add_argument("--accumulated", type=int, metavar="N",
                    help="with --audit-kem / --audit-dsa / --audit-harness: run N of C2SP "
                         "CCTV's accumulated cases (seeded random keygen/encaps/decaps or "
@@ -370,7 +374,8 @@ def main(argv=None):
             ("--hqc-seed", args.hqc_seed, args.audit_hqc),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
-            ("--constant-time", args.constant_time, args.audit_kem or args.audit_mceliece),
+            ("--constant-time", args.constant_time,
+             args.audit_kem or args.audit_dsa or args.audit_mceliece),
             ("--accumulated", args.accumulated is not None,
              args.audit_kem or args.audit_dsa or args.audit_harness),
             ("--kem-keypair", args.kem_keypair, args.audit_kem),
@@ -393,7 +398,7 @@ def main(argv=None):
                        "--hqc-profile": "--audit-hqc",
                        "--hqc-seed": "--audit-hqc",
                        "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
-                       "--constant-time": "--audit-kem or --audit-mceliece",
+                       "--constant-time": "--audit-kem, --audit-dsa or --audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
                        "--audit-timeout": "an --audit-* task"}.get(
@@ -628,7 +633,7 @@ def main(argv=None):
             dsa_result, _loaded, dsa_reason = _isolated(
                 args, "pq_verify.dsa_audit", "pqverify_audit_dsa", _p, _ps,
                 abi=args.dsa_abi, symbols=_syms, accumulated=_acc_n(_ps),
-                prefix=args.symbol_prefix, **_vsrc)
+                prefix=args.symbol_prefix, constant_time=args.constant_time, **_vsrc)
             _bound = _bind_loaded(dsa_artifact, _loaded)
             dsa_reason = dsa_reason or _bound
             if dsa_reason:

@@ -65,7 +65,8 @@ jobs:
           python-version: "3.12"
       - name: System dependencies
         # hash-sigs and xmss-reference hash with OpenSSL; valgrind runs the
-        # ML-KEM rows' constant-time stages; CMake builds liboqs
+        # ML-KEM, ML-DSA and Classic McEliece rows' constant-time stages;
+        # CMake builds liboqs
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind cmake
       - name: Install
         run: |

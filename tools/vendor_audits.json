@@ -29,7 +29,16 @@
     "\"ct\" (ML-KEM rows, per parameter set): --constant-time, Encaps and Decaps under",
     "Valgrind memcheck with the secret inputs marked; [1, 1] means no secret-dependent",
     "branch or memory access. \"ct_mutants\" plant one leak each, with outputs left",
-    "correct; CI requires the constant-time stage to fail each in the stages named."
+    "correct; CI requires the constant-time stage to fail each in the stages named.",
+    "\"ct\" on dsa_audits rows (per parameter set): --audit-dsa --constant-time,",
+    "judged against the library's own declassifications (CONSTANT-TIME.md).",
+    "\"ct_build\": \"hooked\" builds the library with its annotations and",
+    "pq-verify's shim; every other row records ct:cannot-verify, never a pass.",
+    "Its \"ct_mutants\" are the controls of CONSTANT-TIME.md, section 4: each must",
+    "fail exactly the stages under \"fails\", with every \"expect\" text and no",
+    "\"absent\" one among the reports; \"silent\": memcheck reports nothing, so only",
+    "the policy sees it; \"divisions\": functions the division list must name.",
+    "\"edits\" applies several find/replace pairs where one is not enough."
   ],
   "audits": [
     {
@@ -932,6 +941,160 @@
             "sigVerPreHash"
           ]
         }
+      ],
+      "ct_build": "hooked",
+      "ct": {
+        "ML-DSA-44": {
+          "ct:keyGen": [
+            1,
+            1
+          ],
+          "ct:sign": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:keyGen": [
+            1,
+            1
+          ],
+          "ct:sign": [
+            1,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:keyGen": [
+            1,
+            1
+          ],
+          "ct:sign": [
+            1,
+            1
+          ]
+        }
+      },
+      "ct_mutants": [
+        {
+          "name": "the norm check takes abs() with a branch on the coefficient's sign",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/poly.c",
+              "find": "    t |= mld_ct_cmask_neg_i32(B - 1 - mld_ct_abs_i32(a->coeffs[i]));",
+              "replace": "    {\n      int32_t c = a->coeffs[i];\n      if (c < 0) /* abs() with a branch on the coefficient's sign */\n      {\n        __asm__ volatile(\"\" : \"+r\"(c));\n        c = -c;\n      }\n      t |= mld_ct_cmask_neg_i32(B - 1 - c);\n    }"
+            }
+          ],
+          "fails": [
+            "ct:sign"
+          ],
+          "expect": [
+            "branch on a secret in mld_poly_chknorm_c"
+          ]
+        },
+        {
+          "name": "z declassified before its norm check",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/sign.c",
+              "find": "    z_invalid = mld_poly_chknorm(z, MLDSA_GAMMA1 - MLDSA_BETA);",
+              "replace": "    MLD_CT_TESTING_DECLASSIFY(z, sizeof(*z));\n    z_invalid = mld_poly_chknorm(z, MLDSA_GAMMA1 - MLDSA_BETA);"
+            }
+          ],
+          "fails": [
+            "ct:sign"
+          ],
+          "silent": true,
+          "expect": [
+            "declassified at an undocumented site: mld_compute_pack_z (z)"
+          ]
+        },
+        {
+          "name": "the signature declassified before the hint-weight check, on a message accepted at its first attempt",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/sign.c",
+              "find": "  MLD_CT_TESTING_DECLASSIFY(w1_packed, MLDSA_K * MLDSA_POLYW1_PACKEDBYTES);\n",
+              "replace": "  MLD_CT_TESTING_DECLASSIFY(w1_packed, MLDSA_K * MLDSA_POLYW1_PACKEDBYTES);\n  MLD_CT_TESTING_DECLASSIFY(sig, MLDSA_CRYPTO_BYTES);\n"
+            },
+            {
+              "file": "mldsa/src/sign.c",
+              "find": "  MLD_CT_TESTING_DECLASSIFY(sig, MLDSA_CRYPTO_BYTES);\n  ret = 0; /* success */",
+              "replace": "  ret = 0; /* success */"
+            }
+          ],
+          "fails": [
+            "ct:sign"
+          ],
+          "silent": true,
+          "expect": [
+            "(accepted at its first attempt): the signature declassified is not the one returned"
+          ],
+          "absent": [
+            "(accepted at its first attempt): the signature declassified before",
+            "(accepted at its first attempt): the signature declassified in an attempt",
+            "(accepted at its first attempt): the signature declassified twice"
+          ]
+        },
+        {
+          "name": "the signature declassified before the hint-weight check, on a message with a hint-weight rejection",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/sign.c",
+              "find": "  MLD_CT_TESTING_DECLASSIFY(w1_packed, MLDSA_K * MLDSA_POLYW1_PACKEDBYTES);\n",
+              "replace": "  MLD_CT_TESTING_DECLASSIFY(w1_packed, MLDSA_K * MLDSA_POLYW1_PACKEDBYTES);\n  MLD_CT_TESTING_DECLASSIFY(sig, MLDSA_CRYPTO_BYTES);\n"
+            },
+            {
+              "file": "mldsa/src/sign.c",
+              "find": "  MLD_CT_TESTING_DECLASSIFY(sig, MLDSA_CRYPTO_BYTES);\n  ret = 0; /* success */",
+              "replace": "  ret = 0; /* success */"
+            }
+          ],
+          "fails": [
+            "ct:sign"
+          ],
+          "silent": true,
+          "expect": [
+            "with a hint-weight rejection): the signature declassified in an attempt that was rejected"
+          ]
+        },
+        {
+          "name": "a table read indexed by a secret coefficient in the norm check, its value discarded",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/poly.c",
+              "find": "    t |= mld_ct_cmask_neg_i32(B - 1 - mld_ct_abs_i32(a->coeffs[i]));",
+              "replace": "    {\n      static const volatile uint8_t mld_lut[16] = {0, 1, 1, 0, 1, 0, 0, 1,\n                                                    1, 0, 0, 1, 0, 1, 1, 0};\n      (void)mld_lut[(uint32_t)a->coeffs[i] & 15]; /* indexed by a secret */\n      t |= mld_ct_cmask_neg_i32(B - 1 - mld_ct_abs_i32(a->coeffs[i]));\n    }"
+            }
+          ],
+          "fails": [
+            "ct:sign"
+          ],
+          "expect": [
+            "secret used as a memory address in mld_poly_chknorm_c"
+          ]
+        },
+        {
+          "name": "decompose divides with a hardware division instruction",
+          "set": "ML-DSA-65",
+          "edits": [
+            {
+              "file": "mldsa/src/rounding.h",
+              "find": "  *a1 = (*a1 * 1025 + ((int32_t)1 << 21)) >> 22;",
+              "replace": "  {\n    /* round-(a1 / B) with B = 4092, by a division instruction */\n    static volatile int32_t mld_b = 4092;\n    int32_t b = mld_b;\n    *a1 = (2 * *a1 + b - 1) / (2 * b);\n  }"
+            }
+          ],
+          "fails": [],
+          "silent": true,
+          "divisions": [
+            "poly_decompose"
+          ]
+        }
       ]
     },
     {
@@ -1158,7 +1321,27 @@
             "rng"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "ML-DSA-44": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        }
+      }
     },
     {
       "library": "PQClean clean",
@@ -1281,7 +1464,27 @@
             "edge:sigVerify"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "ML-DSA-44": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        }
+      }
     },
     {
       "library": "liboqs 0.16.0 — OQS API",
@@ -1414,7 +1617,27 @@
             "sigVerPure"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "ML-DSA-44": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        }
+      }
     },
     {
       "library": "liboqs 0.16.0 — mldsa-native C backend",
@@ -1609,7 +1832,27 @@
             "edge:sigVerify"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "ML-DSA-44": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        }
+      }
     },
     {
       "library": "liboqs 0.16.0 — mldsa-native x86-64 backend",
@@ -1804,7 +2047,27 @@
             "edge:sigVerify"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "ML-DSA-44": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-65": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        },
+        "ML-DSA-87": {
+          "ct:cannot-verify": [
+            0,
+            1
+          ]
+        }
+      }
     }
   ],
   "hbs_audits": [

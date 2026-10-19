@@ -33,7 +33,8 @@ a customer or a deployment sees their code:
   points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
   sealed binaries through fresh ACVP questions. Each audit runs the checks
   that apply: NIST's ACVP vectors, Wycheproof and CCTV edge cases, malformed
-  inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM.
+  inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM
+  and, in a build with its own annotations compiled in, ML-DSA.
 - **Pre-CMVP gap assessment**: the ACVP algorithm tests a CMVP submission
   depends on, run beforehand, with each failure traced to its cause.
 - **Hybrid TLS review**: RFC 10024 groups such as `X25519MLKEM768`, checked
@@ -139,7 +140,20 @@ finding:
 pq-verify --audit-kem build/libmlkem768.so ML-KEM-768 --constant-time --json report.json
 ```
 
-For ML-DSA, the same with `--audit-dsa` (no `--constant-time` yet).
+For ML-DSA, the same with `--audit-dsa`. Its `--constant-time` needs one more
+thing: Sign's rejection loop branches on secret-derived values by design, so
+only the library's own declarations of what is public can tell those branches
+from a leak. Build the library with them compiled in and pq-verify's shim in
+front of them; any other build is reported CANNOT VERIFY, never a pass
+([CONSTANT-TIME.md](CONSTANT-TIME.md)). For mldsa-native:
+
+```bash
+H=$(python3 -c 'import os, pq_verify; print(os.path.join(os.path.dirname(pq_verify.__file__), "harness"))')
+cc -O2 -g -fPIC -shared -DMLD_CONFIG_PARAMETER_SET=65 -DMLD_CONFIG_CT_TESTING_ENABLED \
+   -I "$H/ct" -I mldsa mldsa/mldsa_native.c "$H/ct/pqv_ct_shim.c" "$H/pqv_randombytes.c" \
+   -o libmldsa65-ct.so
+pq-verify --audit-dsa libmldsa65-ct.so ML-DSA-65 --constant-time --json report.json
+```
 
 **liboqs.** A library can hold more than one implementation: liboqs exports
 its public `OQS_*` API and, beside it, every backend it dispatches to
@@ -330,9 +344,9 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 80/80 each; edge cases 4,320/4,320 |
 | PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 10 NIST and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
-| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; 3 mutants | 1,503/1,503; every mutant caught |
-| pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,335/1,335; every mutant caught |
-| PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,065/1,065; the mutant caught |
+| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 3 mutants and 6 constant-time controls | 1,506/1,506; constant time 6/6; every mutant and control as specified |
+| pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
+| PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
@@ -550,6 +564,20 @@ division instructions for a reviewer instead; it cannot check key generation
 (the public matrix seed is derived from the secret seed); and it measures
 nothing physical. The report records exactly that scope, and without the flag
 claims nothing ([the report fields](ARCHITECTURE.md#side-channel-report-fields)).
+
+**`--audit-dsa ... --constant-time` does the same for ML-DSA's key generation
+and signing**, where it needs more: Sign branches on secret-derived values by
+design, at points where FIPS 204 lets a value be public. pq-verify therefore
+judges a build with the library's own declarations of what is public compiled
+in, through a shim that logs each one with its call site. Every memcheck report
+fails; every declassification must be at a known site, in its place in the
+attempt, with the value the public key and signature determine. Six controls
+planted in mldsa-native (a branch on a coefficient's sign, declassifications too
+early or of the wrong value, a secret table read, a hardware division) give
+exactly their specified results in CI. A build without those declarations is
+CANNOT VERIFY. [CONSTANT-TIME.md](CONSTANT-TIME.md) is the specification, with
+its scope: it does not see the values a computation produces, the leak Berzati
+et al. exploited on ML-DSA's signing.
 `--leakage` is not an exception: it is a design input computed from the NTT's
 structure, not an observation of execution.
 

@@ -375,21 +375,24 @@ more or less than FIPS 204 calls for. That is how the randomised
 only the seed-taking internal functions.
 
 <!-- vendor-audits-dsa:begin -->
-| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Accumulated | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 3/3 | 30 | 3/3 | 1,506/1,506 **VERIFIED** |
-| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 198 | 6/6 | 1,338/1,338 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 468 | 1/1 | 1,068/1,068 **VERIFIED** |
-| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | 468 | 2/2 | 1,068/1,068 **VERIFIED** |
-| liboqs 0.16.0 — mldsa-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
-| liboqs 0.16.0 — mldsa-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
+| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Accumulated | Constant time | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 3/3 | 6/6 | 30 | 9/9 | 1,506/1,506 **VERIFIED** |
+| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 198 | 6/6 | 1,338/1,338 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 468 | 1/1 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 468 | 2/2 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
 <!-- vendor-audits-dsa:end -->
 
 All three are byte-exact on every interface they expose. They differ in
 what they expose: mldsa-native implements every interface, including
 external μ and a native HashML-DSA API; pq-crystals ref has no external-μ
 API; PQClean has pure ML-DSA only. The "not applicable" column counts
-what each one's API cannot be asked.
+what each one's API cannot be asked. "Constant time" is
+`--audit-dsa ... --constant-time` ([below](#constant-time---constant-time)):
+only mldsa-native, built with its annotations and pq-verify's shim, can be
+judged; every other build records CANNOT VERIFY, never a pass.
 
 **Mutants.** An audit that passes correct libraries has shown half of what
 it must. Each row also carries mutants: a one-line change to the pinned
@@ -886,7 +889,12 @@ ML-KEM Encaps (m secret) and Decaps (the K-PKE secret key and z secret, on a
 valid and on a random ciphertext) run under Valgrind memcheck with the secret
 bytes marked; any branch or memory address that depends on them fails the
 stage and names the function. A self-test must first see a deliberate secret
-branch, or nothing is trusted.
+branch and a deliberate secret-indexed read whose value is discarded, or
+nothing is trusted. The second needs memcheck to keep every load: by default
+Valgrind's translator deletes a load whose value is never used before memcheck
+sees it, though the processor still performs it. Every run commits each
+instruction's result (`--vex-iropt-register-updates=allregs-at-each-insn`),
+and every row below reproduced unchanged with it.
 
 | Library | Sets | ct:encaps | ct:decaps | Division instructions |
 |---|---|---|---|---|
@@ -943,6 +951,39 @@ error vector would land in the same list. Every report outside it fails.
 | decryption returning early on a wrong weight (PQClean; liboqs AVX2) | ct:decaps |
 | implicit rejection picking `s` or `e` by pointer (PQClean; liboqs AVX2) | ct:decaps |
 | the syndrome reading a parity table indexed by the error vector (PQClean) | ct:encaps, in `syndrome`, outside the sampler |
+
+**ML-DSA** (`--audit-dsa ... --constant-time`; [CONSTANT-TIME.md](CONSTANT-TIME.md)
+is the specification). Sign's rejection loop branches on secret-derived
+values by design, so a driver outside the library cannot tell those branches
+from a leak. pq-verify judges a hooked build: the library's own
+declassifications compiled in (mldsa-native's `MLD_CONFIG_CT_TESTING_ENABLED`)
+and pq-verify's shim header in front of `<valgrind/memcheck.h>`, which logs
+each declassification with its call site and bytes. Every memcheck report
+fails. Every declassification must be at a site in the table for the pinned
+implementation, in its place in the attempt, and equal to the value the
+public key and signature determine wherever they do (on the accepting
+attempt: the challenge, `w0`, `w1` and the signature). Signing runs on
+messages chosen to include an acceptance at the first attempt, rejections and
+a hint-weight rejection. The policy judges every searched call outside
+Valgrind, 128 to 896 per set, and memcheck replays the chosen ones. Any other
+build is CANNOT VERIFY.
+
+| Library | Sets | ct:keyGen | ct:sign | Division instructions |
+|---|---|---|---|---|
+| mldsa-native `159509d`, hooked build | 44 / 65 / 87 | 3/3 | 3/3 | none |
+| every other ML-DSA row above | 44 / 65 / 87 | CANNOT VERIFY | CANNOT VERIFY | — |
+
+Controls planted in mldsa-native ML-DSA-65 (CONSTANT-TIME.md, section 4),
+each leaving every output correct:
+
+| Planted change | Result in CI |
+|---|---|
+| the norm check takes `abs()` with a branch on the coefficient's sign | ct:sign fails: branch on a secret in `mld_poly_chknorm_c` |
+| `z` declassified before its norm check | ct:sign fails: an undocumented site, `mld_compute_pack_z (z)`. memcheck is silent: the early declassification is what blinds it |
+| the signature declassified before the hint-weight check, on a message accepted at its first attempt | ct:sign fails on value alone: the bytes declassified are not the returned signature |
+| the same build, on a message with a hint-weight rejection | ct:sign fails on position: the signature is declassified in an attempt that was rejected |
+| a table read indexed by a secret coefficient, its value discarded | ct:sign fails: secret used as a memory address in `mld_poly_chknorm_c`. With Valgrind's default translation it passed |
+| `mld_decompose` divides with a hardware division (identical signatures) | passes, as specified: memcheck cannot see timing; the division list names `poly_decompose` and `poly_use_hint` |
 
 ## Any language, through Crucible-protocol harnesses
 
@@ -1026,9 +1067,10 @@ The symbol audits verify the **number-theoretic transform** against the FIPS
 library's whole scheme against the pinned vectors. None of them:
 
 - verify side-channel resistance: `--constant-time` checks ML-KEM's and
-  Classic McEliece's Encaps and Decaps for secret-dependent branches and
-  addresses, within the scope in [Constant time](#constant-time---constant-time),
-  and nothing else
+  Classic McEliece's Encaps and Decaps, and ML-DSA's key generation and
+  signing in a hooked build, for secret-dependent branches and addresses,
+  within the scope in [Constant time](#constant-time---constant-time), and
+  nothing else
 - constitute a security review of the surrounding implementation
 
 A passing NTT audit says the transform is arithmetically correct. It does not

@@ -2,8 +2,10 @@
  * Test shim for --constant-time: a fake ML-KEM-512-sized KEM with the
  * derandomised NIST API. It computes nothing real (outputs are XOR mixes),
  * only enough data flow for the secret inputs to reach its code. Built with
- * -DLEAK_BRANCH (encaps branches on m) or -DLEAK_INDEX (decaps indexes a
- * table with a byte of the secret key), it plants one leak each.
+ * -DLEAK_BRANCH (encaps branches on m), -DLEAK_INDEX (decaps indexes a table
+ * with a byte of the secret key) or -DLEAK_DISCARDED (decaps reads such a
+ * table and overwrites the register at once, the load Valgrind's default
+ * translation deletes), it plants one leak each.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -35,6 +37,20 @@ int shim_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *dk) {
     static uint8_t table[256];
     for (int i = 0; i < 256; i++) table[i] = (uint8_t)(i * 7);
     ss[1] ^= table[dk[3]];
+#endif
+#ifdef LEAK_DISCARDED
+    static const volatile uint8_t lut[256];
+    uint32_t t;
+#if defined(__x86_64__)
+    __asm__ volatile("movzbl (%1,%2), %0\n\txorl %0, %0"
+                     : "=&r"(t) : "r"(lut), "r"((uintptr_t)dk[3]) : "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("ldrb %w0, [%1, %2]\n\tmov %w0, #0"
+                     : "=&r"(t) : "r"(lut), "r"((uintptr_t)dk[3]));
+#else
+    t = lut[dk[3]];
+#endif
+    ss[2] ^= (uint8_t)t;
 #endif
     return 0;
 }
