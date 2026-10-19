@@ -1,44 +1,76 @@
 {
-  "tool": "pq-verify",
-  "version": "2.6.0",
-  "timestamp": "2026-06-25T22:57:30.732067+00:00",
-  "target": {
-    "so_path": "./libkyber_ntt.so",
-    "symbol": "ntt",
-    "algorithm": "ML-KEM-1024",
-    "q": 3329,
-    "n": 256,
-    "k": 4
+  "schema": "pq-verify/scan-result",
+  "schema_version": "1.1",
+  "timestamp": "2026-10-19T18:50:12.953345+00:00",
+  "summary": {
+    "targets": 1,
+    "checks_passed": 3,
+    "checks_total": 3,
+    "findings": 0,
+    "verified": true
   },
-  "results": {
-    "load": {
-      "ok": true
-    },
-    "kat": {
-      "name": "ML-KEM-1024",
-      "level": "NIST Level 5 (~AES-256)",
-      "random_fails": 0,
-      "boundary_fails": 0,
-      "verified": true
-    },
-    "params": {
-      "param_set": "ML-KEM-1024",
-      "beta": 874,
-      "classical": 255.20799999999997,
-      "quantum": 231.61,
-      "level": 5,
-      "meets_level": true
-    },
-    "kem": {
-      "name": "ML-KEM-1024",
-      "level": "NIST Level 5 (~AES-256)",
-      "recovery": "20/20",
-      "freivalds": "20/20",
-      "negative_control": true,
-      "verified": true
+  "targets": [
+    {
+      "name": "ntt_libmlkem1024.so:PQCLEAN_MLKEM1024_CLEAN_ntt",
+      "checks_passed": 3,
+      "checks_total": 3,
+      "findings": [],
+      "kat": {
+        "name": "ML-KEM-512/768/1024",
+        "level": "every parameter set (the NTT does not depend on module rank k)",
+        "random_fails": 0,
+        "boundary_fails": 0,
+        "verified": true
+      }
     }
+  ],
+  "side_channel": {
+    "measured": false,
+    "summary": "not measured \u2014 execution time, power and electromagnetic behaviour were not observed",
+    "detail": "pq-verify compares values against NIST's published answers. It does not execute the implementation under measurement and cannot detect a timing-dependent, cache-dependent or power-dependent implementation that computes the correct result. Establishing that requires leakage assessment against the deployed binary on the deployed hardware."
   },
-  "fingerprint_sha256": "30c772f92bc8a3faaf161d00814c782a2068195b4e859fe2e290656513dea2c0",
-  "verdict": "VERIFIED",
-  "note": "Sample report. ACVP (270/270) omitted here for offline generation; run pqverify_acvp() with kyber-py + network for full ACVP block."
+  "artifact": {
+    "bound": true,
+    "sha256": "44fec74c0bfb833697d350465dfb0749b02504e865211e7cc21279389c2da60f",
+    "path": "/home/user/pq-verify/build/libmlkem1024.so",
+    "summary": "sha256 44fec74c0bfb833697d350465dfb0749b02504e865211e7cc21279389c2da60f",
+    "detail": "The audited computation was performed by this file.",
+    "isolation": "child process",
+    "loaded_objects": [
+      {
+        "path": "/home/user/pq-verify/build/libmlkem1024.so",
+        "inode": 477742,
+        "sha256": "44fec74c0bfb833697d350465dfb0749b02504e865211e7cc21279389c2da60f"
+      },
+      {
+        "path": "/tmp/pqv-zgyru1v6/libpqv_conformity.so",
+        "inode": 2263291,
+        "sha256": "454a8b57d456201dbe521e8e2e9d4291d4a5da6f942a65125b600bb521816582"
+      },
+      {
+        "path": "/tmp/pqv-zgyru1v6/libpqv_cubic.so",
+        "inode": 2263287,
+        "sha256": "d96dd7ec6770c0e0b027f5495e99bb56c851011d642c5013d12c8f03896b3f2b"
+      },
+      {
+        "path": "/tmp/pqv-zgyru1v6/libpqv_gf2.so",
+        "inode": 2263246,
+        "sha256": "30f8b5e8f0e17d52dbcb024a58e3e37024a65d606e653b92610c10637cd36348"
+      },
+      {
+        "path": "/tmp/pqv-zgyru1v6/libpqv_zq.so",
+        "inode": 2263248,
+        "sha256": "cda96379b311883c4d41082841649c19e98515ae617c369d54aa866215244774"
+      },
+      {
+        "path": "/tmp/pqv-zgyru1v6/libpqv_zq32.so",
+        "inode": 2263254,
+        "sha256": "1da451a4b2fd6ff15cf729d68418fa10ea491cbd9d947081a0a84641e741d317"
+      }
+    ]
+  },
+  "coverage": {
+    "full": true,
+    "gaps": []
+  }
 }

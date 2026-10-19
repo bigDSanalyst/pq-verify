@@ -223,7 +223,11 @@ ntt = pqverify_load_so('/path/to/your_library.so', 'ntt_symbol')
 pqverify_scan(ntt)                 # full audit + KAT + leakage
 ```
 
-See `vendor_audit_template.py` for the complete "give us your .so → get a JSON report" workflow.
+`vendor_audit_template.py` runs the same scan through the command line,
+`pq-verify --audit-so`, which loads the library in a child process with a
+timeout and binds its JSON report to the library's sha256.
+`sample_report.json` is that report for PQClean's ML-KEM-1024 NTT. For the
+whole scheme against NIST's ACVP vectors, use `--audit-kem` or `--audit-dsa`.
 
 ### How `--audit-dsa` reaches each interface
 
@@ -425,8 +429,8 @@ tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor
 pyproject.toml             Build config + console-script entry point
 DEMO.ipynb                 One-click Colab demo → 1566/1566
-vendor_audit_template.py   Drop-in .so audit → JSON report
-sample_report.json         Example output (what your auditors receive)
+vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
+sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.13.0)
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
 CONSTANT-TIME.md / REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE / CITATION.cff
 ```
