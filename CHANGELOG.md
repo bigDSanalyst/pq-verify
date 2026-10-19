@@ -5,6 +5,17 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.0] — 2026-10-19
+
+A feature release. ML-DSA gains a constant-time check, judged against the
+library's own declassifications, and HQC's Reed–Muller decoder is checked
+against its own symmetries, with no reference decoder. Every constant-time
+check now also sees a secret-indexed load whose value is discarded, which
+memcheck missed before. No pinned vector or exit code changes. A verdict can:
+the HQC audit has a new stage and the constant-time checks are stricter, so a
+library that passed under 2.12.1 can fail under 2.13.0. Every recorded vendor
+row and mutant reproduced. The JSON reports gain fields and lose none.
+
 ### Added
 
 - **Constant time for ML-DSA**: `--audit-dsa ... --constant-time` runs key
@@ -81,6 +92,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   CITATION.cff only mentions it in a comment: cffconvert takes the first DOI
   under `identifiers` over the top-level `doi`, so listing it there would
   print this version beside a DOI that resolves to the latest release.
+- SECURITY.md: 2.13.x is supported; 2.12.x joins 2.10.x and 2.11.x in getting
+  security fixes only.
 
 ## [2.12.1] — 2026-10-19
 

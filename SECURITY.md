@@ -14,8 +14,8 @@ report and have not had a reply — no details.
 
 | Version | Supported |
 |---------|-----------|
-| 2.12.x  | yes |
-| 2.10.x, 2.11.x | security fixes only |
+| 2.13.x  | yes |
+| 2.10.x, 2.11.x, 2.12.x | security fixes only |
 | 2.9.x   | security fixes only — upgrade: its failing results exit 0 unless `--fail-on-finding` is passed |
 | < 2.9   | no — upgrade |
 
