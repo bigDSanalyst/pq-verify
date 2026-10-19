@@ -662,13 +662,17 @@ Archived on Zenodo with a citable DOI:
 }
 ```
 
-The DOI above resolves to this specific release. The companion paper is
+The DOI above resolves to this specific release. To cite pq-verify as a
+whole, whatever the version, use the all-versions DOI,
+[10.5281/zenodo.21739510](https://doi.org/10.5281/zenodo.21739510): it always
+resolves to the latest release. The companion paper is
 [10.5281/zenodo.19302050](https://doi.org/10.5281/zenodo.19302050).
 
 `CITATION.cff` names the version deposited on Zenodo. When a release is newer
-than the last deposit, the citation lags on purpose until a new one exists — a
-DOI that does not resolve to the version printed beside it would be worse than
-one a release behind. For the current version see
+than the last deposit, the version citation lags on purpose until a new one
+exists — a DOI that does not resolve to the version printed beside it would be
+worse than one a release behind. The all-versions DOI never lags. For the
+current version see
 [Releases](https://github.com/bigDSanalyst/pq-verify/releases) or the PyPI
 badge at the top.
 
