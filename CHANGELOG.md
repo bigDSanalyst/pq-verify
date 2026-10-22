@@ -31,7 +31,36 @@ versioning](https://semver.org/spec/v2.0.0.html).
   - **An unsolvable answer counted as a pass.** The Kyber, Dilithium and
     twiddle butterfly checks counted a system the solver called
     unsatisfiable as no mismatch, so a solver that never found a solution
-    passed all three. Now it fails them.
+    passed all three. `10,000 keygen instances` skipped such an instance,
+    though each of its systems has the secret as a solution. All four now
+    fail on it.
+  - **Four more checks could not fail on the case they name.**
+    - `Deterministic output hash` reported the hash of 1,000 engine
+      butterflies and passed whatever it was. It now has to equal the hash of
+      the same butterflies computed in Python.
+    - `1000-var DQBF stress` accepted any answer of satisfiable. Its system
+      is built around a known solution, and the assignment returned must now
+      satisfy it.
+    - `B4: Anomalous-trace curves` passed as 0/0 when it found no anomalous
+      curve. Each of its seven primes has one, so finding none now fails.
+    - The cubic count was checked against itself. `cubic_solution_count`
+      returns p² + (p−1)·B(a,b), `audit_cubic` compared it with that same
+      formula, and `audit_curve`'s row passed whatever it was. Both now
+      compare it with a count of x³ + y³ + z³ = 0 over F_p that does not use
+      the formula: directly for small p, and through y² = x³ − 432, the curve
+      the Fermat cubic is isomorphic to, for large p.
+  - **The BSGS point count could be wrong, and its "cannot decide" was
+    reported as a singular curve.** A point whose order was at most the
+    number of baby steps left orders out of the candidates: over F₁₉ it
+    counted 18 points on y² = x³ + 5, which has 27. Such points are now
+    skipped. It still does not use the quadratic twist, so on some curves
+    (j = 0 ones, for example) it cannot decide. The curve audit reported that
+    as "curve singular", passed, and dropped its Hasse check; both are now
+    recorded as checks that did not run. The curve audit uses BSGS only from
+    p = 10,000, where no wrong count turned up in 560 curves, and it runs
+    only inside the self-suite.
+  - The two "Coq certificate generated" checks passed without looking for
+    the file. They now check that it exists and is not empty.
   - **The ML-DSA full-NTT check was circular.** It compared 27 butterflies of
     pq-verify's own Python layer with the same formula, and sent one through
     the 32-bit engine. It now sends all 1,024 through that engine, 64 at a

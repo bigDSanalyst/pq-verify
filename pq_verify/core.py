@@ -1102,6 +1102,27 @@ def audit_dilithium(lib, n_bf=100):
                f'{mismatches} mismatches, {t_total:.0f}\u03bcs total', t_total)
     return r
 
+def _fermat_cubic_count(p):
+    """#{(x, y, z) in F_p^3 : x^3 + y^3 + z^3 = 0}, counted directly from how
+    many cube roots each value has: about (p/3)^2 steps. It is what
+    cubic_solution_count states as p^2 + (p-1) B(a, b), by a route that does
+    not use the decomposition."""
+    roots = {}
+    for x in range(p):
+        c = pow(x, 3, p)
+        roots[c] = roots.get(c, 0) + 1
+    return sum(nu * nv * roots.get((-u - v) % p, 0)
+               for u, nu in roots.items() for v, nv in roots.items())
+
+
+def _fermat_cubic_count_ec(p):
+    """The same count for large p (not 2 or 3), through the elliptic curve
+    the Fermat cubic is isomorphic to, y^2 = x^3 - 432: its cone has
+    1 + (p - 1) #E(F_p) points. None when the point count is not decided."""
+    n = _ec_count_bsgs(0, (-432) % p, p)
+    return None if n is None else 1 + (p - 1) * n
+
+
 def audit_cubic(lib, primes=None):
     r = AuditResult('Cubic B(a,b) + ECC')
     if primes is None:
@@ -1112,13 +1133,16 @@ def audit_cubic(lib, primes=None):
         if d.found:
             B = lib.compute_B(d.a, d.b)
             sol = lib.cubic_solution_count(p)
-            expected = p*p + (p-1)*B
-            if sol == expected: ok += 1
+            # cubic_solution_count returns p^2 + (p-1)B itself, so comparing
+            # the two, as this did until 2.13.0, checked nothing. The
+            # solutions are counted here directly.
+            if sol == p*p + (p-1)*B == _fermat_cubic_count(p): ok += 1
             else: r.add_finding('CRITICAL', f'B(a,b) mismatch at p={p}')
         elif p % 3 != 1:
             ok += 1  # Not decomposable, expected
     r.add_test(f'Cubic B(a,b) ({len(primes)} primes)', ok == len(primes),
-               f'{ok}/{len(primes)} verified')
+               f'{ok}/{len(primes)} equal to a direct count of '
+               f'x\u00b3+y\u00b3+z\u00b3=0')
 
     # ECC point validation
     ecc_ok = 0
@@ -1245,7 +1269,17 @@ def audit_curve(engines, a, b, p):
         if d.found:
             B = lib_c.compute_B(d.a, d.b)
             sol = lib_c.cubic_solution_count(p)
-            r.add_test('Cubic B(a,b)', True, f'B={B}, Sol\u2083={sol}')
+            # Sol3 = #{x^3+y^3+z^3=0} depends on p alone. It is counted
+            # directly for small p, and through y^2 = x^3 - 432 for large p.
+            # Until 2.13.0 this passed whatever the count was.
+            direct = (_fermat_cubic_count(p) if p < 3000 else
+                      _fermat_cubic_count_ec(p) if 10000 <= p < 10**14 else None)
+            if direct is None:
+                r.add_skip('Cubic B(a,b)',
+                           f'B={B}, Sol\u2083={sol}; no independent count at this p')
+            else:
+                r.add_test('Cubic B(a,b)', sol == direct,
+                           f'B={B}, Sol\u2083={sol}, counted {direct}')
 
             if a % p == 0 and b % p != 0:  # j=0 family
                 a_dec, b_dec = d.a, d.b
@@ -1309,8 +1343,12 @@ def audit_curve(engines, a, b, p):
     elif p < 10**14:
         _n = _ec_count_bsgs(a % p, b % p, p)
         if _n is None:
-            r.add_test('Anomalous-trace check (BSGS)', True,
-                       'curve singular \u2014 trace count not applicable')
+            # Not singular: that case returned above. The points sampled did
+            # not single out the group order (this BSGS does not use the
+            # quadratic twist, which Mestre's method needs to decide every
+            # curve), so there is no trace to check.
+            r.add_skip('Anomalous-trace check (BSGS)',
+                       'group order not decided, so no trace to check')
         else:
             _t = p + 1 - _n
             count_trace = _t
@@ -1326,7 +1364,7 @@ def audit_curve(engines, a, b, p):
                            f'#E={_n}, t={_t} \u2014 near-anomalous')
             else:
                 r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t={_t} \u2014 safe (Mestre BSGS, exact)')
+                           f'#E={_n}, t={_t} \u2014 safe (BSGS, exact)')
     else:
         r.add_test('Anomalous-trace check', True,
                    'p > 10\u00b9\u2074: SEA algorithm needed for crypto-size primes')
@@ -1403,6 +1441,9 @@ def audit_curve(engines, a, b, p):
         if not hasse_ok:
             r.add_finding('CRITICAL', f'pq-verify point count is wrong: |t|={abs(trace)} '
                           f'> 2\u221ap={hasse_bound} is impossible (Hasse 1933)')
+    elif p < 10**14:
+        r.add_skip('Hasse bound |t| \u2264 2\u221ap',
+                   'group order not decided, so no trace to check')
 
     return r
 
@@ -1776,13 +1817,13 @@ def audit_keygen(lib, n_inst=10000):
             lib.zq_add_equation(ctypes.byref(s), ca, rhs % Q)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
         total_us += res.solve_time_us
-        if res.satisfiable != 1:
-            pass
-        elif any(res.assignment[j] != sv[j][0] for j in range(k)):
+        # The system holds by construction (rhs = A.s), so an answer of
+        # unsatisfiable is a wrong answer, not one to skip.
+        if res.satisfiable != 1 or any(res.assignment[j] != sv[j][0] for j in range(k)):
             fails += 1
     elapsed = time.perf_counter() - t0
     r.add_test(f'{n_inst:,} keygen instances', fails == 0,
-               f'{fails} wrong solutions, {elapsed:.1f}s, {total_us:.0f}\u03bcs engine', total_us)
+               f'{fails} wrong or missing solutions, {elapsed:.1f}s, {total_us:.0f}\u03bcs engine', total_us)
     return r
 
 def audit_fips203_params():
@@ -1959,11 +2000,14 @@ def audit_unsat(lib):
     return r
 
 def audit_reproducibility_hash(lib):
-    """Deterministic SHA-256 hash over 1000 butterfly outputs."""
+    """SHA-256 over 1000 butterfly outputs of the engine, which must equal the
+    hash of the same butterflies computed in Python. Until 2.13.0 the hash
+    was reported and the check passed whatever it was."""
     r = AuditResult('Reproducibility Hash')
     random.seed(12345)
     Q = KYBER_Q
-    h = hashlib.sha256()
+    h = hashlib.sha256(); want = hashlib.sha256()
+    unsat = 0
     s = ZqS(); res = ZqR()
     for _ in range(1000):
         a_in = random.randint(0, Q-1)
@@ -1976,10 +2020,17 @@ def audit_reproducibility_hash(lib):
         lib.zq_add_sparse(ctypes.byref(s), vi, vc, 1, b_in)
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
+        unsat += not res.satisfiable
         h.update(res.assignment[2].to_bytes(2, 'big'))
         h.update(res.assignment[3].to_bytes(2, 'big'))
+        want.update(((a_in + w * b_in) % Q).to_bytes(2, 'big'))
+        want.update(((a_in - w * b_in) % Q).to_bytes(2, 'big'))
     digest = h.hexdigest()
-    r.add_test('Deterministic output hash', True, f'sha256={digest[:32]}...')
+    ok = unsat == 0 and digest == want.hexdigest()
+    r.add_test('Deterministic output hash', ok,
+               f'sha256={digest[:32]}..., ' + (
+                   'equal to the hash of the same butterflies in Python' if ok else
+                   f'differs from the Python butterflies ({unsat} unsatisfiable)'))
     return r
 
 # ================================================================
@@ -2033,7 +2084,8 @@ def audit_adversarial(engines):
     r.add_test(f'B3: Near-singular curves', c3 == t3, f'{c3}/{t3} HIGH+ flagged')
 
     c4 = 0; t4 = 0
-    for p in [17, 23, 29, 37, 41, 43, 53]:
+    primes4 = [17, 23, 29, 37, 41, 43, 53]
+    for p in primes4:
         for a in range(p):
             for b in range(p):
                 if (4*a**3 + 27*b**2) % p == 0: continue
@@ -2045,7 +2097,12 @@ def audit_adversarial(engines):
                     break
             else: continue
             break
-    r.add_test(f'B4: Anomalous-trace curves', c4 == t4, f'{c4}/{t4} CRITICAL flagged')
+    # Each of these primes has anomalous curves (trace 1 is inside the Hasse
+    # interval, and Deuring gives a curve for every trace there), so finding
+    # none is a failure, not a vacuous 0/0.
+    r.add_test(f'B4: Anomalous-trace curves', t4 == len(primes4) and c4 == t4,
+               f'{c4}/{t4} CRITICAL flagged; a curve found for {t4} of '
+               f'{len(primes4)} primes')
 
     if lib_zq:
         random.seed(1337)
@@ -3305,9 +3362,14 @@ def audit_dqbf_pipeline(engines):
         arr = (ctypes.c_int * len(zi))(*zi)
         lib_gf2.gf2_add_xor(ctypes.byref(ss), arr, len(zi), parity)
     lib_gf2.gf2_solve(ctypes.byref(ss), ctypes.byref(sr))
-    r.add_test(f'1000-var DQBF stress', sr.satisfiable == 1,
+    # Built around a known solution: it must be satisfiable, and the
+    # assignment returned must satisfy every equation.
+    s_ok = (sr.satisfiable == 1
+            and lib_gf2.gf2_verify(ctypes.byref(ss), sr.assignment) == 1)
+    r.add_test(f'1000-var DQBF stress', s_ok,
                f'{sn} vars, {len(sgf2["xor_equations"])} eqs, '
-               f'{sr.solve_time_us:.0f}us, free={sr.num_free_vars}')
+               f'{sr.solve_time_us:.0f}us, free={sr.num_free_vars}'
+               + (', assignment verified' if s_ok else ' \u2014 no verified solution'))
     return r
 
 
@@ -3590,7 +3652,9 @@ def main(quick=False):
     print("  Generating batch Coq certificate...")
     coq_file = gen_coq_cert(results)
     cert_r = AuditResult('Coq Certificate')
-    cert_r.add_test('Coq certificate generation', True, coq_file)
+    cert_r.add_test('Coq certificate generation',
+                    bool(coq_file) and os.path.isfile(coq_file)
+                    and os.path.getsize(coq_file) > 0, coq_file)
     import subprocess
     try:
         ok, detail = coq_check(coq_file)
@@ -4500,7 +4564,9 @@ def audit_engine6_coq():
     r = _AuditResult('Engine 6: Coq Certificate')
     import shutil, subprocess
     cert_file, _ = gen_engine6_coq_cert()
-    r.add_test('Coq certificate generated', True, cert_file)
+    r.add_test('Coq certificate generated',
+               bool(cert_file) and os.path.isfile(cert_file)
+               and os.path.getsize(cert_file) > 0, cert_file)
     coqc = shutil.which('coqc')
     if not coqc:
         r.add_skip('Conjecture 7 + genus-2 residue theorem verified by coqc',
@@ -4722,7 +4788,7 @@ def _finite(v):
 
 
 # ================================================================
-# EXACT ELLIPTIC-CURVE POINT COUNTING  (Mestre baby-step/giant-step)
+# ELLIPTIC-CURVE POINT COUNTING  (baby-step/giant-step; exact or None)
 # Replaces the naive O(p) count for p >= 10^4.  Exact for p up to
 # ~10^14 -- well past the auditor's range (e.g. the 23-bit Dilithium
 # prime).  For crypto-size primes one would need SEA; BSGS is the
@@ -4755,8 +4821,13 @@ def _tonelli(n, p):
 
 
 def _ec_count_bsgs(a, b, p):
-    """Exact #E(F_p) for y^2 = x^3 + ax + b via Mestre BSGS.
-    Returns None for a singular curve."""
+    """#E(F_p) for y^2 = x^3 + ax + b by baby-step giant-step on random
+    points, or None: for a singular curve, and when the points do not single
+    out the order. It does not use the quadratic twist, which Mestre's method
+    needs to decide every curve, so None happens on some curves with a small
+    group exponent (j = 0 ones, for example). A point whose order is at most
+    the baby-step count is not used: it would leave orders out of the
+    candidates and could give a wrong count, as it did for small p."""
     a %= p; b %= p
     if (4 * pow(a, 3, p) + 27 * pow(b, 2, p)) % p == 0:
         return None
@@ -4809,8 +4880,9 @@ def _ec_count_bsgs(a, b, p):
         baby = {}
         cur = None
         for j in range(w + 1):
-            if cur not in baby:
-                baby[cur] = j
+            if cur in baby:
+                return None        # order <= w: some orders would be missed
+            baby[cur] = j
             cur = add(cur, P)
         Q = mul(p + 1, P)
         wP = mul(w, P)
@@ -4826,18 +4898,19 @@ def _ec_count_bsgs(a, b, p):
             test = add(test, nwP)
         return found
 
-    P1 = rand_pt()
-    if P1 is None:
-        return None
-    cands = {N for N in candidates(P1) if mul(N, P1) is None}
+    cands = None
     tries = 0
-    while len(cands) != 1 and tries < 10:
+    while (cands is None or len(cands) != 1) and tries < 11:
         P = rand_pt()
         tries += 1
         if P is None:
             break
-        cands &= {N for N in candidates(P) if mul(N, P) is None}
-    return cands.pop() if len(cands) == 1 else None
+        found = candidates(P)
+        if found is None:
+            continue
+        found = {N for N in found if mul(N, P) is None}
+        cands = found if cands is None else cands & found
+    return cands.pop() if cands is not None and len(cands) == 1 else None
 
 
 def audit_stress(engines, e6_engines, quick=False):

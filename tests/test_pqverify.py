@@ -447,30 +447,131 @@ def test_mldsa_full_ntt_check_puts_every_butterfly_through_the_engine():
     assert all(t["passed"] for t in r.tests), r.tests
 
 
+class _Unsat:
+    """A real engine, except that every solve says unsatisfiable."""
+    def __init__(self, lib):
+        self._lib = lib
+
+    def __getattr__(self, name):
+        return getattr(self._lib, name)
+
+    def zq_solve(self, s, r):
+        r._obj.satisfiable = 0
+
+    def zq32_solve(self, s, r):
+        r._obj.satisfiable = 0
+
+
 def test_butterfly_checks_fail_when_the_solver_finds_no_solution():
     core, eng = _all_engines()
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = [core.audit_kyber(_Unsat(eng["zq"]), n_bf=5),
+                   core.audit_dilithium(_Unsat(eng["zq32"]), n_bf=5),
+                   core.audit_twiddle_completeness(_Unsat(eng["zq"])),
+                   core.audit_full_ntt_dilithium(_Unsat(eng["zq32"])),
+                   core.audit_keygen(_Unsat(eng["zq"]), n_inst=5),
+                   core.audit_reproducibility_hash(_Unsat(eng["zq"]))]
+    for r in results:
+        assert not all(t["passed"] for t in r.tests), r.engine
 
-    class Unsat:
-        """The real engine, except that every solve says unsatisfiable."""
+
+def test_reproducibility_hash_is_compared_with_the_python_butterflies():
+    """It reported a hash and passed whatever the hash was."""
+    core, eng = _all_engines()
+
+    class OffByOne(_Unsat):
+        def zq_solve(self, s, r):
+            self._lib.zq_solve(s, r)
+            r._obj.assignment[3] = (r._obj.assignment[3] + 1) % 3329
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        good = core.audit_reproducibility_hash(eng["zq"])
+        bad = core.audit_reproducibility_hash(OffByOne(eng["zq"]))
+    assert good.tests[0]["passed"], good.tests
+    assert not bad.tests[0]["passed"], bad.tests
+
+
+def test_cubic_counts_are_checked_against_a_count_that_does_not_use_the_formula():
+    """cubic_solution_count returns p^2 + (p-1)B(a,b) by definition, so the old
+    comparison with that formula could not fail, and audit_curve's row passed
+    whatever the count was. Sol3 is #{x^3+y^3+z^3 = 0} over F_p: counted
+    directly, and for large p through y^2 = x^3 - 432."""
+    core, eng = _all_engines()
+    c = eng.get("cubic")
+    if c is None:
+        pytest.skip("cubic engine unavailable")
+
+    def cone(p):                         # the definition, by brute force
+        cubes = [pow(x, 3, p) for x in range(p)]
+        return sum(1 for x in cubes for y in cubes for z in cubes
+                   if (x + y + z) % p == 0)
+
+    for p in (5, 7, 13, 19):
+        assert c.cubic_solution_count(p) == core._fermat_cubic_count(p) == cone(p), p
+    for p in (97, 331, 1051):
+        assert c.cubic_solution_count(p) == core._fermat_cubic_count(p), p
+    assert core._fermat_cubic_count_ec(8380417) == c.cubic_solution_count(8380417)
+
+    class WrongB:
+        """B(a,b) off by one, and the count consistent with it."""
         def __init__(self, lib):
             self._lib = lib
 
         def __getattr__(self, name):
             return getattr(self._lib, name)
 
-        def zq_solve(self, s, r):
-            r._obj.satisfiable = 0
+        def compute_B(self, a, b):
+            return self._lib.compute_B(a, b) + 1
 
-        def zq32_solve(self, s, r):
-            r._obj.satisfiable = 0
+        def cubic_solution_count(self, p):
+            n = self._lib.cubic_solution_count(p)
+            return n + (p - 1) if p % 3 == 1 else n
 
+    wrong = dict(eng, cubic=WrongB(c))
     with contextlib.redirect_stdout(io.StringIO()):
-        results = [core.audit_kyber(Unsat(eng["zq"]), n_bf=5),
-                   core.audit_dilithium(Unsat(eng["zq32"]), n_bf=5),
-                   core.audit_twiddle_completeness(Unsat(eng["zq"])),
-                   core.audit_full_ntt_dilithium(Unsat(eng["zq32"]))]
-    for r in results:
-        assert not all(t["passed"] for t in r.tests), r.engine
+        cubic = core.audit_cubic(WrongB(c))
+        curve = core.audit_curve(wrong, 2, 3, 97)
+        curve_big = core.audit_curve(wrong, 1, 6, 8380417)
+    assert not cubic.tests[0]["passed"], "a wrong B(a,b) passed audit_cubic"
+    for r in (curve, curve_big):
+        row = [t for t in r.tests if t["name"] == "Cubic B(a,b)"]
+        assert row and not row[0]["passed"], r.engine
+    with contextlib.redirect_stdout(io.StringIO()):
+        right = core.audit_curve(eng, 2, 3, 97)
+    assert [t["passed"] for t in right.tests if t["name"] == "Cubic B(a,b)"] == [True]
+
+
+def test_b4_fails_when_no_anomalous_curve_is_found(monkeypatch):
+    """Every prime B4 lists has anomalous curves, so a point count that never
+    finds one must fail it; it passed as 0/0."""
+    core, eng = _all_engines()
+    monkeypatch.setattr(core, "_count_points", lambda a, b, p: 0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_adversarial(eng)
+    row = [t for t in r.tests if t["name"].startswith("B4")]
+    assert row and not row[0]["passed"], row
+
+
+def test_bsgs_point_count_is_exact_or_undecided():
+    """It returned 18 points for y^2 = x^3 + 5 over F_19, which has 27: a point
+    of small order left orders out of its candidates. It may say it cannot
+    decide (it does not use the twist); it may not be wrong."""
+    import random
+    import pq_verify.core as core
+    rng = random.Random(11)
+    primes = [p for p in range(5, 400) if all(p % d for d in range(2, int(p ** .5) + 1))]
+    primes += [10007, 10093, 10267, 10303, 20011]
+    wrong = []
+    for p in primes:
+        curves = [(0, b) for b in (1, 2, 7, (-432) % p)] + [(1, 0), (2, 3)]
+        curves += [(rng.randrange(p), rng.randrange(p)) for _ in range(2)]
+        for a, b in curves:
+            if (4 * a ** 3 + 27 * b ** 2) % p == 0:
+                continue
+            got = core._ec_count_bsgs(a, b, p)
+            if got is not None and got != core._count_points(a, b, p):
+                wrong.append((p, a, b, got))
+    assert not wrong, wrong[:5]
 
 
 # ----------------------------------------------------------------------
