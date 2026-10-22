@@ -11,6 +11,34 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.23484320](https://doi.org/10.5281/zenodo.23484320).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.12.1's.
+- The linear-algebra engines' pivot order was described as Markowitz. It is a
+  static order by ascending column count, and the code now says so.
+
+### Fixed
+
+- **The self-suite's engine checks could pass without checking what their
+  names claim.** None of this reached a verdict on a library:
+  `--audit-so` judges an NTT with the known-answer and Freivalds checks, and
+  the other audits through their own drivers. The self-suite still has 160
+  checks, and all of them pass.
+  - **Input the engines could not hold was dropped, not refused.**
+    `zq_add_sparse` and `zq32_add_sparse` dropped a term whose variable was
+    outside the system and added the rest of the row. No engine's init
+    checked the variable count against what the engine holds, so a larger
+    count wrote past its buffers. No caller read the code any init or add
+    call returned. The engines now refuse both, and every init and add call
+    raises `EngineInputError` on a refusal.
+  - **An unsolvable answer counted as a pass.** The Kyber, Dilithium and
+    twiddle butterfly checks counted a system the solver called
+    unsatisfiable as no mismatch, so a solver that never found a solution
+    passed all three. Now it fails them.
+  - **The ML-DSA full-NTT check was circular.** It compared 27 butterflies of
+    pq-verify's own Python layer with the same formula, and sent one through
+    the 32-bit engine. It now sends all 1,024 through that engine, 64 at a
+    time since the engine holds 256 variables, as ML-KEM's 896 already go
+    through the 16-bit one. A wrong output anywhere in any layer fails it.
+    Its progress line said 7 layers and 896 butterflies, ML-KEM's numbers;
+    it now says 8 and 1,024.
 
 ## [2.13.0] — 2026-10-19
 

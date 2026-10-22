@@ -103,7 +103,7 @@ static inline void rcpy(uint64_t*d,const uint64_t*s,int nl){memcpy(d,s,sizeof(ui
 static inline void rswp(uint64_t*a,uint64_t*b,int nl){for(int l=0;l<nl;l++){uint64_t t=a[l];a[l]=b[l];b[l]=t;}}
 static inline int rzero(const uint64_t*r,int nl){for(int l=0;l<nl;l++)if(r[l])return 0;return 1;}
 static inline double dtus(struct timespec*a,struct timespec*b){return(b->tv_sec-a->tv_sec)*1e6+(b->tv_nsec-a->tv_nsec)/1e3;}
-void gf2_init(GF2System*s,int nv){memset(s,0,sizeof(GF2System));s->num_variables=nv;s->num_limbs=(nv+63)/64;}
+int gf2_init(GF2System*s,int nv){memset(s,0,sizeof(GF2System));if(nv<0||nv>GF2_MAX_VARS)return-1;s->num_variables=nv;s->num_limbs=(nv+63)/64;return 0;}
 int gf2_add_xor(GF2System*s,int*v,int nv,int p){if(s->num_equations>=GF2_MAX_EQS)return-1;int r=s->num_equations;memset(s->rows[r],0,sizeof(uint64_t)*GF2_ROW_LIMBS);for(int i=0;i<nv;i++){int var=v[i];if(var<0||var>=s->num_variables)return-2;s->rows[r][var/64]^=(1ULL<<(var%64));}s->parity[r]=p&1;s->num_equations++;return 0;}
 static void solve_direct(GF2System*sys,GF2Result*res){int n=sys->num_variables,m=sys->num_equations,nl=sys->num_limbs;int pr[GF2_MAX_VARS];memset(pr,-1,sizeof(int)*n);int cur=0,piv=0;for(int col=0;col<n&&cur<m;col++){int lb=col/64;uint64_t bt=1ULL<<(col%64);int p=-1;for(int r=cur;r<m;r++)if(sys->rows[r][lb]&bt){p=r;break;}if(p==-1)continue;if(p!=cur){rswp(sys->rows[cur],sys->rows[p],nl);int t=sys->parity[cur];sys->parity[cur]=sys->parity[p];sys->parity[p]=t;}pr[col]=cur;piv++;for(int r=0;r<m;r++){if(r==cur)continue;if(sys->rows[r][lb]&bt){rxor(sys->rows[r],sys->rows[cur],nl);sys->parity[r]^=sys->parity[cur];}}cur++;}res->satisfiable=1;for(int r=0;r<m;r++)if(rzero(sys->rows[r],nl)&&sys->parity[r]){res->satisfiable=0;break;}if(res->satisfiable){memset(res->assignment,0,sizeof(int)*n);for(int c=n-1;c>=0;c--){if(pr[c]==-1)continue;int r=pr[c],val=sys->parity[r];for(int c2=c+1;c2<n;c2++)if(sys->rows[r][c2/64]&(1ULL<<(c2%64)))val^=res->assignment[c2];res->assignment[c]=val&1;}}res->num_pivots=piv;res->num_free_vars=n-piv;memcpy(res->pivot_row,pr,sizeof(int)*n);res->used_m4ri=0;}
 static void solve_m4ri(GF2System*sys,GF2Result*res){int n=sys->num_variables,m=sys->num_equations,nl=sys->num_limbs,k=M4RI_K;int pr[GF2_MAX_VARS];memset(pr,-1,sizeof(int)*n);uint64_t T[64][GF2_ROW_LIMBS];int Tp[64];int cur=0,pivs=0,mblk=0;for(int ci=0;ci<n;ci+=k){int bk=(ci+k<=n)?k:(n-ci),bp=0;int bpr[8],bpc[8];for(int j=0;j<bk&&cur<m;j++){int col=ci+j,lb=col/64;uint64_t bt=1ULL<<(col%64);int p=-1;for(int r=cur;r<m;r++)if(sys->rows[r][lb]&bt){p=r;break;}if(p==-1)continue;if(p!=cur){rswp(sys->rows[cur],sys->rows[p],nl);int t=sys->parity[cur];sys->parity[cur]=sys->parity[p];sys->parity[p]=t;}for(int r=cur+1;r<m;r++)if(sys->rows[r][lb]&bt){rxor(sys->rows[r],sys->rows[cur],nl);sys->parity[r]^=sys->parity[cur];}pr[col]=cur;bpc[bp]=col;bpr[bp]=cur;bp++;pivs++;cur++;}if(bp==0)continue;for(int p=bp-1;p>=1;p--){int col=bpc[p],lb=col/64;uint64_t bt=1ULL<<(col%64);for(int p2=0;p2<p;p2++)if(sys->rows[bpr[p2]][lb]&bt){rxor(sys->rows[bpr[p2]],sys->rows[bpr[p]],nl);sys->parity[bpr[p2]]^=sys->parity[bpr[p]];}}mblk++;memset(T[0],0,sizeof(uint64_t)*GF2_ROW_LIMBS);Tp[0]=0;for(int mask=1;mask<(1<<bp);mask++){int hi=0;for(int b=bp-1;b>=0;b--)if(mask&(1<<b)){hi=b;break;}int prev=mask^(1<<hi);rcpy(T[mask],T[prev],nl);rxor(T[mask],sys->rows[bpr[hi]],nl);Tp[mask]=Tp[prev]^sys->parity[bpr[hi]];}int bs=bpr[0];for(int r=0;r<bs;r++){int idx=0;for(int p=0;p<bp;p++){int c=bpc[p];if(sys->rows[r][c/64]&(1ULL<<(c%64)))idx|=(1<<p);}if(idx==0)continue;rxor(sys->rows[r],T[idx],nl);sys->parity[r]^=Tp[idx];}}res->satisfiable=1;for(int r=0;r<m;r++)if(rzero(sys->rows[r],nl)&&sys->parity[r]){res->satisfiable=0;break;}if(res->satisfiable){memset(res->assignment,0,sizeof(int)*n);for(int c=n-1;c>=0;c--){if(pr[c]==-1)continue;int r=pr[c],val=sys->parity[r];for(int c2=c+1;c2<n;c2++)if(sys->rows[r][c2/64]&(1ULL<<(c2%64)))val^=res->assignment[c2];res->assignment[c]=val&1;}}res->num_pivots=pivs;res->num_free_vars=n-pivs;memcpy(res->pivot_row,pr,sizeof(int)*n);res->used_m4ri=1;res->m4ri_blocks=mblk;}
@@ -162,7 +162,7 @@ typedef struct {
     int num_pivots, num_free_vars;
     int pivot_columns[ZQ_MAX_VARS];
     double solve_time_us;
-    int used_markowitz;
+    int used_colcount_order;
 } ZqResult;
 static inline uint16_t zq_sub(uint16_t a,uint16_t b,uint16_t q){return(uint16_t)(a>=b?a-b:q-b+a);}
 static inline uint16_t zq_mul(uint16_t a,uint16_t b,uint16_t q){return(uint16_t)(((uint32_t)a*(uint32_t)b)%q);}
@@ -181,9 +181,9 @@ t>>=16;return t>=q?t-q:t;}
 static inline uint16_t _mmul(uint16_t a,uint16_t b,uint16_t q){return _mred((uint32_t)a*(uint32_t)b,q);}
 static inline uint16_t _mto(uint16_t a,uint16_t q){return _mred((uint32_t)a*_mq_r2,q);}
 static inline uint16_t _mfr(uint16_t a,uint16_t q){return _mred(a,q);}
-void zq_init(ZqSystem*s,int nv,uint16_t q){memset(s,0,sizeof(ZqSystem));s->num_variables=nv;s->q=(q==0)?3329:q;}
+int zq_init(ZqSystem*s,int nv,uint16_t q){memset(s,0,sizeof(ZqSystem));s->q=(q==0)?3329:q;if(nv<0||nv>ZQ_MAX_VARS)return-1;s->num_variables=nv;return 0;}
 int zq_add_equation(ZqSystem*s,const uint16_t*c,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;int i=s->num_equations;for(int j=0;j<s->num_variables;j++)s->coefficients[i][j]=c[j]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
-int zq_add_sparse(ZqSystem*s,const int*vi,const uint16_t*vc,int nt,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint16_t)*s->num_variables);for(int t=0;t<nt;t++){int v=vi[t];if(v>=0&&v<s->num_variables)s->coefficients[i][v]=vc[t]%s->q;}s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
+int zq_add_sparse(ZqSystem*s,const int*vi,const uint16_t*vc,int nt,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;for(int t=0;t<nt;t++)if(vi[t]<0||vi[t]>=s->num_variables)return-2;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint16_t)*s->num_variables);for(int t=0;t<nt;t++)s->coefficients[i][vi[t]]=vc[t]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
 int zq_add_ntt_butterfly(ZqSystem*s,int vie,int vio,int voe,int voo,uint16_t w){uint16_t q=s->q;int v[4];uint16_t c[4];v[0]=voe;c[0]=1;v[1]=vie;c[1]=zq_neg(1,q);v[2]=vio;c[2]=zq_neg(w,q);if(zq_add_sparse(s,v,c,3,0)<0)return-1;v[0]=voo;c[0]=1;v[1]=vie;c[1]=zq_neg(1,q);v[2]=vio;c[2]=w;if(zq_add_sparse(s,v,c,3,0)<0)return-1;return 0;}
 void zq_solve(ZqSystem*sys,ZqResult*r){
 struct timespec t0,t1;clock_gettime(CLOCK_MONOTONIC,&t0);
@@ -194,7 +194,8 @@ static uint16_t rhs[ZQ_MAX_EQUATIONS];
 /* Convert to Montgomery domain */
 for(int i=0;i<m;i++){for(int j=0;j<n;j++)mat[i][j]=_mto(sys->coefficients[i][j],q);
 rhs[i]=_mto(sys->rhs[i],q);}
-/* Markowitz: column NNZ counts, sort ascending (zeros last) */
+/* Column order: ascending nonzero count, counted once before elimination
+   (empty columns last). A static order, not Markowitz pivoting. */
 int cnnz[ZQ_MAX_VARS],cord[ZQ_MAX_VARS];
 memset(cnnz,0,sizeof(int)*n);
 for(int i=0;i<m;i++)for(int j=0;j<n;j++)if(mat[i][j])cnnz[j]++;
@@ -202,7 +203,7 @@ for(int i=0;i<n;i++)cord[i]=i;
 for(int i=1;i<n;i++){int tmp=cord[i],tv=cnnz[tmp]?cnnz[tmp]:ZQ_MAX_EQUATIONS+1;
 int j=i-1;while(j>=0){int cv=cnnz[cord[j]]?cnnz[cord[j]]:ZQ_MAX_EQUATIONS+1;
 if(cv<=tv)break;cord[j+1]=cord[j];j--;}cord[j+1]=tmp;}
-/* Gaussian elimination: Markowitz order, Montgomery mul, zero-skip */
+/* Gaussian elimination in that column order, Montgomery mul, zero-skip */
 int pr=0,rank=0,pc[ZQ_MAX_VARS];memset(pc,-1,sizeof(int)*n);
 for(int ci=0;ci<n&&pr<m;ci++){
 int col=cord[ci];if(cnnz[col]==0)break;/* early term: remaining cols empty */
@@ -226,7 +227,7 @@ pc[rank]=col;r->pivot_columns[rank]=col;pr++;rank++;}
 /* SAT check (0 in Montgomery ↔ 0 in regular domain) */
 r->satisfiable=1;
 for(int row=pr;row<m;row++){if(rhs[row]!=0){r->satisfiable=0;break;}}
-r->num_pivots=rank;r->num_free_vars=n-rank;r->used_markowitz=1;
+r->num_pivots=rank;r->num_free_vars=n-rank;r->used_colcount_order=1;
 /* Back-substitute: RREF means pivot cols are unit vectors → assignment = from_mont(rhs) */
 if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_mfr(rhs[i],q);}
@@ -325,7 +326,7 @@ typedef struct {
 typedef struct {
     int satisfiable;uint32_t assignment[ZQ32_MAX_VARS];
     int num_pivots;int num_free_vars;int pivot_columns[ZQ32_MAX_VARS];double solve_time_us;
-    int used_markowitz;
+    int used_colcount_order;
 } Zq32Result;
 static inline uint32_t zq32_sub(uint32_t a,uint32_t b,uint32_t q){return a>=b?a-b:q-b+a;}
 static inline uint32_t zq32_mul(uint32_t a,uint32_t b,uint32_t q){return(uint32_t)(((uint64_t)a*(uint64_t)b)%q);}
@@ -344,9 +345,9 @@ t>>=32;return(uint32_t)(t>=q?t-q:t);}
 static inline uint32_t _m32mul(uint32_t a,uint32_t b,uint32_t q){return _m32red((uint64_t)a*(uint64_t)b,q);}
 static inline uint32_t _m32to(uint32_t a,uint32_t q){return _m32red((uint64_t)a*_m32_r2,q);}
 static inline uint32_t _m32fr(uint32_t a,uint32_t q){return _m32red(a,q);}
-void zq32_init(Zq32System*s,int nv,uint32_t q){memset(s,0,sizeof(Zq32System));s->num_variables=nv;s->q=(q==0)?ZQ32_DEFAULT_Q:q;}
+int zq32_init(Zq32System*s,int nv,uint32_t q){memset(s,0,sizeof(Zq32System));s->q=(q==0)?ZQ32_DEFAULT_Q:q;if(nv<0||nv>ZQ32_MAX_VARS)return-1;s->num_variables=nv;return 0;}
 int zq32_add_equation(Zq32System*s,const uint32_t*c,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;int i=s->num_equations;for(int j=0;j<s->num_variables;j++)s->coefficients[i][j]=c[j]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
-int zq32_add_sparse(Zq32System*s,const int*vi,const uint32_t*vc,int nt,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint32_t)*s->num_variables);for(int t=0;t<nt;t++){int v=vi[t];if(v>=0&&v<s->num_variables)s->coefficients[i][v]=vc[t]%s->q;}s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
+int zq32_add_sparse(Zq32System*s,const int*vi,const uint32_t*vc,int nt,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;for(int t=0;t<nt;t++)if(vi[t]<0||vi[t]>=s->num_variables)return-2;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint32_t)*s->num_variables);for(int t=0;t<nt;t++)s->coefficients[i][vi[t]]=vc[t]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
 int zq32_add_ntt_butterfly(Zq32System*s,int vie,int vio,int voe,int voo,uint32_t w){uint32_t q=s->q;int v[3];uint32_t c[3];v[0]=voe;c[0]=1;v[1]=vie;c[1]=zq32_neg(1,q);v[2]=vio;c[2]=zq32_neg(w,q);if(zq32_add_sparse(s,v,c,3,0)<0)return-1;v[0]=voo;c[0]=1;v[1]=vie;c[1]=zq32_neg(1,q);v[2]=vio;c[2]=w;if(zq32_add_sparse(s,v,c,3,0)<0)return-1;return 0;}
 void zq32_solve(Zq32System*sys,Zq32Result*r){
 struct timespec t0,t1;clock_gettime(CLOCK_MONOTONIC,&t0);
@@ -383,7 +384,7 @@ mat[row][col]=0;}
 pc[rank]=col;r->pivot_columns[rank]=col;pr++;rank++;}
 r->satisfiable=1;
 for(int row=pr;row<m;row++){if(rhs[row]!=0){r->satisfiable=0;break;}}
-r->num_pivots=rank;r->num_free_vars=n-rank;r->used_markowitz=1;
+r->num_pivots=rank;r->num_free_vars=n-rank;r->used_colcount_order=1;
 if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_m32fr(rhs[i],q);}
 clock_gettime(CLOCK_MONOTONIC,&t1);r->solve_time_us=(t1.tv_sec-t0.tv_sec)*1e6+(t1.tv_nsec-t0.tv_nsec)/1e3;}
@@ -740,7 +741,7 @@ class ZqR(ctypes.Structure):
     _fields_ = [("satisfiable",ctypes.c_int),("assignment",ctypes.c_uint16*2048),
                 ("num_pivots",ctypes.c_int),("num_free_vars",ctypes.c_int),
                 ("pivot_columns",ctypes.c_int*2048),("solve_time_us",ctypes.c_double),
-                ("used_markowitz",ctypes.c_int)]
+                ("used_colcount_order",ctypes.c_int)]
 
 class Zq32S(ctypes.Structure):
     _fields_ = [("coefficients",(ctypes.c_uint32*256)*512),("rhs",ctypes.c_uint32*512),
@@ -749,7 +750,7 @@ class Zq32R(ctypes.Structure):
     _fields_ = [("satisfiable",ctypes.c_int),("assignment",ctypes.c_uint32*256),
                 ("num_pivots",ctypes.c_int),("num_free_vars",ctypes.c_int),
                 ("pivot_columns",ctypes.c_int*256),("solve_time_us",ctypes.c_double),
-                ("used_markowitz",ctypes.c_int)]
+                ("used_colcount_order",ctypes.c_int)]
 
 class Decomp(ctypes.Structure):
     _fields_ = [("a",ctypes.c_int64),("b",ctypes.c_int64),("found",ctypes.c_bool)]
@@ -769,6 +770,30 @@ class ConformityCheck(ctypes.Structure):
                 ("cv_residual",ctypes.c_double),("ah_residual",ctypes.c_double),
                 ("ac_residual",ctypes.c_double),("all_pass",ctypes.c_int)]
 
+class EngineInputError(RuntimeError):
+    """An engine refused its input: a variable outside the system, a system
+    larger than the engine holds, or one equation too many. The refused row
+    is not in the system, so a solve that went on would answer for a smaller
+    system than the caller built: a check that passes on equations it never
+    had. bind_all makes every init and add call raise this, where before
+    they returned a code that no caller read."""
+    def __init__(self, fn, rc):
+        super().__init__(f"{fn} refused its input (returned {rc})")
+        self.rc = rc
+
+
+def _engine_rc(result, func, args):
+    if result < 0:
+        raise EngineInputError(getattr(func, "__name__", "engine call"), result)
+    return result
+
+
+def _checked(*fns):
+    for fn in fns:
+        fn.restype = ctypes.c_int
+        fn.errcheck = _engine_rc
+
+
 def bind_all(engines):
     if engines.get('gf2'):
         g = engines['gf2']
@@ -781,6 +806,7 @@ def bind_all(engines):
         g.gf2_enumerate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
                                      ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int]
         g.gf2_enumerate.restype = ctypes.c_int
+        _checked(g.gf2_init, g.gf2_add_xor)
 
     if engines.get('zq'):
         z = engines['zq']
@@ -802,6 +828,7 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint16), ctypes.c_int,
             ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint32]
         z.zq_freivalds_ntt.restype = ctypes.c_int
+        _checked(z.zq_init, z.zq_add_equation, z.zq_add_sparse, z.zq_add_ntt_butterfly)
 
     if engines.get('zq32'):
         z32 = engines['zq32']
@@ -816,6 +843,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
             ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
         z32.zq32_freivalds_ntt.restype = ctypes.c_int
+        _checked(z32.zq32_init, z32.zq32_add_equation, z32.zq32_add_sparse,
+                 z32.zq32_add_ntt_butterfly)
 
     if engines.get('cubic'):
         c = engines['cubic']
@@ -1039,7 +1068,7 @@ def audit_kyber(lib, n_bf=1000):
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
         t_total += res.solve_time_us
-        if res.satisfiable and (res.assignment[2] != exp_a or res.assignment[3] != exp_b):
+        if not res.satisfiable or res.assignment[2] != exp_a or res.assignment[3] != exp_b:
             mismatches += 1
     r.add_test(f'Kyber NTT butterfly ({n_bf})', mismatches == 0,
                f'{mismatches} mismatches, {t_total:.0f}\u03bcs total', t_total)
@@ -1067,7 +1096,7 @@ def audit_dilithium(lib, n_bf=100):
         lib.zq32_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq32_solve(ctypes.byref(s), ctypes.byref(res))
         t_total += res.solve_time_us
-        if res.satisfiable and (res.assignment[2] != exp_a or res.assignment[3] != exp_b):
+        if not res.satisfiable or res.assignment[2] != exp_a or res.assignment[3] != exp_b:
             mismatches += 1
     r.add_test(f'Dilithium NTT butterfly ({n_bf})', mismatches == 0,
                f'{mismatches} mismatches, {t_total:.0f}\u03bcs total', t_total)
@@ -1854,7 +1883,7 @@ def audit_twiddle_completeness(lib):
         lib.zq_add_sparse(ctypes.byref(s), vi, vc, 1, b_in)
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, z)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable and res.assignment[2] != exp_a: tw_fails += 1
+        if not res.satisfiable or res.assignment[2] != exp_a: tw_fails += 1
         z = (z * Z) % Q
     r.add_test('128 twiddle butterfly tests', tw_fails == 0, f'{tw_fails} failures')
     return r
@@ -2815,8 +2844,47 @@ def _ntt_layer_dili(f_in, layer_idx, zetas):
         start += 2 * length
     return f
 
+def _verify_ntt_layer_dili(lib, f_in, f_out, layer_idx, zetas):
+    """Verify one ML-DSA NTT layer with libzq32, every butterfly.
+
+    ML-KEM's layer check fixes all 256 inputs and outputs in one system of
+    512 variables; libzq32 holds 256. A layer's 128 butterflies are
+    independent, so they are checked 64 at a time: each group's inputs and
+    outputs are fixed to f_in and f_out and its butterflies added, and the
+    group is satisfiable exactly when its outputs are its butterflies of its
+    inputs."""
+    Q = DILI_Q
+    lengths = [128, 64, 32, 16, 8, 4, 2, 1]
+    length = lengths[layer_idx]
+    z_idx = sum(256 // (2 * lengths[l]) for l in range(layer_idx)) + 1
+    flies, start = [], 0
+    while start < 256:
+        z = zetas[z_idx]; z_idx += 1
+        flies += [(j, j + length, z) for j in range(start, start + length)]
+        start += 2 * length
+    s = Zq32S(); res = Zq32R()
+    sat, us = True, 0.0
+    for g in range(0, len(flies), 64):
+        group = flies[g:g + 64]
+        pos = [p for a, b, _ in group for p in (a, b)]
+        at = {p: i for i, p in enumerate(pos)}
+        n = len(pos)
+        lib.zq32_init(ctypes.byref(s), 2 * n, Q)
+        for p in pos:
+            for var, val in ((at[p], f_in[p]), (n + at[p], f_out[p])):
+                vi = (ctypes.c_int*1)(var); vc = (ctypes.c_uint32*1)(1)
+                lib.zq32_add_sparse(ctypes.byref(s), vi, vc, 1, val % Q)
+        for a, b, z in group:
+            lib.zq32_add_ntt_butterfly(ctypes.byref(s), at[a], at[b],
+                                       n + at[a], n + at[b], z)
+        lib.zq32_solve(ctypes.byref(s), ctypes.byref(res))
+        sat = sat and res.satisfiable == 1
+        us += res.solve_time_us
+    return sat, len(flies), us
+
 def audit_full_ntt_dilithium(lib):
-    """Complete Dilithium NTT \u2014 8 layers (FIPS 204 complete transform)."""
+    """Complete Dilithium NTT \u2014 8 layers, 1024 butterflies (FIPS 204's
+    complete transform), each through libzq32."""
     r = AuditResult('Dilithium Full NTT')
     Q = DILI_Q
     zetas = _dilithium_zeta_table()
@@ -2825,26 +2893,27 @@ def audit_full_ntt_dilithium(lib):
     f_input = [random.randint(0, Q-1) for _ in range(256)]
     f_ntt = _reference_ntt_dili(f_input)
 
+    # Every butterfly of every layer goes through libzq32, as ML-KEM's go
+    # through libzq. Through 2.13.0 this compared 27 butterflies of the
+    # Python layer with the same formula, and one went through the engine.
     f_layer = list(f_input)
-    total_bf = 0; all_pass = True
+    total_bf = 0; total_us = 0.0; all_pass = True
+    lengths = [128, 64, 32, 16, 8, 4, 2, 1]
     for layer in range(8):
         f_next = _ntt_layer_dili(f_layer, layer, zetas)
-        lengths = [128, 64, 32, 16, 8, 4, 2, 1]
-        length = lengths[layer]
-        z_idx = sum(256 // (2 * lengths[l]) for l in range(layer)) + 1
-        z = zetas[z_idx]
-        n_bf = min(4, length)
-        for j in range(n_bf):
-            exp_a = (f_layer[j] + z * f_layer[j+length]) % Q
-            exp_b = (f_layer[j] + (Q - z) * f_layer[j+length]) % Q
-            if f_next[j] != exp_a or f_next[j+length] != exp_b:
-                all_pass = False
+        sat, n_bf, us = _verify_ntt_layer_dili(lib, f_layer, f_next, layer, zetas)
         total_bf += n_bf
+        total_us += us
+        if not sat:
+            all_pass = False
+            r.add_test(f'Dilithium NTT layer {layer} (len={lengths[layer]})', False,
+                       f'{n_bf} butterflies \u2014 FAILED')
         f_layer = f_next
 
     ntt_match = (f_layer == f_ntt)
-    r.add_test(f'8-layer Dilithium NTT ({total_bf} sample butterflies)', all_pass,
-               'all layers verified')
+    r.add_test(f'8-layer Dilithium NTT ({total_bf} butterflies)', all_pass,
+               f"{'all layers SAT' if all_pass else 'a layer is UNSAT'}, "
+               f'{total_us:.0f}\u03bcs total')
     r.add_test('Dilithium NTT matches FIPS 204 reference', ntt_match,
                '256 coefficients, layer-by-layer == direct')
 
@@ -2858,7 +2927,8 @@ def audit_full_ntt_dilithium(lib):
     lib.zq32_add_ntt_butterfly(ctypes.byref(s32), 0, 1, 2, 3, z)
     lib.zq32_solve(ctypes.byref(s32), ctypes.byref(r32))
     exp_a = (a_in + z * b_in) % Q
-    engine_ok = r32.satisfiable and r32.assignment[2] == exp_a
+    engine_ok = (r32.satisfiable and r32.assignment[2] == exp_a
+                 and r32.assignment[3] == (a_in + (Q - z) * b_in) % Q)
     r.add_test('libzq32 engine butterfly verified', engine_ok,
                f'z={z}, {r32.solve_time_us:.1f}\u03bcs')
     return r
@@ -3473,7 +3543,7 @@ def main(quick=False):
         print("  Running FULL Kyber NTT verification (7 layers, 896 butterflies)...")
         results.append(audit_full_ntt(engines['zq'])); gc.collect()
     if engines.get('zq32'):
-        print("  Running FULL Dilithium NTT verification (7 layers, 896 butterflies)...")
+        print("  Running FULL Dilithium NTT verification (8 layers, 1024 butterflies)...")
         results.append(audit_full_ntt_dilithium(engines['zq32'])); gc.collect()
 
     if engines.get('zq'):
@@ -4924,7 +4994,10 @@ def audit_stress(engines, e6_engines, quick=False):
         g = engines['gf2']
         s = GF2S(); g.gf2_init(ctypes.byref(s), 64)
         bad = (ctypes.c_int * 1)(9999)            # var index >> MAX_VARS
-        rc = g.gf2_add_xor(ctypes.byref(s), bad, 1, 0)
+        try:
+            rc = g.gf2_add_xor(ctypes.byref(s), bad, 1, 0)
+        except EngineInputError as exc:
+            rc = exc.rc
         r.add_test('GF(2) rejects out-of-range variable', rc < 0,
                    f'gf2_add_xor returned {rc} (expected <0)')
     if engines.get('zq'):
@@ -4933,7 +5006,10 @@ def audit_stress(engines, e6_engines, quick=False):
         ca = (ctypes.c_uint16 * 4)(1, 1, 1, 1)
         last = 0
         for _ in range(4097):                     # MAX_EQUATIONS = 4096
-            last = z.zq_add_equation(ctypes.byref(s), ca, 0)
+            try:
+                last = z.zq_add_equation(ctypes.byref(s), ca, 0)
+            except EngineInputError as exc:
+                last = exc.rc
         r.add_test('Z_3329 rejects equation overflow', last < 0,
                    f'4097th zq_add_equation returned {last} (expected <0)')
     out.append(r)

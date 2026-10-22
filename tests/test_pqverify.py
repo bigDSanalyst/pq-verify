@@ -372,6 +372,108 @@ def test_mldsa_freivalds_engine():
 
 
 # ----------------------------------------------------------------------
+# The engines refuse what they cannot hold, and the checks built on them
+# fail when their claim is false
+#
+# zq_add_sparse and zq32_add_sparse dropped a term whose variable was outside
+# the system and added the rest of the row; no init checked the variable
+# count against what its engine holds; and every init and add call returned
+# a code no caller read. The butterfly checks counted a system the solver
+# called unsatisfiable as no mismatch, and the ML-DSA full-NTT check compared
+# 27 butterflies of the Python layer with the same formula.
+# ----------------------------------------------------------------------
+
+def _all_engines():
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng = core.compile_all(); core.bind_all(eng)
+    if not all(eng.get(k) for k in ("gf2", "zq", "zq32")):
+        pytest.skip("an engine is unavailable (no C compiler)")
+    return core, eng
+
+
+def test_engines_refuse_what_they_cannot_hold():
+    import ctypes, re
+    core, eng = _all_engines()
+    systems = {"gf2": core.GF2S, "zq": core.ZqS, "zq32": core.Zq32S}
+
+    def init(name, s, nv):
+        fn = getattr(eng[name], f"{name}_init")
+        return fn(ctypes.byref(s), nv) if name == "gf2" else fn(ctypes.byref(s), nv, 0)
+
+    for name, macro, src in (("gf2", "GF2_MAX_VARS", core.GF2_C),
+                             ("zq", "ZQ_MAX_VARS", core.ZQ_C),
+                             ("zq32", "ZQ32_MAX_VARS", core.ZQ32_C)):
+        cap = int(re.search(rf"#define {macro} (\d+)", src).group(1))
+        s = systems[name]()
+        with pytest.raises(core.EngineInputError) as e:
+            init(name, s, cap + 1)
+        assert e.value.rc == -1, name
+        assert init(name, s, cap) == 0, name
+    for name, ty in (("zq", ctypes.c_uint16), ("zq32", ctypes.c_uint32)):
+        s = systems[name]()
+        init(name, s, 4)
+        add = getattr(eng[name], f"{name}_add_sparse")
+        with pytest.raises(core.EngineInputError) as e:
+            add(ctypes.byref(s), (ctypes.c_int * 2)(1, 4), (ty * 2)(1, 1), 2, 0)
+        assert e.value.rc == -2 and s.num_equations == 0, \
+            f"{name}: a row was added without its out-of-range term"
+        add(ctypes.byref(s), (ctypes.c_int * 2)(1, 3), (ty * 2)(1, 1), 2, 0)
+        assert s.num_equations == 1
+
+
+def test_mldsa_full_ntt_check_puts_every_butterfly_through_the_engine():
+    import random
+    core, eng = _all_engines()
+    z32, zetas, Q = eng["zq32"], core._dilithium_zeta_table(), core.DILI_Q
+    random.seed(20261022)
+    f = [random.randint(0, Q - 1) for _ in range(256)]
+    total = 0
+    for layer in range(8):
+        out = core._ntt_layer_dili(f, layer, zetas)
+        ok, n, _ = core._verify_ntt_layer_dili(z32, f, out, layer, zetas)
+        assert ok and n == 128, layer
+        total += n
+        for pos in (0, 129, 255):          # one wrong output, anywhere in the layer
+            bad = list(out)
+            bad[pos] = (bad[pos] + 1) % Q
+            assert not core._verify_ntt_layer_dili(z32, f, bad, layer, zetas)[0], \
+                (layer, pos)
+        f = out
+    assert total == 1024
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_full_ntt_dilithium(z32)
+    assert r.tests[0]["name"] == "8-layer Dilithium NTT (1024 butterflies)"
+    assert all(t["passed"] for t in r.tests), r.tests
+
+
+def test_butterfly_checks_fail_when_the_solver_finds_no_solution():
+    core, eng = _all_engines()
+
+    class Unsat:
+        """The real engine, except that every solve says unsatisfiable."""
+        def __init__(self, lib):
+            self._lib = lib
+
+        def __getattr__(self, name):
+            return getattr(self._lib, name)
+
+        def zq_solve(self, s, r):
+            r._obj.satisfiable = 0
+
+        def zq32_solve(self, s, r):
+            r._obj.satisfiable = 0
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = [core.audit_kyber(Unsat(eng["zq"]), n_bf=5),
+                   core.audit_dilithium(Unsat(eng["zq32"]), n_bf=5),
+                   core.audit_twiddle_completeness(Unsat(eng["zq"])),
+                   core.audit_full_ntt_dilithium(Unsat(eng["zq32"]))]
+    for r in results:
+        assert not all(t["passed"] for t in r.tests), r.engine
+
+
+# ----------------------------------------------------------------------
 # Prompt / response verification (pq_verify.response)
 #
 # The route to implementations that cannot be dlopen'd. The invariants that
