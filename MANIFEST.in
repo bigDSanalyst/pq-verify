@@ -4,6 +4,7 @@ include QUICKSTART.md
 include ARCHITECTURE.md
 include CFL.md
 include DQBF.md
+include ECC.md
 include HYBRID.md
 include DEMO.ipynb
 include vendor_audit_template.py

@@ -510,7 +510,10 @@ def test_cubic_counts_are_checked_against_a_count_that_does_not_use_the_formula(
         assert c.cubic_solution_count(p) == core._fermat_cubic_count(p) == cone(p), p
     for p in (97, 331, 1051):
         assert c.cubic_solution_count(p) == core._fermat_cubic_count(p), p
-    assert core._fermat_cubic_count_ec(8380417) == c.cubic_solution_count(8380417)
+    from pq_verify import ec
+    big = 8380417
+    n = ec.count(ec.Curve(0, (-432) % big, big))
+    assert 1 + (big - 1) * n.n == c.cubic_solution_count(big)
 
     class WrongB:
         """B(a,b) off by one, and the count consistent with it."""
@@ -552,26 +555,27 @@ def test_b4_fails_when_no_anomalous_curve_is_found(monkeypatch):
     assert row and not row[0]["passed"], row
 
 
-def test_bsgs_point_count_is_exact_or_undecided():
-    """It returned 18 points for y^2 = x^3 + 5 over F_19, which has 27: a point
-    of small order left orders out of its candidates. It may say it cannot
-    decide (it does not use the twist); it may not be wrong."""
+def test_point_counts_are_exact_and_decided_below_2_64():
+    """The baby-step giant-step count it replaces returned 18 points for
+    y^2 = x^3 + 5 over F_19, which has 27, and could not decide some j = 0
+    curves (it did not use the twist). Every count is now exact, decided,
+    and carries a certificate that check_count verifies."""
     import random
+    from pq_verify import ec
     import pq_verify.core as core
     rng = random.Random(11)
-    primes = [p for p in range(5, 400) if all(p % d for d in range(2, int(p ** .5) + 1))]
-    primes += [10007, 10093, 10267, 10303, 20011]
-    wrong = []
+    primes = [p for p in range(5, 400) if ec.is_prime(p)] + [10007, 10093, 10267, 10303, 20011]
     for p in primes:
         curves = [(0, b) for b in (1, 2, 7, (-432) % p)] + [(1, 0), (2, 3)]
         curves += [(rng.randrange(p), rng.randrange(p)) for _ in range(2)]
         for a, b in curves:
             if (4 * a ** 3 + 27 * b ** 2) % p == 0:
                 continue
-            got = core._ec_count_bsgs(a, b, p)
-            if got is not None and got != core._count_points(a, b, p):
-                wrong.append((p, a, b, got))
-    assert not wrong, wrong[:5]
+            E = ec.Curve(a % p, b % p, p)
+            got = ec.count(E)
+            assert got is not None and got.n == core._count_points(a, b, p), (p, a, b, got)
+            assert ec.check_count(E, got)
+    assert ec.count(ec.Curve(0, 5, 19)).n == 27
 
 
 # ----------------------------------------------------------------------
@@ -3398,7 +3402,7 @@ def test_hasse_bound_accepts_the_most_extreme_legal_curves(a, b, p, t):
     import pq_verify.core as core
     with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
         r = core.audit_curve({}, a, b, p)
-    hasse = next(x for x in r.tests if x["name"].startswith("Hasse bound"))
+    hasse = next(x for x in r.tests if x["name"] == "Point count")
     assert f"t={t}" in hasse["detail"] or f"t={-t}" in hasse["detail"]
     assert hasse["passed"] is True, hasse
     assert not [f for f in r.findings if "Hasse" in f["description"]
@@ -8093,3 +8097,264 @@ def test_cfl_benchmark_row_fails_when_the_round_trip_does(monkeypatch):
     with contextlib.redirect_stdout(io.StringIO()):
         r = core.audit_c_cfl({})
     assert [t["passed"] for t in r.tests] == [False]
+
+
+# ----------------------------------------------------------------------
+# Elliptic curves (ECC.md): exact point counts with certificates. The BSGS
+# count it replaces did not use the twist, so it could not decide some
+# curves; audit_curve passed its anomalous-trace rows whatever they found,
+# called p > 10^14 "SEA needed" and passed; and the cubic engine's Sol3
+# overflowed 64 bits past p ~ 3 x 10^9 and its search for p = a^2 + 3b^2
+# took sqrt(p/3) steps.
+# ----------------------------------------------------------------------
+
+def _ec():
+    from pq_verify import ec
+    return ec
+
+
+_SECP256K1 = (2**256 - 2**32 - 977, 7,
+              0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141)
+_P256 = (2**256 - 2**224 + 2**192 + 2**96 - 1,
+         0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b,
+         0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551)
+
+
+def test_ec_primality_factoring_and_roots_against_definitions():
+    E = _ec()
+    rng = _random.Random(41)
+    sieve = [True] * 20000
+    sieve[0] = sieve[1] = False
+    for i in range(2, 142):
+        if sieve[i]:
+            sieve[i * i::i] = [False] * len(sieve[i * i::i])
+    assert [n for n in range(20000) if E.is_prime(n)] == [n for n in range(20000) if sieve[n]]
+    # strong pseudoprimes to several bases, Carmichael numbers, a product
+    # of two large primes, and large primes
+    for n in (2047, 1373653, 25326001, 3215031751, 2152302898747, 3474749660383,
+              341550071728321, 3825123056546413051, 318665857834031151167461,
+              3317044064679887385961981, 561, 41041, 825265, 321197185, 5394826801,
+              (2**61 - 1) * (2**89 - 1)):
+        assert not E.is_prime(n), n
+    for n in (2**61 - 1, 2**89 - 1, 2**127 - 1, 2**521 - 1, 2**255 - 19,
+              _SECP256K1[0], _SECP256K1[2], _P256[0], _P256[2]):
+        assert E.is_prime(n), n
+    for _ in range(150):
+        n = rng.randrange(1, 2**62)
+        f = E.factor(n)
+        assert _math_prod(q ** e for q, e in f.items()) == n and all(E.is_prime(q) for q in f)
+    for p in (5, 13, 97, 1009, 2**61 - 1, _P256[0]):
+        for _ in range(20):
+            a = rng.randrange(p)
+            r = E.sqrt_mod(a, p)
+            assert (r is None) == (pow(a, (p - 1) // 2, p) == p - 1)
+            assert r is None or r * r % p == a
+    for p in [q for q in range(5, 3000) if E.is_prime(q)] + [2**61 - 1, _SECP256K1[0]]:
+        for d in (1, 3):
+            c = E.cornacchia(d, p)
+            assert (c is not None) == ((p % 4 == 1) if d == 1 else (p % 3 == 1)), (d, p)
+            assert c is None or c[0] ** 2 + d * c[1] ** 2 == p and min(c) > 0
+
+
+def _math_prod(xs):
+    out = 1
+    for x in xs:
+        out *= x
+    return out
+
+
+def _brute_count(a, b, p):
+    sq = {}
+    for y in range(p):
+        sq[y * y % p] = sq.get(y * y % p, 0) + 1
+    return 1 + sum(sq.get((x ** 3 + a * x + b) % p, 0) for x in range(p))
+
+
+def test_ec_counts_by_every_method_equal_a_direct_count():
+    E = _ec()
+    rng = _random.Random(42)
+    seen = set()
+    for trial in range(60):
+        p = E.NAIVE_LIMIT + 1
+        while not E.is_prime(p):
+            p = rng.randrange(E.NAIVE_LIMIT, 2 * E.NAIVE_LIMIT)
+        kind = trial % 3
+        while True:
+            a = 0 if kind == 0 else rng.randrange(p)
+            b = 0 if kind == 1 else rng.randrange(p)
+            if (a, b) != (0, 0) and (4 * a ** 3 + 27 * b * b) % p:
+                break
+        c = E.Curve(a, b, p)
+        got = E.count(c, _random.Random(trial))
+        assert got is not None and got.n == _brute_count(a, b, p), (c, got)
+        assert E.check_count(c, got)
+        seen.add(got.method)
+    assert seen == {"cm", "orders"}
+
+
+def test_ec_twist_orders_and_cm_agree_with_baby_step_giant_step_at_63_bits(monkeypatch):
+    E = _ec()
+    rng = _random.Random(43)
+    for trial in range(4):
+        p = 4
+        while not E.is_prime(p):
+            p = rng.randrange(2**62, 2**63)
+        a, b = (0, rng.randrange(1, p)) if trial % 2 == 0 else (rng.randrange(1, p), 0)
+        c = E.Curve(a, b, p)
+        cm = E.count(c)
+        with monkeypatch.context() as m:
+            m.setattr(E, "_cm_traces", lambda curve: None)
+            bs = E.count(c)
+        assert cm.method == "cm" and bs.method == "orders" and cm.n == bs.n
+        assert E.check_count(c, cm) and E.check_count(c, bs)
+
+
+def test_ec_secp256k1_is_counted_and_p256_order_verified():
+    E = _ec()
+    p, b, n = _SECP256K1
+    c = E.Curve(0, b, p)
+    got = E.count(c)
+    assert got.method == "cm" and got.n == n and E.check_count(c, got)
+    p, b, n = _P256
+    c = E.Curve(p - 3, b, p)
+    v = E.verify_order(c, n)
+    assert v is not None and v.n == n and E.check_count(c, v)
+    assert E.verify_order(c, n + 2) is None
+    assert E.count(c) is None                 # a general curve at 256 bits: CANNOT VERIFY
+
+
+def test_ec_check_count_rejects_tampered_certificates():
+    E = _ec()
+    c = E.Curve(0, 5, 10007)                   # small: naive
+    good = E.count(c)
+    assert E.check_count(c, good)
+    assert not E.check_count(c, E.Count(good.n + 1, "naive", {"p": 10007}))
+    p, b, n = _SECP256K1
+    k1 = E.Curve(0, b, p)
+    cm = E.count(k1)
+    for other in sorted(p + 1 - t for t in E._cm_traces(k1)[0]):
+        if other != n:                         # another CM candidate, same evidence
+            assert not E.check_count(k1, E.Count(other, "cm", cm.certificate))
+    assert not E.check_count(k1, E.Count(n, "cm", dict(cm.certificate, points=[])))
+    u, v = cm.certificate["representation"][1:]
+    assert not E.check_count(k1, E.Count(n, "cm", dict(cm.certificate, representation=(3, u + 1, v))))
+    rng = _random.Random(44)
+    q = 4
+    while not E.is_prime(q):
+        q = rng.randrange(2**40, 2**41)
+    g = E.Curve(rng.randrange(q), rng.randrange(q), q)
+    o = E.count(g)
+    assert o.method == "orders" and E.check_count(g, o)
+    assert not E.check_count(g, E.Count(o.n + 2, "orders", o.certificate))
+    P, m, fac = o.certificate["E"][0]
+    lie_fac = dict(fac)
+    lie_fac[2] = lie_fac.get(2, 0) + 1
+    lie = [(P, m * 2, lie_fac)] + o.certificate["E"][1:]
+    assert not E.check_count(g, E.Count(o.n, "orders", dict(o.certificate, E=lie)))
+    assert not E.check_count(g, E.Count(o.n, "orders", dict(o.certificate, E=[], twist=[])))
+    with pytest.raises(E.ECError):
+        E.Curve(0, 0, 10007)                   # singular
+    with pytest.raises(E.ECError):
+        E.Curve(1, 1, 10001)                   # not prime
+
+
+def test_cubic_engine_decomposes_by_cornacchia_up_to_2_64_and_refuses_overflow():
+    E = _ec()
+    core, eng = _all_engines()
+    c = eng.get("cubic")
+    if c is None:
+        pytest.skip("cubic engine unavailable")
+    rng = _random.Random(45)
+    primes = [q for q in range(7, 2000) if E.is_prime(q) and q % 3 == 1]
+    for k in range(14, 64):
+        for _ in range(3):
+            q = 4
+            while not (E.is_prime(q) and q % 3 == 1):
+                q = rng.randrange(2**k, 2**(k + 1))
+            primes.append(q)
+    primes.append(18446744073709551557)        # the largest prime below 2^64
+    for q in primes:
+        if q % 3 != 1:
+            continue
+        d = c.find_decomp(q)
+        assert d.found and (d.a, d.b) == E.cornacchia(3, q), q
+        sol = c.cubic_solution_count(q)
+        exact = q * q + (q - 1) * c.compute_B(d.a, d.b)
+        assert sol == (exact if exact < 2**63 else -2), q
+    assert c.cubic_solution_count(18446744073709551557) == -2
+    for args, want in (((5, 1, 2, 2, 17), True), ((22, 1, 2, 2, 17), False),
+                       ((5, 18, 2, 2, 17), False), ((5, 1, 19, 2, 17), False),
+                       ((5, 1, 2, 19, 17), False)):
+        assert bool(c.ecc_point_valid(*args)) == want, args
+
+
+def test_cubic_jacobi_sum_gives_b():
+    import pq_verify.core as core
+    E = _ec()
+    for p in [q for q in range(7, 1500) if E.is_prime(q) and q % 3 == 1]:
+        c, d = core._cubic_jacobi_sum(p)
+        assert c % 3 == 2 and d % 3 == 0 and c * c - c * d + d * d == p, p
+        u, v = E.cornacchia(3, p)
+        bb = 2 * v * _sigma3(v) - (u - v) * _sigma3(u - v) - (u + v) * _sigma3(u + v)
+        assert 2 * c - d == bb, p
+
+
+def _sigma3(n):
+    r = n % 3
+    return 0 if r == 0 else (1 if r == 1 else -1)
+
+
+def test_curve_audit_rows_are_checks(monkeypatch):
+    import pq_verify.core as core
+    E = _ec()
+    _, eng = _all_engines()
+    names = ["Discriminant Δ ≠ 0", "j-invariant", "Point count",
+             "Twist: #E + #E′ = 2p + 2", "Cubic B(a,b)", "ECC point validation",
+             "Conformity D(t)", "Conservation law on family"]
+    for a, b, p in [(2, 2, 17), (2, 3, 97), (1, 6, 8380417)]:
+        r = core.audit_curve(eng, a, b, p)
+        assert [t["name"] for t in r.tests] == names and all(t["passed"] for t in r.tests), r.tests
+
+    def failing(a, b, p, mod, name, value):
+        with monkeypatch.context() as m:
+            m.setattr(mod, name, value)
+            r = core.audit_curve(eng, a, b, p)
+        return {t["name"] for t in r.tests if not t["passed"] and not t.get("skipped")}
+
+    off = lambda curve, rng=None, max_points=40: E.Count(curve.p + 1, "naive", {"p": curve.p})
+    assert "Point count" in failing(2, 3, 97, E, "count", off)
+    real_count = E.count
+
+    def twist_off(curve, rng=None, max_points=40):
+        got = real_count(curve, rng, max_points)
+        return got if curve.a == 2 else E.Count(got.n + 1, "naive", {"p": curve.p})
+    assert "Twist: #E + #E′ = 2p + 2" in failing(2, 3, 97, E, "count", twist_off)
+    j_off = property(lambda self: 5)
+    assert "j-invariant" in failing(2, 3, 97, E.Curve, "j", j_off)
+    real_valid = eng["cubic"].ecc_point_valid
+
+    class Lenient:
+        def __getattr__(self, n):
+            return getattr(eng["cubic"], n)
+
+        def ecc_point_valid(self, x, y, a, b, p):
+            return real_valid(x % p, y % p, a % p, b % p, p)
+    with monkeypatch.context() as m:
+        r = core.audit_curve(dict(eng, cubic=Lenient()), 2, 3, 97)
+    assert [t["passed"] for t in r.tests if t["name"] == "ECC point validation"] == [False]
+
+
+def test_curve_audit_checks_the_cubic_engine_where_sol3_overflows():
+    """Past p ~ 3 x 10^9, Sol3 = p^2 + (p-1)B does not fit 64 bits and the
+    engine refuses it. The row checked nothing there and was skipped, which
+    marked every self-suite run degraded (the adversarial suite audits
+    p ~ 10^15); it now checks the refusal and B against complex
+    multiplication."""
+    core, eng = _all_engines()
+    with _isolated_degraded():
+        for a, b, p in [(1, 0, 1000000000000091), (0, 7, 2**61 - 1), (1, 1, 2**61 - 1)]:
+            r = core.audit_curve(eng, a, b, p)
+            row = [t for t in r.tests if t["name"] == "Cubic B(a,b)"]
+            assert row and row[0]["passed"] is True and "refused" in row[0]["detail"], row
+            assert not any(t.get("skipped") for t in r.tests), r.tests
+        assert not core.DEGRADED["skipped_checks"]

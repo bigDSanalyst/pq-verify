@@ -16,6 +16,43 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Elliptic-curve point counts were not always decided, and five curve rows
+  could not fail.** The baby-step giant-step count did not use the quadratic
+  twist, so some curves (j = 0 ones, among them) were left undecided. The
+  curve audit's anomalous-trace rows passed whatever they found. Above
+  p = 10¹⁴, a row passed that said only that SEA would be needed. The
+  j-invariant, stability-margin and "Cubic analysis" rows passed
+  unconditionally. `pq_verify/ec.py` now counts points exactly, each count
+  with a certificate that `check_count` verifies from the curve alone
+  ([ECC.md](ECC.md)):
+  - complex multiplication for j = 0 and 1728 at any size, which counts
+    secp256k1 to its published order in a tenth of a second;
+  - exact point orders on the curve and its twist (Mestre's method) for
+    other curves below 2⁶⁴;
+  - `verify_order` for a published order, P-256's for one.
+
+  A general curve above 2⁶⁴ with no published order is CANNOT VERIFY.
+  Each curve's eight rows are now checks: the j-invariant against its
+  definition, the point count and the twist's count, each certified, with
+  #E + #E′ = 2p + 2, and the cubic count against complex multiplication.
+  Point validation runs at every p, where before it ran only for p ≡ 3 mod 4.
+  Anomalous and near-singular curves are findings, as before. The
+  self-suite still has 160 checks.
+- **The cubic engine overflowed and accepted unreduced points.**
+  - `cubic_solution_count` computed Sol₃ = p² + (p − 1)·B(a, b) in 64 bits,
+    wrong past p ≈ 3 × 10⁹. It now computes in 128 bits and returns −2 when
+    the count does not fit.
+  - `find_decomp` searched √(p/3) values for p = a² + 3b²; it is now
+    Cornacchia's algorithm, polylogarithmic, for any prime below 2⁶⁴.
+  - Its integer square root returned wrong roots from (2³² − 1)², and near
+    2⁶⁴ did not return.
+  - `ecc_point_valid` accepted coordinates and coefficients outside [0, p),
+    and an unreduced b gave the wrong right-hand side; it now rejects them.
+
+  Its audit now checks B(a, b) against the Jacobi sum J(χ, χ) at 21 primes,
+  and against complex multiplication at five primes of 41 to 63 bits. It
+  checks kG against `pq_verify.ec` for k = 0 to 40; the old check only
+  required 7G not to be the point at infinity.
 - **The CFL front end checked nothing it named.** Its lexer dropped
   characters it did not know. Its parser ended a CONTEXT at REQUIRE's closing
   brace, so a DEFINE after a REQUIRE was lost, and raised IndexError on input

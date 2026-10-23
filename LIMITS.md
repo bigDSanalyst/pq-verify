@@ -184,4 +184,7 @@ pq-verify's reference and the source it is pinned to would not show.
   The research track's DQBF stage decides XOR matrices, and matrices with
   clauses whose expansion has at most 2¹⁸ variables and clauses; a larger
   one is CANNOT VERIFY unless its XOR constraints alone refute it
-  ([DQBF.md](DQBF.md)).
+  ([DQBF.md](DQBF.md)). Its curve checks count points with certificates: a
+  general curve (j ≠ 0, 1728) above 2⁶⁴ is CANNOT VERIFY unless its order is
+  published, since Schoof–Elkies–Atkin is not implemented
+  ([ECC.md](ECC.md)).

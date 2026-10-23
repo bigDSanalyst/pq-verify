@@ -474,22 +474,56 @@ static inline uint64_t mod_mul(uint64_t a,uint64_t b,uint64_t p){return(uint64_t
 static inline uint64_t mod_add(uint64_t a,uint64_t b,uint64_t p){uint64_t r=a+b;return(r>=p||r<a)?r-p:r;}
 static inline uint64_t mod_sub(uint64_t a,uint64_t b,uint64_t p){return a>=b?a-b:p-b+a;}
 static uint64_t mod_pow(uint64_t base,uint64_t exp,uint64_t p){uint64_t r=1;base%=p;while(exp>0){if(exp&1)r=mod_mul(r,base,p);base=mod_mul(base,base,p);exp>>=1;}return r;}
-static uint64_t isqrt(uint64_t n){if(n<2)return n;uint64_t x=(uint64_t)sqrt((double)n);while(x*x>n)x--;while((x+1)*(x+1)<=n)x++;return x;}
+/* floor(sqrt(n)) for every 64-bit n: the squares are compared in 128 bits. */
+static uint64_t isqrt(uint64_t n){if(n<2)return n;uint64_t x=(uint64_t)sqrtl((long double)n);if(x>0xFFFFFFFFull)x=0xFFFFFFFFull;while((unsigned __int128)x*x>n)x--;while((unsigned __int128)(x+1)*(x+1)<=n)x++;return x;}
 static inline int sigma(int64_t n){int r=((n%3)+3)%3;return r==0?0:(r==1?1:-1);}
 typedef struct{int64_t a;int64_t b;bool found;}Decomp;
+/* A square root of n mod the odd prime p (Tonelli-Shanks), or UINT64_MAX. */
+static uint64_t sqrt_mod(uint64_t n,uint64_t p){
+    n%=p;if(n==0)return 0;
+    if(mod_pow(n,(p-1)/2,p)!=1)return UINT64_MAX;
+    uint64_t q=p-1;int s=0;while(!(q&1)){q>>=1;s++;}
+    uint64_t z=2;while(mod_pow(z,(p-1)/2,p)!=p-1)z++;
+    int m=s;uint64_t c=mod_pow(z,q,p),t=mod_pow(n,q,p),r=mod_pow(n,(q+1)/2,p);
+    while(t!=1){int i=0;uint64_t t2=t;while(t2!=1){t2=mod_mul(t2,t2,p);i++;}
+        uint64_t b=c;for(int k=0;k<m-i-1;k++)b=mod_mul(b,b,p);
+        m=i;c=mod_mul(b,b,p);t=mod_mul(t,c,p);r=mod_mul(r,b,p);}
+    return r;
+}
+/* p = a^2 + 3 b^2 with a, b > 0 for a prime p = 1 mod 3, by Cornacchia's
+   algorithm: polylogarithmic, where the search it replaced took sqrt(p/3)
+   steps. */
 Decomp find_decomp(uint64_t p){
     if(p%3!=1)return(Decomp){0,0,false};
-    int64_t lim=(int64_t)sqrt((double)p/3)+1;
-    for(int64_t b=1;b<=lim;b++){uint64_t rem=p-3*b*b;uint64_t a=isqrt(rem);if(a>0&&a*a==rem)return(Decomp){(int64_t)a,b,true};}
-    return(Decomp){0,0,false};
+    uint64_t r=sqrt_mod(p-3,p);
+    if(r==UINT64_MAX)return(Decomp){0,0,false};
+    if(r<p-r)r=p-r;
+    uint64_t x=p,y=r,lim=isqrt(p);
+    while(y>lim){uint64_t t=x%y;x=y;y=t;}
+    uint64_t rest=p-y*y;
+    if(rest%3)return(Decomp){0,0,false};
+    uint64_t v=isqrt(rest/3);
+    if(v*v!=rest/3||v==0||y==0)return(Decomp){0,0,false};
+    return(Decomp){(int64_t)y,(int64_t)v,true};
 }
 int64_t compute_B(int64_t a,int64_t b){return 2*b*sigma(b)-(a-b)*sigma(a-b)-(a+b)*sigma(a+b);}
+/* Sol3 = #{x^3+y^3+z^3 = 0 in F_p^3}, computed in 128 bits: -1 when p
+   has no decomposition, -2 when Sol3 does not fit in 64 bits. */
 int64_t cubic_solution_count(uint64_t p){
-    if(p==3)return 9;if(p%3!=1)return(int64_t)(p*p);
-    Decomp d=find_decomp(p);if(!d.found)return-1;
-    int64_t B=compute_B(d.a,d.b);return(int64_t)(p*p)+((int64_t)p-1)*B;
+    if(p>((uint64_t)1<<62))return-2;
+    if(p==3)return 9;
+    __int128 sol;
+    if(p%3!=1)sol=(__int128)p*p;
+    else{Decomp d=find_decomp(p);if(!d.found)return-1;
+        sol=(__int128)p*p+(__int128)((int64_t)p-1)*compute_B(d.a,d.b);}
+    if(sol>(__int128)INT64_MAX)return-2;
+    return(int64_t)sol;
 }
+/* (x, y) on y^2 = x^3 + ax + b over F_p, with every value in [0, p): an
+   unreduced coordinate is not a field element, and an unreduced b made the
+   right-hand side wrong. */
 bool ecc_point_valid(uint64_t x,uint64_t y,uint64_t a,uint64_t b,uint64_t p){
+    if(p<2||x>=p||y>=p||a>=p||b>=p)return false;
     uint64_t lhs=mod_mul(y,y,p);uint64_t x3=mod_mul(mod_mul(x,x,p),x,p);
     uint64_t rhs=mod_add(mod_add(x3,mod_mul(a,x,p),p),b,p);return lhs==rhs;
 }
@@ -1115,45 +1149,96 @@ def _fermat_cubic_count(p):
                for u, nu in roots.items() for v, nv in roots.items())
 
 
-def _fermat_cubic_count_ec(p):
-    """The same count for large p (not 2 or 3), through the elliptic curve
-    the Fermat cubic is isomorphic to, y^2 = x^3 - 432: its cone has
-    1 + (p - 1) #E(F_p) points. None when the point count is not decided."""
-    n = _ec_count_bsgs(0, (-432) % p, p)
-    return None if n is None else 1 + (p - 1) * n
+def _cubic_jacobi_sum(p):
+    """J(chi, chi) = sum over x in F_p of chi(x) chi(1 - x), chi a cubic
+    character (p = 1 mod 3), as (c, d) for c + d*omega, by the character sum
+    itself: about p steps. J is primary (c = 2, d = 0 mod 3), its norm
+    c^2 - cd + d^2 is p, and the Fermat cubic has p + 1 + 2 Re J projective
+    points (Ireland and Rosen, ch. 8), so B(a, b) = 2 Re J = 2c - d."""
+    from . import ec as EC
+    q = p - 1
+    g = next(g for g in range(2, p) if all(pow(g, q // f, p) != 1 for f in EC.factor(q)))
+    ind, x = [0] * p, 1
+    for k in range(q):
+        ind[x] = k
+        x = x * g % p
+    counts = [0, 0, 0]
+    for x in range(2, p):
+        counts[(ind[x] + ind[(1 - x) % p]) % 3] += 1
+    return counts[0] - counts[2], counts[1] - counts[2]
 
 
 def audit_cubic(lib, primes=None):
+    """The cubic engine (ECC.md): its count of x^3+y^3+z^3 = 0 against a
+    direct count and, through the Jacobi sum J(chi, chi), its B(a, b);
+    against complex multiplication for large primes; its point validation;
+    and its scalar multiplication against pq_verify.ec."""
+    from . import ec as EC
     r = AuditResult('Cubic B(a,b) + ECC')
     if primes is None:
         primes = [7, 13, 19, 37, 61, 97, 151, 199, 271, 331, 397, 463, 541, 601, 661, 751, 823, 907, 991, 1021, 1051]
     ok = 0
     for p in primes:
+        sol = lib.cubic_solution_count(p)
+        direct = _fermat_cubic_count(p)
+        if p % 3 != 1:
+            # No cubic structure: Sol3 = p^2.
+            ok += sol == p * p == direct
+            continue
         d = lib.find_decomp(p)
-        if d.found:
-            B = lib.compute_B(d.a, d.b)
-            sol = lib.cubic_solution_count(p)
-            # cubic_solution_count returns p^2 + (p-1)B itself, so comparing
-            # the two, as this did until 2.13.0, checked nothing. The
-            # solutions are counted here directly.
-            if sol == p*p + (p-1)*B == _fermat_cubic_count(p): ok += 1
-            else: r.add_finding('CRITICAL', f'B(a,b) mismatch at p={p}')
-        elif p % 3 != 1:
-            ok += 1  # Not decomposable, expected
-    r.add_test(f'Cubic B(a,b) ({len(primes)} primes)', ok == len(primes),
-               f'{ok}/{len(primes)} equal to a direct count of '
-               f'x\u00b3+y\u00b3+z\u00b3=0')
+        B = lib.compute_B(d.a, d.b) if d.found else None
+        c, e = _cubic_jacobi_sum(p)
+        jacobi = (c % 3 == 2 and e % 3 == 0 and c * c - c * e + e * e == p
+                  and B == 2 * c - e)
+        if d.found and d.a * d.a + 3 * d.b * d.b == p and \
+                sol == p * p + (p - 1) * B == direct and jacobi:
+            ok += 1
+        else:
+            r.add_finding('CRITICAL', f'B(a,b) mismatch at p={p}')
+    # Large primes, past a direct count, and past 64 bits for Sol3 ~ p^2,
+    # which the engine must refuse: its B(a, b) against complex
+    # multiplication on y^2 = x^3 - 432, whose count is p + 1 + B.
+    large = [1099511628401, 281474976710677, 72057594037928017,
+             2305843009213693951, 4611686018427388039]
+    big_ok = 0
+    for p in large:
+        E = EC.Curve(0, (-432) % p, p)
+        n = EC.count(E)
+        if n is None or not EC.check_count(E, n) or lib.cubic_solution_count(p) != -2:
+            continue
+        d = lib.find_decomp(p)
+        if p % 3 == 1:
+            big_ok += (d.found and d.a * d.a + 3 * d.b * d.b == p
+                       and lib.compute_B(d.a, d.b) == n.n - p - 1)
+        else:
+            big_ok += not d.found and n.n == p + 1
+    r.add_test(f'Cubic B(a,b) ({len(primes)} primes)',
+               ok == len(primes) and big_ok == len(large),
+               f'{ok}/{len(primes)} equal to a direct count of x\u00b3+y\u00b3+z\u00b3=0, '
+               f'with B = 2\u00b7Re J(\u03c7,\u03c7) from the character sum; at '
+               f'{big_ok}/{len(large)} primes of 41 to 63 bits, B = #E(y\u00b2=x\u00b3\u2212432) '
+               f'\u2212 p \u2212 1 by complex multiplication, and Sol\u2083, past 64 bits, refused')
 
-    # ECC point validation
-    ecc_ok = 0
-    for x, y, exp in [(5,1,True),(6,3,True),(10,6,True),(0,0,False)]:
-        v = bool(lib.ecc_point_valid(x, y, 2, 2, 17))
-        if v == exp: ecc_ok += 1
-    r.add_test('ECC point validation (y\u00b2=x\u00b3+2x+2 mod 17)', ecc_ok == 4, f'{ecc_ok}/4')
+    # ECC point validation, including values outside [0, p)
+    cases = [((5, 1, 2, 2, 17), True), ((6, 3, 2, 2, 17), True), ((10, 6, 2, 2, 17), True),
+             ((0, 0, 2, 2, 17), False), ((5 + 17, 1, 2, 2, 17), False),
+             ((5, 1 + 17, 2, 2, 17), False), ((5, 1, 2 + 17, 2, 17), False),
+             ((5, 1, 2, 2 + 17, 17), False)]
+    ecc_ok = sum(bool(lib.ecc_point_valid(*args)) == want for args, want in cases)
+    r.add_test('ECC point validation (y\u00b2=x\u00b3+2x+2 mod 17)', ecc_ok == len(cases),
+               f'{ecc_ok}/{len(cases)}, three with a value outside [0, p)')
 
-    # Scalar multiply
-    R = lib.ec_mul(ECPoint(5, 1, 0), 7, 2, 17)
-    r.add_test('ECC scalar multiply 7*G', not R.inf, f'({R.x},{R.y})')
+    # Scalar multiplication against pq_verify.ec: kG for k = 0..40 on a group
+    # of order 19.
+    E = EC.Curve(2, 2, 17)
+    G = (5, 1)
+    mul_ok = 0
+    for k in range(41):
+        R = lib.ec_mul(ECPoint(5, 1, 0), k, 2, 17)
+        want = E.mul(k, G)
+        mul_ok += (R.inf == 1 and want is None) or (not R.inf and (R.x, R.y) == want)
+    r.add_test('ECC scalar multiply 7*G', mul_ok == 41,
+               f'kG for k = 0..40 equal to pq_verify.ec in {mul_ok}/41, 19G = O')
     return r
 
 def audit_conformity(lib):
@@ -1238,7 +1323,13 @@ def audit_conformity(lib):
 # ================================================================
 
 def audit_curve(engines, a, b, p):
-    """Full curve audit per the integration plan."""
+    """A curve y^2 = x^3 + ax + b over F_p (ECC.md): nonsingular; its
+    j-invariant; its point count, and its twist's, each with a certificate
+    checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
+    its point validation; and the conformity gradient on its discriminant
+    family. Findings: singular, supersingular, anomalous and near-anomalous,
+    near-singular."""
+    from . import ec as EC
     r = AuditResult(f'Curve y\u00b2=x\u00b3+{a}x+{b} mod {p}')
     lib_c = engines.get('cubic')
     lib_cf = engines.get('conformity')
@@ -1251,139 +1342,113 @@ def audit_curve(engines, a, b, p):
     if not non_singular:
         r.add_finding('CRITICAL', 'Singular curve')
         return r
+    try:
+        E = EC.Curve(a % p, b % p, p)
+    except EC.ECError as e:
+        r.add_test('Prime field', False, str(e))
+        r.add_finding('CRITICAL', f'Not a curve over a prime field above 3: {e}')
+        return r
 
-    # j-invariant
-    j_inv = (-1728 * pow(4*a, 3, p) * pow(disc, p-2, p)) % p if p > 2 else 0
-    r.add_test('j-invariant', True, f'j={j_inv}')
-    # Supersingular (embedding degree <= 2, so MOV/Frey-Ruck applies). The
-    # j-invariant alone decides nothing: for p > 3, j = 0 is supersingular
-    # iff p = 2 mod 3 and j = 1728 iff p = 3 mod 4 (Deuring); any other j is
-    # decided below from the exact point count (trace = 0).
-    supersingular = p > 3 and ((j_inv == 0 and p % 3 == 2)
-                               or (j_inv == 1728 % p and p % 4 == 3))
-    count_trace = None
+    # j-invariant: it satisfies its definition j (4a^3 + 27b^2) = 6912 a^3,
+    # checked without the inverse that computes it; it is unchanged under
+    # (a, b) -> (u^4 a, u^6 b); and it is 0 or 1728 exactly when a or b is 0.
+    j_inv = E.j
+    defined = j_inv * (4 * E.a ** 3 + 27 * E.b ** 2) % p == 6912 * E.a ** 3 % p
+    iso = all(EC.Curve(pow(u, 4, p) * E.a % p, pow(u, 6, p) * E.b % p, p).j == j_inv
+              for u in (2, 3, 5) if u % p)
+    special = (j_inv == 0) == (E.a == 0) and (j_inv == 1728 % p) == (E.b == 0)
+    r.add_test('j-invariant', defined and iso and special,
+               f'j={j_inv}: j(4a\u00b3+27b\u00b2) = 6912a\u00b3, unchanged under '
+               f'isomorphism, 0 iff a = 0, 1728 iff b = 0'
+               + ('' if defined and iso and special else ' \u2014 NOT'))
+    # Supersingular (embedding degree <= 2, so MOV/Frey-Ruck applies). For
+    # p > 3, j = 0 is supersingular iff p = 2 mod 3 and j = 1728 iff
+    # p = 3 mod 4 (Deuring); any other j is decided by the count (trace 0).
+    supersingular = (j_inv == 0 and p % 3 == 2) or (j_inv == 1728 % p and p % 4 == 3)
 
-    # CUBIC (if p \u2261 1 mod 3)
-    if lib_c and p % 3 == 1:
-        d = lib_c.find_decomp(p)
-        if d.found:
-            B = lib_c.compute_B(d.a, d.b)
-            sol = lib_c.cubic_solution_count(p)
-            # Sol3 = #{x^3+y^3+z^3=0} depends on p alone. It is counted
-            # directly for small p, and through y^2 = x^3 - 432 for large p.
-            # Until 2.13.0 this passed whatever the count was.
-            direct = (_fermat_cubic_count(p) if p < 3000 else
-                      _fermat_cubic_count_ec(p) if 10000 <= p < 10**14 else None)
-            if direct is None:
-                r.add_skip('Cubic B(a,b)',
-                           f'B={B}, Sol\u2083={sol}; no independent count at this p')
-            else:
-                r.add_test('Cubic B(a,b)', sol == direct,
-                           f'B={B}, Sol\u2083={sol}, counted {direct}')
-
-            if a % p == 0 and b % p != 0:  # j=0 family
-                a_dec, b_dec = d.a, d.b
-                possible_traces = {2*a_dec, -2*a_dec,
-                                   a_dec + 3*b_dec, -(a_dec + 3*b_dec),
-                                   a_dec - 3*b_dec, -(a_dec - 3*b_dec)}
-                if 1 in possible_traces or -1 in possible_traces:
-                    sample_count = 1
-                    for x in range(min(p, 200)):
-                        rhs = (pow(x, 3, p) + b) % p
-                        if rhs == 0:
-                            sample_count += 1
-                        elif pow(rhs, (p-1)//2, p) == 1:
-                            sample_count += 2
-                    if p <= 200:
-                        actual_count = sample_count
-                        actual_trace = p + 1 - actual_count
-                        if actual_trace == 1:
-                            r.add_finding('CRITICAL',
-                                f'Anomalous curve: #E=p={p}, t=1 (Smart attack vulnerable)')
-                            r.add_test('Anomalous-trace check', True,
-                                       f'#E={actual_count}, t=1 \u2014 ANOMALOUS')
-                        else:
-                            r.add_test('Anomalous-trace check', True,
-                                       f'#E={actual_count}, t={actual_trace} (safe twist)')
-                    else:
-                        r.add_test('Anomalous trace set', True,
-                                   f'possible t \u2208 {sorted(possible_traces)}, includes \u00b11 \u2014 verify twist')
-                        r.add_finding('MEDIUM',
-                            f'j=0 curve with p admitting anomalous twist (t=\u00b11 in trace set) \u2014 verify which twist')
-                else:
-                    r.add_test('Anomalous-trace check', True,
-                               f'possible t \u2208 {sorted(possible_traces)}, no t=\u00b11 \u2192 not anomalous')
-    elif p % 3 != 1:
-        r.add_test('Cubic analysis', True, f'p\u2261{p%3} mod 3, no cubic structure')
-
-    # ANOMALOUS-TRACE DETECTION (general curves, naive counting for small p)
-    if p < 10000:
-        n = 1  # point at infinity
-        for x in range(p):
-            rhs = (pow(x, 3, p) + a*x + b) % p
-            if rhs == 0:
-                n += 1
-            elif pow(rhs, (p-1)//2, p) == 1:
-                n += 2
-        trace = p + 1 - n
-        count_trace = trace
-        if trace == 1 or n == p:
+    # POINT COUNT, certified, and the twist's
+    how = {'naive': 'direct count', 'cm': 'complex multiplication',
+           'orders': 'point orders on E and its twist'}
+    count = EC.count(E)
+    trace = None
+    if count is None:
+        r.add_skip('Point count', 'a general curve above 2^64: CANNOT VERIFY '
+                   'without SEA or a published order (ECC.md)')
+    else:
+        ok = EC.check_count(E, count)
+        trace = count.trace
+        r.add_test('Point count', ok,
+                   f'#E={count.n}, t={trace} by {how[count.method]}, certificate checked'
+                   if ok else f'#E={count.n}: its certificate is REJECTED')
+        if not ok:
+            r.add_finding('CRITICAL', f'pq-verify point count certificate rejected: #E={count.n}')
+        elif trace == 1:
             r.add_finding('CRITICAL',
-                f'Anomalous curve: #E={n}=p, trace=1 (Smart attack vulnerable)')
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t=1 \u2014 ANOMALOUS')
+                f'Anomalous curve: #E={count.n}=p, trace=1 (Smart attack vulnerable)')
         elif abs(trace) <= 2:
             r.add_finding('HIGH',
-                f'Near-anomalous curve: #E={n}, |t|={abs(trace)} (transfer attacks possible)')
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t={trace} \u2014 near-anomalous')
-        else:
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t={trace} \u2014 safe')
-    elif p < 10**14:
-        _n = _ec_count_bsgs(a % p, b % p, p)
-        if _n is None:
-            # Not singular: that case returned above. The points sampled did
-            # not single out the group order (this BSGS does not use the
-            # quadratic twist, which Mestre's method needs to decide every
-            # curve), so there is no trace to check.
-            r.add_skip('Anomalous-trace check (BSGS)',
-                       'group order not decided, so no trace to check')
-        else:
-            _t = p + 1 - _n
-            count_trace = _t
-            if _t == 1 or _n == p:
-                r.add_finding('CRITICAL',
-                    f'Anomalous curve: #E={_n}=p, trace=1 (Smart attack vulnerable)')
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t=1 \u2014 ANOMALOUS')
-            elif abs(_t) <= 2:
-                r.add_finding('HIGH',
-                    f'Near-anomalous curve: #E={_n}, |t|={abs(_t)} (transfer attacks possible)')
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t={_t} \u2014 near-anomalous')
-            else:
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t={_t} \u2014 safe (BSGS, exact)')
+                f'Near-anomalous curve: #E={count.n}, |t|={abs(trace)} (transfer attacks possible)')
+    twist = E.twist()
+    tcount = EC.count(twist)
+    if count is None or tcount is None:
+        r.add_skip('Twist: #E + #E\u2032 = 2p + 2', 'a count could not be made')
     else:
-        r.add_test('Anomalous-trace check', True,
-                   'p > 10\u00b9\u2074: SEA algorithm needed for crypto-size primes')
-
-    if supersingular or (p > 3 and count_trace == 0):
+        ok = EC.check_count(twist, tcount) and count.n + tcount.n == 2 * p + 2
+        r.add_test('Twist: #E + #E\u2032 = 2p + 2', ok,
+                   f'#E\u2032={tcount.n} by {how[tcount.method]}, certificate checked; '
+                   f'#E + #E\u2032 = {count.n + tcount.n}'
+                   + ('' if ok else f', not {2 * p + 2}'))
+    if supersingular or trace == 0:
         why = (f'p\u2261{p % 3} mod 3' if j_inv == 0 and supersingular else
                f'p\u2261{p % 4} mod 4' if supersingular else 'trace 0')
         r.add_finding('HIGH', f'Supersingular: j={j_inv}, {why} (MOV/Frey-R\u00fcck transfer)')
 
-    # ECC POINT VALIDATION
-    if lib_c:
-        for x in range(min(p, 1000)):
-            rhs = (pow(x, 3, p) + a * x + b) % p
-            if p % 4 == 3 and pow(rhs, (p-1)//2, p) == 1:
-                y = pow(rhs, (p+1)//4, p)
-                if (y*y) % p == rhs:
-                    valid = bool(lib_c.ecc_point_valid(x, y, a%p, b%p, p))
-                    r.add_test('ECC point on curve', valid, f'({x},{y})')
-                    break
+    # CUBIC: the engine's Sol3 = #{x^3+y^3+z^3 = 0} against 1 + (p-1) #E for
+    # y^2 = x^3 - 432, the curve the Fermat cubic is isomorphic to, counted
+    # with its certificate (complex multiplication: j = 0, at any size).
+    # Where Sol3 does not fit the engine's 64 bits, the engine must refuse
+    # it, and its B(a, b) is checked instead: #E = p + 1 + B.
+    if lib_c and p >= 2**64:
+        r.add_skip('Cubic B(a,b)', 'p is past the cubic engine\'s 64 bits')
+    elif lib_c:
+        fermat = EC.Curve(0, (-432) % p, p)
+        fc = EC.count(fermat)
+        if fc is None or not EC.check_count(fermat, fc):
+            r.add_test('Cubic B(a,b)', False, 'no certified count of y\u00b2=x\u00b3\u2212432')
+        else:
+            want = 1 + (p - 1) * fc.n
+            sol = lib_c.cubic_solution_count(p)
+            d = lib_c.find_decomp(p)
+            B = lib_c.compute_B(d.a, d.b) if d.found else 0
+            decomp = (d.found and d.a * d.a + 3 * d.b * d.b == p) if p % 3 == 1 else not d.found
+            shown = f'p={d.a}\u00b2+3\u00b7{d.b}\u00b2, ' if d.found else ''
+            if sol == -2:
+                refused = p > 2**62 or want > 2**63 - 1
+                ok = refused and decomp and B == fc.n - p - 1
+                r.add_test('Cubic B(a,b)', ok,
+                           f'{shown}B={B}; Sol\u2083={want} past 64 bits, '
+                           f'{"refused" if refused else "refused WRONGLY"}; '
+                           f'#E(y\u00b2=x\u00b3\u2212432) = {fc.n} = p+1+B'
+                           + ('' if ok else ' \u2014 NOT'))
+            else:
+                ok = decomp and sol == want
+                r.add_test('Cubic B(a,b)', ok,
+                           f'{shown}B={B}, Sol\u2083={sol}, '
+                           f'1+(p\u22121)\u00b7#E(y\u00b2=x\u00b3\u2212432) = {want}')
+
+    # ECC POINT VALIDATION: the engine on a point of E, a point off it, an
+    # unreduced coordinate and an unreduced coefficient.
+    if lib_c and p < 2**63:
+        P = E.random_point(random.Random(p))
+        off = (P[0], (P[1] + 1) % p)
+        cases = [((P[0], P[1], E.a, E.b, p), True),
+                 ((off[0], off[1], E.a, E.b, p), E.is_on(off)),
+                 ((P[0] + p, P[1], E.a, E.b, p), False),
+                 ((P[0], P[1], E.a, E.b + p, p), False)]
+        got = [bool(lib_c.ecc_point_valid(*args)) == want for args, want in cases]
+        r.add_test('ECC point validation', all(got),
+                   f'{sum(got)}/{len(got)}: a point of E, a point off it, an unreduced '
+                   f'x and an unreduced b')
 
     # CONFORMITY: stability via discriminant family
     if lib_cf and disc_raw != 0:
@@ -1406,44 +1471,14 @@ def audit_curve(engines, a, b, p):
         if len(points) == 3:
             res = lib_cf.conformity_compute(ctypes.byref(points[1]))
             stability = abs(disc_raw) / float(p)
-            r.add_test('Conformity D(t)', res.valid == 1, f'D={res.D:.6f}')
-            warn = ' \u2014 NEAR SINGULAR' if stability < 0.01 else ''
-            r.add_test('Stability margin', True, f'|\u0394|/p={stability:.4f}{warn}')
+            r.add_test('Conformity D(t)', res.valid == 1,
+                       f'D={res.D:.6f}; stability margin |\u0394|/p={stability:.4f}')
             if stability < 0.01:
                 r.add_finding('HIGH', f'Near singular fiber: margin={stability:.6f}')
             chk = lib_cf.conformity_verify(ctypes.byref(points[0]),
                     ctypes.byref(points[1]), ctypes.byref(points[2]), ctypes.c_double(dt))
             r.add_test('Conservation law on family', chk.cv_residual < 0.01,
                        f'residual={chk.cv_residual:.2e}')
-
-    # HASSE BOUND CHECK: |t| \u2264 2\u221ap (Hasse 1933)
-    n_pts = None
-    if p < 10000:
-        n_pts = 1
-        for x in range(p):
-            rhs = (pow(x, 3, p) + a*x + b) % p
-            if rhs == 0: n_pts += 1
-            elif pow(rhs, (p-1)//2, p) == 1: n_pts += 2
-    elif p < 10**14:
-        n_pts = _ec_count_bsgs(a % p, b % p, p)
-    if n_pts is not None:
-        trace = p + 1 - n_pts
-        # floor(2*sqrt(p)) is isqrt(4p). The old 2*isqrt(p) rounds before
-        # doubling and is one short for p = 7, 13, ... -- it called
-        # y^2 = x^3 + 3 over F_7 (t = 5) a violation.
-        hasse_bound = math.isqrt(4 * p)
-        hasse_ok = abs(trace) <= hasse_bound
-        # Hasse's theorem holds for every curve, so a violation is a defect in
-        # pq-verify's point count, never a property of the curve.
-        r.add_test('Hasse bound |t| \u2264 2\u221ap', hasse_ok,
-                   f't={trace}, bound=\u00b1{hasse_bound}, #E={n_pts}'
-                   + ('' if hasse_ok else ' \u2014 point count is wrong'))
-        if not hasse_ok:
-            r.add_finding('CRITICAL', f'pq-verify point count is wrong: |t|={abs(trace)} '
-                          f'> 2\u221ap={hasse_bound} is impossible (Hasse 1933)')
-    elif p < 10**14:
-        r.add_skip('Hasse bound |t| \u2264 2\u221ap',
-                   'group order not decided, so no trace to check')
 
     return r
 
@@ -5139,132 +5174,6 @@ def _stress_zq32_square(lib, n, q, seed):
 
 def _finite(v):
     return not (math.isnan(v) or math.isinf(v))
-
-
-# ================================================================
-# ELLIPTIC-CURVE POINT COUNTING  (baby-step/giant-step; exact or None)
-# Replaces the naive O(p) count for p >= 10^4.  Exact for p up to
-# ~10^14 -- well past the auditor's range (e.g. the 23-bit Dilithium
-# prime).  For crypto-size primes one would need SEA; BSGS is the
-# right, verifiable tool at this scale.
-# ================================================================
-
-def _tonelli(n, p):
-    """sqrt of n mod p (p odd prime), or None if n is a non-residue."""
-    n %= p
-    if n == 0:
-        return 0
-    if pow(n, (p - 1) // 2, p) != 1:
-        return None
-    if p % 4 == 3:
-        return pow(n, (p + 1) // 4, p)
-    Q, S = p - 1, 0
-    while Q % 2 == 0:
-        Q //= 2; S += 1
-    z = 2
-    while pow(z, (p - 1) // 2, p) != p - 1:
-        z += 1
-    M, c, t, R = S, pow(z, Q, p), pow(n, Q, p), pow(n, (Q + 1) // 2, p)
-    while t != 1:
-        i, t2 = 0, t
-        while t2 != 1:
-            t2 = t2 * t2 % p; i += 1
-        bb = pow(c, 1 << (M - i - 1), p)
-        M, c, t, R = i, bb * bb % p, t * bb * bb % p, R * bb % p
-    return R
-
-
-def _ec_count_bsgs(a, b, p):
-    """#E(F_p) for y^2 = x^3 + ax + b by baby-step giant-step on random
-    points, or None: for a singular curve, and when the points do not single
-    out the order. It does not use the quadratic twist, which Mestre's method
-    needs to decide every curve, so None happens on some curves with a small
-    group exponent (j = 0 ones, for example). A point whose order is at most
-    the baby-step count is not used: it would leave orders out of the
-    candidates and could give a wrong count, as it did for small p."""
-    a %= p; b %= p
-    if (4 * pow(a, 3, p) + 27 * pow(b, 2, p)) % p == 0:
-        return None
-
-    def add(P, Q):
-        if P is None: return Q
-        if Q is None: return P
-        x1, y1 = P; x2, y2 = Q
-        if x1 == x2:
-            if (y1 + y2) % p == 0:
-                return None
-            lam = (3 * x1 * x1 + a) * pow(2 * y1 % p, p - 2, p) % p
-        else:
-            lam = (y2 - y1) * pow((x2 - x1) % p, p - 2, p) % p
-        x3 = (lam * lam - x1 - x2) % p
-        y3 = (lam * (x1 - x3) - y1) % p
-        return (x3, y3)
-
-    def neg(P):
-        return None if P is None else (P[0], (-P[1]) % p)
-
-    def mul(k, P):
-        if k < 0:
-            return mul(-k, neg(P))
-        R = None
-        while k:
-            if k & 1:
-                R = add(R, P)
-            P = add(P, P); k >>= 1
-        return R
-
-    rng = random.Random((a * 1000003 + b * 999983 + p) & 0xFFFFFFFF)
-
-    def rand_pt():
-        for _ in range(20000):
-            x = rng.randrange(p)
-            rhs = (pow(x, 3, p) + a * x + b) % p
-            if rhs == 0:
-                return (x, 0)
-            if pow(rhs, (p - 1) // 2, p) == 1:
-                y = _tonelli(rhs, p)
-                if y is not None and (y * y) % p == rhs:
-                    return (x, y)
-        return None
-
-    L = 2 * math.isqrt(p) + 1
-    w = math.isqrt(2 * L) + 1
-
-    def candidates(P):
-        baby = {}
-        cur = None
-        for j in range(w + 1):
-            if cur in baby:
-                return None        # order <= w: some orders would be missed
-            baby[cur] = j
-            cur = add(cur, P)
-        Q = mul(p + 1, P)
-        wP = mul(w, P)
-        nwP = neg(wP)
-        imax = L // w + 2
-        test = add(Q, mul(imax, wP))
-        found = set()
-        for i in range(-imax, imax + 1):
-            if test in baby:
-                t = i * w + baby[test]
-                if -L <= t <= L:
-                    found.add(p + 1 - t)
-            test = add(test, nwP)
-        return found
-
-    cands = None
-    tries = 0
-    while (cands is None or len(cands) != 1) and tries < 11:
-        P = rand_pt()
-        tries += 1
-        if P is None:
-            break
-        found = candidates(P)
-        if found is None:
-            continue
-        found = {N for N in found if mul(N, P) is None}
-        cands = found if cands is None else cands & found
-    return cands.pop() if cands is not None and len(cands) == 1 else None
 
 
 def audit_stress(engines, e6_engines, quick=False):
