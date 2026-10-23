@@ -133,9 +133,14 @@ front end (6), each able to fail (the tests break each one on purpose):
    contain other fields' names route by their field.
 6. **Engine dispatch.** Each obligation passes, and fails when made wrong.
 7. **Benchmark (`Python CFL pipeline ×100`).** A hundred runs give the same
-   AST, properties and obligations, and the printed AST parses to itself. A
-   C build of the pipeline can still be loaded by absolute path
-   (`PQV_CFL_SO`) to time against it; its answer is reported, not checked.
+   AST, properties and obligations, and the printed AST parses to itself.
+   Each run also takes a random one-character edit of the specification
+   (a character deleted, inserted or replaced). The pipeline must reject it
+   with a line and column, or accept it as a specification that prints back
+   to itself with closed obligations; a crash, or an error without a
+   position, fails the check. A C build of the pipeline can still be loaded
+   by absolute path (`PQV_CFL_SO`) to time against it; its answer is
+   reported, not checked.
 
 ## What it does not do
 

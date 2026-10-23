@@ -5,6 +5,86 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **26 of the self-suite's 160 checks could not fail, 15 of them among the
+  54 counted as post-quantum evidence.** A re-audit of every row found each
+  passing whatever the code under it did. Each now fails when its claim is
+  false, and for each a test breaks the code it is about and requires the
+  row to fail; every one of those tests passed on 2.14.0. There are still
+  160.
+  - **FIPS 205 sizes (12 rows)** checked the size table against arithmetic
+    on itself (pk = 2n with n = pk/2, and sig > 10 pk). Each size is now
+    checked against FIPS 205's formulas from Table 2's parameters, pinned
+    separately, and against the lengths in NIST's ACVP keyGen vectors. With
+    slh-dsa installed, its parameters must equal Table 2, and NIST's first
+    keyGen vector of each set must come out byte-exact.
+  - **All 3328 inverses in Z_3329** checked Python's own `pow(a, q - 2, q)`,
+    which no defect in pq-verify could make fail. Every a now goes through
+    the engine.
+  - **The three Coq certificate rows** checked that a file pq-verify had
+    just written existed. Each is now a control: the same certificate with
+    one value wrong, which coqc must reject. The values are an NTT output, a
+    zeta and λ₂. Without coqc the controls are skipped, as the certificates'
+    verification already was, so a run without Coq passes three fewer.
+  - **The Coq daemon wrote to coqtop and never read a reply.** 'Batch 16
+    theorems' and 'Conjecture 7 via persistent Coq daemon' therefore
+    accepted any theorem, true or false, and 'Coq daemon startup' was a
+    hard-coded True. The daemon now reads coqtop's verdict on each theorem,
+    up to a marker. A theorem counts only if coqtop proves it and finds it
+    closed under the global context. The startup row is now a control that a
+    false theorem is rejected, and the Conjecture 7 row has one too.
+  - **CryptoMiniSat5 comparison** timed CMS5 on unit clauses and was a
+    hard-coded True. CMS5 now decides the AES system and the first 100 of the
+    GF(2) row's random systems, most of them unsatisfiable. Its verdicts
+    must agree with the engine's, and each model is checked against every
+    equation.
+  - **Conformity rows.** 'Valid computation' checked the engine's valid
+    flag, which is 0 only for ω = 0, on an input where it never is. The
+    engine must now also refuse ω = 0. 'Conformity D(t)', one row per curve
+    and three in the suite, checked that same flag after 2.14.0's fix. It
+    now checks D against 2u′ + 4u² with u = Δ′/(12Δ), from the discriminant
+    itself.
+  - **Riccati U′ = −U² − Q** (Engine 6, rank 2) counted a flag the engine
+    sets to 1 unconditionally: the engine defines Q as −(U′ + U²). The row
+    now checks what the equation rests on. The Legendre periods
+    F(z) = ₂F₁(½, ½; 1; z) and F(1 − z) must satisfy (ω, ω′)′ = U(ω, ω′) with
+    the engine's U, and the engine's U′ and U″ must equal central
+    differences of its U and U′. The engine exports U, U′ and U″ for this
+    (`period_legendre_connection`).
+  - **Python CFL pipeline ×100** timed a deterministic function and
+    repeated the parser's round trip. Each run now also takes a random
+    one-character edit of the specification. The edit must be rejected with
+    a line and column, or still be a specification that prints back to
+    itself; anything else, a crash among them, fails the row. 40,000 random
+    edits of the two specifications found nothing else.
+- **Six more rows checked less than they said.**
+  - 'GF(2) random systems' counted an "unsatisfiable" answer as verified
+    without checking it, 874 of its 1000. 'Null-space enumeration' did the
+    same, and compared the number of free variables only with the engine's
+    own. Both now decide each system's consistency and rank by elimination
+    apart from the engine, and check every assignment against every
+    equation. 'Unique solution (full-rank)' now requires the pinned
+    assignment.
+  - 'NTT output matches FIPS 203 reference' and 'Dilithium NTT matches FIPS
+    204 reference' compared two Python transforms that share one zeta table.
+    Both must now also equal the NTT's definition, computed without
+    butterflies or the table: f mod X² − ζ^(2·BitRev7(i)+1) for ML-KEM, and
+    f(ζ^(2·BitRev8(i)+1)) for ML-DSA.
+  - 'Correct NTT passes' (Freivalds) checked the engine's NTT only with a
+    Freivalds check that shares its zeta table. The NTT must now also be
+    FIPS 203's, by the definition.
+
+### Changed
+
+- Five self-suite rows are renamed for what they now check: 'Coq daemon
+  startup' is 'Coq daemon rejects a false theorem', 'NTT Coq certificate
+  emitted' is 'NTT Coq certificate rejects a wrong output', 'Coq certificate
+  generation' is 'Coq batch certificate rejects a wrong zeta', 'Coq
+  certificate generated' is 'Engine 6 Coq certificate rejects a wrong λ₂',
+  and "Riccati U' = -U^2 - Q" is "Riccati inputs: U the Legendre periods'
+  connection, U′ and U″ its derivatives".
+
 ## [2.14.0] — 2026-10-23
 
 A feature release for the research and classical tracks, whose engines now

@@ -108,7 +108,9 @@ them on purpose):
 6. **ECC point validation.** The engine on a point of E, a point off it, an
    unreduced x and an unreduced b.
 7. **Conformity D(t)** and 8. **Conservation law on family**, from the
-   conformity engine (research framework).
+   conformity engine (research framework). D must equal 2u′ + 4u² with
+   u = Δ′/(12Δ) along the family Δ(t) = 4a³ + 27t², computed from Δ itself
+   rather than from the ω derivatives the engine is given.
 
 Its findings are a singular curve (CRITICAL), an anomalous one (#E = p:
 CRITICAL), a near-anomalous one (|t| ≤ 2: HIGH), a supersingular one
