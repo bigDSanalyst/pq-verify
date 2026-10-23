@@ -125,7 +125,7 @@ no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
 | **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space basis** computation (256 vars / 200 eqs → ~56 free; particular solution and basis vectors verified against the system) |
 | **Z₃₃₂₉** | ML-KEM | Kyber NTT butterflies, Montgomery arithmetic, Freivalds verification |
 | **Z₈₃₈₀₄₁₇** | ML-DSA | Dilithium NTT butterflies — the *complete* 8-layer transform, 32-bit Freivalds |
-| **Cubic + ECC** | — | B(a,b) by Cornacchia's algorithm, elliptic-curve point validation; with `pq_verify/ec.py`, point counts that carry certificates ([ECC.md](ECC.md)): complex multiplication for j = 0 and 1728 at any size (secp256k1), point orders on a curve and its twist below 2⁶⁴, published orders verified |
+| **Cubic + ECC** | — | B(a,b) by Cornacchia's algorithm, elliptic-curve point validation; with `pq_verify/ec.py`, point counts that carry certificates ([ECC.md](ECC.md)): complex multiplication for j = 0 and 1728 at any size (secp256k1), point orders on a curve and its twist below 2⁶⁴, Schoof–Elkies–Atkin for other curves up to 2³²⁰ ([SEA.md](SEA.md)), published orders verified |
 | **Conformity** | — | D(t) stability on curve families — *research framework, not a security check* |
 | **Period / Gauss-Manin** | — | Amari-Schwarzian, ranks 2/4/4/8 — *research framework, not a security check* |
 

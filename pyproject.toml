@@ -68,5 +68,5 @@ pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md", "coq/*.v", "harne
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "slow: exercises the full engine stack end to end (~45s)",
+    "slow: long end-to-end runs (the full engine stack, ~45s; SEA on P-256, ~75s)",
 ]

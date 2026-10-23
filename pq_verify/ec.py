@@ -8,7 +8,10 @@ E: y^2 = x^3 + a x + b over F_p, p > 3 prime. #E(F_p) is found by
   algorithm gives the possible traces, and points rule out all but one;
 * baby-step giant-step on E and on its quadratic twist (Mestre), for other
   curves up to 2^64: exact point orders, combined by the Chinese remainder
-  theorem, leave one order in the Hasse interval.
+  theorem, leave one order in the Hasse interval;
+* Schoof-Elkies-Atkin (pq_verify.sea, SEA.md), for other curves above 2^64
+  and below 2^SEA_BITS: t modulo Elkies primes, each residue certified by
+  a kernel polynomial and Frobenius' eigenvalue on it.
 
 A count is a Count(n, method, certificate), and check_count verifies the
 certificate from the curve without the method that found it. A published
@@ -21,6 +24,7 @@ import random
 
 NAIVE_LIMIT = 1 << 16          # count directly below this p
 BSGS_LIMIT = 1 << 64           # baby-step giant-step below this p
+SEA_BITS = 320                 # Schoof-Elkies-Atkin for p of at most this many bits
 
 
 class ECError(ValueError):
@@ -326,8 +330,8 @@ def point_order(E, P, multiple, factors=None):
 # ---- counts and their certificates -----------------------------------------------
 
 class Count:
-    """n = #E(F_p), found by method ('naive', 'cm' or 'orders'), with the
-    certificate check_count verifies."""
+    """n = #E(F_p), found by method ('naive', 'cm', 'orders' or 'sea'), with
+    the certificate check_count verifies."""
 
     def __init__(self, n, method, certificate):
         self.n, self.method, self.certificate = n, method, certificate
@@ -409,8 +413,9 @@ def _bsgs_multiple(E, P, lo, hi):
 
 def count(E, rng=None, max_points=40):
     """#E(F_p) with its certificate, or None (CANNOT VERIFY): direct counting
-    below NAIVE_LIMIT, complex multiplication for j = 0 and 1728, and
-    baby-step giant-step on E and its twist below BSGS_LIMIT."""
+    below NAIVE_LIMIT, complex multiplication for j = 0 and 1728,
+    baby-step giant-step on E and its twist below BSGS_LIMIT, and
+    Schoof-Elkies-Atkin up to SEA_BITS bits."""
     rng = rng or random.Random(E.p * 1000003 + E.a * 7919 + E.b)
     p = E.p
     if p < NAIVE_LIMIT:
@@ -437,7 +442,10 @@ def count(E, rng=None, max_points=40):
         P = E.random_point(rng)
         return Count(n, "cm", {"p": p, "representation": rep, "points": points, "witness": P})
     if p >= BSGS_LIMIT:
-        return None
+        if p.bit_length() > SEA_BITS:
+            return None
+        from . import sea
+        return sea.count(E, rng)
     lo, hi = E.hasse()
     twist = E.twist()
     orders = {"E": [], "twist": []}
@@ -480,9 +488,11 @@ def check_count(E, c):
     """True iff c's certificate proves #E(F_p) = c.n, verified from E
     alone: a direct recount ('naive'); a representation of p, the traces
     complex multiplication allows from it, a point the count annihilates and
-    points ruling out every other trace ('cm'); or exact point orders on E
+    points ruling out every other trace ('cm'); exact point orders on E
     and on its twist leaving c.n the only order in the Hasse interval
-    ('orders')."""
+    ('orders'); or the trace modulo primes l, each from a kernel polynomial
+    dividing the l-division polynomial and Frobenius' eigenvalue on it, and
+    a point that separates the candidates left ('sea')."""
     if not isinstance(c, Count) or not isinstance(c.n, int):
         return False
     cert = c.certificate
@@ -536,6 +546,9 @@ def check_count(E, c):
                 l = l * m // math.gcd(l, m)
             conds.append((target % l, l))
         return _crt_in(lo, hi, conds) == [c.n]
+    if c.method == "sea":
+        from . import sea
+        return sea.check(E, c)
     return False
 
 

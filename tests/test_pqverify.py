@@ -8220,7 +8220,6 @@ def test_ec_secp256k1_is_counted_and_p256_order_verified():
     v = E.verify_order(c, n)
     assert v is not None and v.n == n and E.check_count(c, v)
     assert E.verify_order(c, n + 2) is None
-    assert E.count(c) is None                 # a general curve at 256 bits: CANNOT VERIFY
 
 
 def test_ec_check_count_rejects_tampered_certificates():
@@ -8358,3 +8357,257 @@ def test_curve_audit_checks_the_cubic_engine_where_sol3_overflows():
             assert row and row[0]["passed"] is True and "refused" in row[0]["detail"], row
             assert not any(t.get("skipped") for t in r.tests), r.tests
         assert not core.DEGRADED["skipped_checks"]
+
+
+# ---- Schoof-Elkies-Atkin (SEA.md) ----------------------------------------------------
+
+def _sea():
+    from pq_verify import sea
+    return sea
+
+
+def _rand_prime(rng, bits):
+    E = _ec()
+    while True:
+        q = rng.getrandbits(bits) | (1 << (bits - 1)) | 1
+        if E.is_prime(q):
+            return q
+
+
+def _rand_curve(rng, p):
+    E = _ec()
+    while True:
+        a, b = rng.randrange(1, p), rng.randrange(1, p)
+        if (4 * a ** 3 + 27 * b * b) % p:
+            return E.Curve(a, b, p)
+
+
+def _poly_mul(a, b):
+    out = [0] * (len(a) + len(b) - 1)
+    for i, x in enumerate(a):
+        for k, y in enumerate(b):
+            out[i + k] += x * y
+    return out
+
+
+def test_sea_polynomial_products_agree_with_schoolbook():
+    """Kronecker substitution and decimal's number-theoretic transform give
+    schoolbook's products, and Newton reduction schoolbook's remainders."""
+    S = _sea()
+    rng = _random.Random(50)
+    for p in (1000003, 2**127 - 1, 2**255 - 19):
+        for n in (1, 7, 10, 33, 400, 1300):
+            a = [rng.randrange(p) for _ in range(n)]
+            b = [rng.randrange(p) for _ in range(n + 5)]
+            a[-1] = a[-1] or 1
+            b[-1] = b[-1] or 1
+            ref = S._trim([x % p for x in _poly_mul(a, b)])
+            assert S._mul(a, b, p) == ref, (p, n)
+            assert S._mul_ntt(a, b, p, n) == ref, (p, n)
+            assert S._mul(a, a, p) == S._mul(a, list(a), p)
+            K = [rng.randrange(p) for _ in range(n + 3)] + [1]
+            assert S._Mod(K, p).reduce(S._mul(a, b, p)) == S._divmod(ref, K, p)[1], (p, n)
+
+
+def test_sea_canonical_modular_polynomials_are_the_hauptmodul_relations():
+    """For l = 2, 3, 5, 7 and 13, X_0(l) has genus 0 and Mueller's
+    polynomial is Psi_l(F, J) = A(F) - F J, with the published A. The power
+    sums mod p must give exactly that, value and J-derivative, at random J."""
+    S = _sea()
+    cube = lambda a: _poly_mul(a, _poly_mul(a, a))
+    A = {2: cube([16, 1]), 3: _poly_mul([27, 1], cube([3, 1])), 5: cube([5, 10, 1]),
+         7: _poly_mul([49, 13, 1], cube([1, 5, 1])),
+         13: _poly_mul([13, 5, 1], cube([1, 19, 20, 7, 1]))}
+    rng = _random.Random(51)
+    for p in (1000003, 2**127 - 1):
+        for l, poly in A.items():
+            sums = S._power_sums(l, p)
+            for _ in range(3):
+                J0 = rng.randrange(p)
+                value, dJ = S._psi_at(sums, l, J0, 2, p)
+                want = [c % p for c in poly]
+                want[1] = (want[1] - J0) % p
+                assert value == S._trim(want) and dJ == [0, p - 1], (p, l)
+
+
+def _direct_power_sums(l, p):
+    """P_1..P_(l+1) the plain way: every power of E(x)^(2s) in full."""
+    S = _sea()
+    s, v = S._params(l)
+    N = (l + 1) * v + 1
+    P1 = S._pad(S._series_pow(S._euler(N, p), 2 * s, N, p), N)
+    T = v + 1
+    qinv = S._inv_series(P1[:T], T, p)
+    jp = S._j_powers(T, p)
+    out, Pm, qm = [], [1], [1]
+    for m in range(1, l + 2):
+        Pm = S._pad(S._low(Pm, P1, N, p), N)
+        qm = S._pad(S._low(qm, qinv, T, p), T)
+        Tm = m * v // l
+        c = [Pm[m * v - l * t] for t in range(Tm + 1)]
+        pp = [l * sum(c[t + r] * qm[r] for r in range(Tm - t + 1)) % p for t in range(Tm + 1)]
+        poly = [0] * (Tm + 1)
+        for d in range(Tm, -1, -1):
+            poly[d] = pp[d]
+            for t in range(d + 1):
+                pp[t] = (pp[t] - poly[d] * jp[d][t]) % p
+        out.append(S._trim(poly))
+    return out
+
+
+def test_sea_power_sums_equal_the_direct_computation():
+    S = _sea()
+    p = 2**61 - 1
+    for l in (3, 5, 7, 11, 13, 17, 19, 23, 29):
+        assert S._power_sums(l, p) == _direct_power_sums(l, p), l
+
+
+def _velu(a, b, p, K):
+    """(A~, B~, p1) of the normalized isogeny with kernel polynomial K."""
+    d = len(K) - 1
+    e = [1] + [(-1) ** i * K[d - i] % p for i in range(1, d + 1)]
+    s = [0] * 4
+    for m in range(1, 4):
+        acc = (-1) ** (m - 1) * m * (e[m] if m <= d else 0)
+        for i in range(1, m):
+            acc += (-1) ** (i - 1) * (e[i] if i <= d else 0) * s[m - i]
+        s[m] = acc % p
+    t = (6 * s[2] + 2 * a * d) % p
+    w = (10 * s[3] + 6 * a * s[1] + 4 * b * d) % p
+    return (a - 5 * t) % p, (b - 7 * w) % p, 2 * s[1] % p
+
+
+def test_sea_elkies_kernels_are_kernels():
+    """Every isogeny Elkies' formulas give from the canonical polynomial:
+    its kernel polynomial divides the l-division polynomial, and Velu's
+    formulas on it return the same isogenous curve and p1."""
+    S = _sea()
+    rng = _random.Random(52)
+    found = 0
+    for bits in (24, 61, 100):
+        p = _rand_prime(rng, bits)
+        for _ in range(3):
+            C = _rand_curve(rng, p)
+            for l in (3, 5, 7, 11, 13, 17, 19, 23):
+                f = S._elkies_root(l, p, C.j)
+                if f is None:
+                    continue
+                iso = S._isogenous(C.a, C.b, p, l, S._sums(l, p), f, C.j)
+                assert iso is not None, (p, l)
+                K = S._kernel(C.a, C.b, iso[0], iso[1], iso[2], l, p)
+                assert len(K) == (l + 1) // 2 and K[-1] == 1
+                div = S._Division(C.a, C.b, p, S._Mod(K, p))
+                assert div[l] == [] and _velu(C.a, C.b, p, K) == iso, (p, l)
+                found += 1
+    assert found >= 20, found
+
+
+def test_sea_counts_equal_exact_counts_below_2_64():
+    """Allowed few candidates, SEA uses Elkies primes below 2^64 too, where
+    the point-order count is exact: every residue and count agrees, and
+    every certificate checks."""
+    S, E = _sea(), _ec()
+    rng = _random.Random(53)
+    for bits, r_max in ((24, 4), (40, 64), (50, 1 << 10), (63, 1 << 16)):
+        for _ in range(3):
+            C = _rand_curve(rng, _rand_prime(rng, bits))
+            got = S.count(C, r_max=r_max)
+            want = E.count(C)
+            assert got.method == "sea" and got.n == want.n, (C, got, want)
+            assert E.check_count(C, got)
+            t = C.p + 1 - got.n
+            assert got.certificate["residues"]
+            for l, K, mu in got.certificate["residues"]:
+                assert S.check_residue(C.a, C.b, C.p, l, K, mu) == t % l
+    with pytest.raises(E.ECError):
+        S.count(E.Curve(0, 7, 10007))          # j = 0: complex multiplication's
+    with pytest.raises(E.ECError):
+        S.count(E.Curve(5, 0, 10007))          # j = 1728
+
+
+def test_sea_certificate_rejects_tampering():
+    S, E = _sea(), _ec()
+    rng = _random.Random(54)
+    C = _rand_curve(rng, _rand_prime(rng, 48))
+    c = S.count(C, r_max=1 << 8)
+    cert = c.certificate
+    assert E.check_count(C, c) and len(cert["residues"]) >= 3
+
+    def bad(n=None, **changes):
+        return not E.check_count(C, E.Count(c.n if n is None else n, "sea", dict(cert, **changes)))
+    (l, K, mu), (l2, K2, mu2) = cert["residues"][:2]
+    rest = cert["residues"][1:]
+    assert bad(residues=[(l, K, mu + 1 if mu + 1 < l else mu - 1)] + rest)   # another eigenvalue
+    assert bad(residues=[(l, [(K[0] + 1) % C.p] + K[1:], mu)] + rest)        # not a kernel
+    assert bad(residues=[(l, K2, mu)] + rest)                                 # another prime's
+    assert bad(residues=[cert["residues"][0]] + cert["residues"])             # a prime twice
+    assert bad(residues=[(9, K, mu)] + rest)                                  # not a prime
+    M = 2
+    for q, _, _ in cert["residues"]:
+        M *= q
+    lo, hi = C.hasse()
+    others = [x for x in (c.n + M, c.n - M, c.n + 2) if lo <= x <= hi]
+    assert others and all(bad(n=x) for x in others)                           # same residues, wrong point
+    assert bad(point=C.twist().random_point(rng))
+    assert bad(curve="twist")
+    assert bad(p=C.p + 2)
+    assert bad(residues=[([l], K, mu)] + rest)                              # malformed, not a crash
+    assert bad(residues=[(l, K + [0] * l + [1], mu)] + rest)                  # above the kernel's degree
+    assert not E.check_count(C, E.Count(c.n, "sea", "not a dict"))
+    # The residues are checked, never trusted: without them the certificate
+    # is weaker but still proves the count, because the point separates
+    # every candidate the parity alone leaves.
+    assert E.check_count(C, E.Count(c.n, "sea", dict(cert, residues=[])))
+
+
+_SEA_CURVES = {   # p, a, b, the published group order (cofactor 1)
+    "secp128r1": (0xFFFFFFFDFFFFFFFFFFFFFFFFFFFFFFFF, 0xFFFFFFFDFFFFFFFFFFFFFFFFFFFFFFFC,
+                  0xE87579C11079F43DD824993C2CEE5ED3, 0xFFFFFFFE0000000075A30D1B9038A115),
+    "brainpoolP160r1": (0xE95E4A5F737059DC60DFC7AD95B3D8139515620F,
+                        0x340E7BE2A280EB74E2BE61BADA745D97E8F7C300,
+                        0x1E589A8595423412134FAA2DBDEC95C8D8675E58,
+                        0xE95E4A5F737059DC60DF5991D45029409E60FC09),
+}
+
+
+def test_sea_counts_standard_curves_to_their_published_orders():
+    E = _ec()
+    for name, (p, a, b, n) in _SEA_CURVES.items():
+        C = E.Curve(a, b, p)
+        got = E.count(C)
+        assert got.method == "sea" and got.n == n and E.check_count(C, got), name
+        v = E.verify_order(C, n)                # the order certified another way
+        assert v is not None and E.check_count(C, v), name
+
+
+@pytest.mark.slow
+def test_sea_counts_p256_to_its_published_order():
+    E = _ec()
+    p, b, n = _P256
+    C = E.Curve(p - 3, b, p)
+    got = E.count(C)
+    assert got.method == "sea" and got.n == n and E.check_count(C, got)
+
+
+def test_ec_count_uses_sea_from_2_64_to_its_limit():
+    import pq_verify.core as core
+    E = _ec()
+    rng = _random.Random(55)
+    C = _rand_curve(rng, _rand_prime(rng, 70))
+    got = E.count(C)
+    assert got.method == "sea" and E.check_count(C, got)
+    assert all(C.mul(got.n, C.random_point(rng)) is None for _ in range(3))
+    _, eng = _all_engines()
+    with _isolated_degraded():
+        r = core.audit_curve(eng, C.a, C.b, C.p)
+    rows = {t["name"]: t for t in r.tests}
+    assert rows["Point count"]["passed"] is True and "Schoof" in rows["Point count"]["detail"]
+    assert rows["Twist: #E + #E\u2032 = 2p + 2"]["passed"] is True
+    p384 = 2**384 - 2**128 - 2**96 + 2**32 - 1
+    assert E.count(E.Curve(p384 - 3, 5, p384)) is None   # past SEA_BITS: CANNOT VERIFY
+    # A certificate that leaves 2^128 candidates is refused at once, not searched.
+    S = _sea()
+    p256, b256, n256 = _P256
+    big = E.Curve(p256 - 3, b256, p256)
+    assert not E.check_count(big, E.Count(n256, "sea", {"p": p256, "residues": [], "parity": 1,
+                                                        "curve": "E", "point": (0, 0)}))

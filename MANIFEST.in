@@ -5,6 +5,7 @@ include ARCHITECTURE.md
 include CFL.md
 include DQBF.md
 include ECC.md
+include SEA.md
 include HYBRID.md
 include DEMO.ipynb
 include vendor_audit_template.py

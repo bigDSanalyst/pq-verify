@@ -1368,12 +1368,14 @@ def audit_curve(engines, a, b, p):
 
     # POINT COUNT, certified, and the twist's
     how = {'naive': 'direct count', 'cm': 'complex multiplication',
-           'orders': 'point orders on E and its twist'}
+           'orders': 'point orders on E and its twist',
+           'sea': 'Schoof\u2013Elkies\u2013Atkin (SEA.md)'}
     count = EC.count(E)
     trace = None
     if count is None:
-        r.add_skip('Point count', 'a general curve above 2^64: CANNOT VERIFY '
-                   'without SEA or a published order (ECC.md)')
+        why = (f'a general curve above 2^{EC.SEA_BITS}' if p.bit_length() > EC.SEA_BITS
+               else 'Schoof\u2013Elkies\u2013Atkin left more than one candidate')
+        r.add_skip('Point count', f'{why}: CANNOT VERIFY without a published order (SEA.md)')
     else:
         ok = EC.check_count(E, count)
         trace = count.trace

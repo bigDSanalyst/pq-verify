@@ -5,6 +5,24 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Schoof–Elkies–Atkin point counting** (`pq_verify/sea.py`,
+  [SEA.md](SEA.md)). A general curve (j ≠ 0, 1728) from 2⁶⁴ to 2³²⁰ is now
+  counted, where before it was CANNOT VERIFY. It uses Müller's canonical
+  modular polynomials, computed mod p from q-expansions, and Elkies primes.
+  For each Elkies prime l, the certificate holds a kernel polynomial and
+  Frobenius' eigenvalue on it. `check_count` verifies that the polynomial
+  divides the l-division polynomial and that Frobenius acts on its points as
+  claimed, so t mod l follows from φ² − tφ + p = 0. A point separates the
+  candidates left. The check uses nothing from the search.
+  - Counted in pure Python, P-256 has its published order (58 s to count,
+    14 s to check), and so do secp128r1, brainpoolP160r1, P-192 and P-224.
+  - Elkies' formulas for the canonical polynomial are derived in SEA.md, and
+    were checked on 647 isogenies against Vélu's formulas.
+  - Above 2³²⁰, a general curve is CANNOT VERIFY unless its order is
+    published.
+
 ### Changed
 
 - **v2.13.0 has its own Zenodo deposit**,
@@ -31,7 +49,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
     other curves below 2⁶⁴;
   - `verify_order` for a published order, P-256's for one.
 
-  A general curve above 2⁶⁴ with no published order is CANNOT VERIFY.
+  Other curves above 2⁶⁴ are counted by Schoof–Elkies–Atkin, up to 2³²⁰
+  (under Added).
   Each curve's eight rows are now checks: the j-invariant against its
   definition, the point count and the twist's count, each certified, with
   #E + #E′ = 2p + 2, and the cubic count against complex multiplication.

@@ -26,7 +26,7 @@ are on the classical track: none of them is post-quantum evidence.
 ## Point counts
 
 For E: y² = x³ + ax + b over F_p (p > 3 prime, 0 ≤ a, b < p, nonsingular),
-#E(F_p) is found by one of three methods, and each answer is a `Count` with
+#E(F_p) is found by one of four methods, and each answer is a `Count` with
 a certificate. `check_count` verifies a certificate from the curve alone,
 without the method that produced it. Every certified count lies in the Hasse
 interval p + 1 ± ⌊2√p⌋.
@@ -36,6 +36,7 @@ interval p + 1 ± ⌊2√p⌋.
 | direct | p < 2¹⁶ | none: the checker counts again, by another route | the definition |
 | complex multiplication | j = 0 or 1728, any p | p = u² + 3v² (or u² + v²); a point the count annihilates; points that annihilate no other allowed order | Deuring: the trace is one of ±2u, ±(u ± 3v) (j = 0) or ±2u, ±2v (j = 1728), and 0 when E is supersingular |
 | point orders | other curves, p < 2⁶⁴ | points of E and of its quadratic twist E′, each with its exact order and that order's factorization | Lagrange, Hasse, and #E + #E′ = 2p + 2 |
+| Schoof–Elkies–Atkin | other curves, 2⁶⁴ ≤ p < 2³²⁰ | for each Elkies prime l, a kernel polynomial and Frobenius' eigenvalue on it; a point that separates the candidates left | φ² − tφ + p = 0 on the points of order l the kernel polynomial's roots give ([SEA.md](SEA.md)) |
 
 **Complex multiplication.** Cornacchia's algorithm gives p = u² + 3v² for
 j = 0 with p ≡ 1 (mod 3), or p = u² + v² for j = 1728 with p ≡ 1 (mod 4).
@@ -66,9 +67,13 @@ Baillie–PSW test, for which no composite is known. Factoring is
 Pollard–Brent ρ, each factor checked for primality. Square roots are
 Tonelli–Shanks.
 
-**Limits.** A general curve (j ≠ 0, 1728) above 2⁶⁴ is CANNOT VERIFY unless
-its order is published: counting it needs Schoof–Elkies–Atkin, which
-pq-verify does not implement yet.
+**Schoof–Elkies–Atkin.** A general curve from 2⁶⁴ to 2³²⁰ is counted by SEA
+([SEA.md](SEA.md)), in pure Python: P-256 in about a minute, with its
+published order. The check needs none of the modular polynomials the count
+used.
+
+**Limits.** A general curve (j ≠ 0, 1728) above 2³²⁰ is CANNOT VERIFY unless
+its order is published (`verify_order`).
 
 ## The cubic engine
 
