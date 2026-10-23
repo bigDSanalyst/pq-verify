@@ -5,141 +5,6 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- **26 of the self-suite's 160 checks could not fail, 15 of them among the
-  54 counted as post-quantum evidence.** A re-audit of every row found each
-  passing whatever the code under it did. Each now fails when its claim is
-  false, and for each a test breaks the code it is about and requires the
-  row to fail; every one of those tests passed on 2.14.0. There are still
-  160.
-  - **FIPS 205 sizes (12 rows)** checked the size table against arithmetic
-    on itself (pk = 2n with n = pk/2, and sig > 10 pk). Each size is now
-    checked against FIPS 205's formulas from Table 2's parameters, pinned
-    separately, and against the lengths in NIST's ACVP keyGen vectors. With
-    slh-dsa installed, its parameters must equal Table 2, and NIST's first
-    keyGen vector of each set must come out byte-exact.
-  - **All 3328 inverses in Z_3329** checked Python's own `pow(a, q - 2, q)`,
-    which no defect in pq-verify could make fail. Every a now goes through
-    the engine.
-  - **The three Coq certificate rows** checked that a file pq-verify had
-    just written existed. Each is now a control: the same certificate with
-    one value wrong, which coqc must reject. The values are an NTT output, a
-    zeta and λ₂. Without coqc the controls are skipped, as the certificates'
-    verification already was, so a run without Coq passes three fewer.
-  - **The Coq daemon wrote to coqtop and never read a reply.** 'Batch 16
-    theorems' and 'Conjecture 7 via persistent Coq daemon' therefore
-    accepted any theorem, true or false, and 'Coq daemon startup' was a
-    hard-coded True. The daemon now reads coqtop's verdict on each theorem,
-    up to a marker. A theorem counts only if coqtop proves it and finds it
-    closed under the global context. The startup row is now a control that a
-    false theorem is rejected, and the Conjecture 7 row has one too.
-  - **CryptoMiniSat5 comparison** timed CMS5 on unit clauses and was a
-    hard-coded True. CMS5 now decides the AES system and the first 100 of the
-    GF(2) row's random systems, most of them unsatisfiable. Its verdicts
-    must agree with the engine's, and each model is checked against every
-    equation.
-  - **Conformity rows.** 'Valid computation' checked the engine's valid
-    flag, which is 0 only for ω = 0, on an input where it never is. The
-    engine must now also refuse ω = 0. 'Conformity D(t)', one row per curve
-    and three in the suite, checked that same flag after 2.14.0's fix. It
-    now checks D against 2u′ + 4u² with u = Δ′/(12Δ), from the discriminant
-    itself.
-  - **Riccati U′ = −U² − Q** (Engine 6, rank 2) counted a flag the engine
-    sets to 1 unconditionally: the engine defines Q as −(U′ + U²). The row
-    now checks what the equation rests on. The Legendre periods
-    F(z) = ₂F₁(½, ½; 1; z) and F(1 − z) must satisfy (ω, ω′)′ = U(ω, ω′) with
-    the engine's U, and the engine's U′ and U″ must equal central
-    differences of its U and U′. The engine exports U, U′ and U″ for this
-    (`period_legendre_connection`).
-  - **Python CFL pipeline ×100** timed a deterministic function and
-    repeated the parser's round trip. Each run now also takes a random
-    one-character edit of the specification. The edit must be rejected with
-    a line and column, or still be a specification that prints back to
-    itself; anything else, a crash among them, fails the row. 40,000 random
-    edits of the two specifications found nothing else.
-- **Six more rows checked less than they said.**
-  - 'GF(2) random systems' counted an "unsatisfiable" answer as verified
-    without checking it, 874 of its 1000. 'Null-space enumeration' did the
-    same, and compared the number of free variables only with the engine's
-    own. Both now decide each system's consistency and rank by elimination
-    apart from the engine, and check every assignment against every
-    equation. 'Unique solution (full-rank)' now requires the pinned
-    assignment.
-  - 'NTT output matches FIPS 203 reference' and 'Dilithium NTT matches FIPS
-    204 reference' compared two Python transforms that share one zeta table.
-    Both must now also equal the NTT's definition, computed without
-    butterflies or the table: f mod X² − ζ^(2·BitRev7(i)+1) for ML-KEM, and
-    f(ζ^(2·BitRev8(i)+1)) for ML-DSA.
-  - 'Correct NTT passes' (Freivalds) checked the engine's NTT only with a
-    Freivalds check that shares its zeta table. The NTT must now also be
-    FIPS 203's, by the definition.
-
-- **The near-singular finding is gone.** It flagged a curve HIGH when
-  |4a³ + 27b²|/p < 0.01, but over F_p a curve is singular or it is not, and
-  that ratio depends on which integers stand for a and b. In its place the
-  curve audit checks the embedding degree, SafeCurves' transfer criterion: a
-  HIGH finding when the largest prime-order subgroup's k = ord_ℓ(p) is at
-  most (ℓ − 1)/100, checked up to k = 100 (ECC.md). 'B3: Near-singular
-  curves' is now 'B3: Small embedding degree': ordinary curves with k = 1, 3,
-  4 and 6, each found by search and counted with a certificate at run time,
-  and two controls with k in the tens of thousands. The SafeCurves case
-  'near-singular mod 8380417' is now 'embedding degree 6 mod 147457'. Where
-  #E cannot be factored within a step limit, an INFO finding says the degree
-  was not checked (`pq_verify.ec.largest_prime_factor`).
-- **The Engine 6 Coq certificate stated integers fixed in this file,** and
-  its "genus-2 residue theorem" was a + b − b − a = 0. It now states the
-  residues this run computes exactly (SymPy). Conjecture 7 is stated on the
-  mirror quintic's residues, and the genus-2 residues, computed from the
-  engine's own M(z) with SymPy's exact derivative, must equal Paper 7's
-  Table 1. The residue theorem stays, described for what it is: true of any
-  connection of that shape. The daemon's Conjecture 7 row uses the same
-  residues, and without SymPy the three rows are skipped.
-
-- **The five zeta rows tested no implementation.** 'ζ^256 ≡ 1 mod q',
-  'ζ^128 ≢ 1 mod q (primitive)' and '128 distinct twiddle factors' applied
-  Python's pow to pq-verify's constant 17, and the two 'Primitivity' rows did
-  the same for 17 and 1753. The 16-bit and 32-bit engines now export the
-  zeta tables their NTTs and Freivalds checks use. The three twiddle rows
-  check the 16-bit engine's: its root has order 256, and it holds each of the
-  root's first 128 powers once. The two primitivity rows compare each
-  engine's table with ζ^BitRev(i) mod q, computed apart from the engine for
-  FIPS's ζ = 17 and ζ = 1753, and keep the order checks. That ties the tables
-  to the standard's definition, given its ζ: a different root of the same
-  order would leave every table consistently wrong, and only the standard's
-  text says 17 and 1753.
-- **A small trace was a HIGH finding where it carries no attack.**
-  "Near-anomalous" fired for every |t| ≤ 2, and two of the self-suite's own
-  curves were flagged for traces −1 and −2, which have no transfer attack. It
-  is now a finding for trace 2 only (#E = p − 1, embedding degree 1). Trace 0
-  is the supersingular finding, and trace 1 the anomalous one.
-
-### Changed
-
-- **Engine 6's identity rows are named for what they check.** With Q
-  defined as −(U′ + U²), Theorem 1 holds for any matrices U, U′ and U″
-  (checked in exact arithmetic on unrelated random matrices), and so do
-  Lemma 3 at rank 2 and Observation 4 for a companion-form U. Those six rows
-  test the engine's arithmetic, not its periods, and are now named
-  "Theorem 1 identity in the engine's arithmetic, rank 2 (10 samples)" and
-  likewise at rank 4, rank-4 CY3 and rank 8, "Lemma 3 identity in the
-  engine's arithmetic (rank 2)" and "Observation 4 identity in the engine's
-  arithmetic (CY3, companion form)".
-- Five self-suite rows are renamed for what they now check: 'Coq daemon
-  startup' is 'Coq daemon rejects a false theorem', 'NTT Coq certificate
-  emitted' is 'NTT Coq certificate rejects a wrong output', 'Coq certificate
-  generation' is 'Coq batch certificate rejects a wrong zeta', 'Coq
-  certificate generated' is 'Engine 6 Coq certificate rejects a wrong λ₂',
-  and "Riccati U' = -U^2 - Q" is "Riccati inputs: U the Legendre periods'
-  connection, U′ and U″ its derivatives". With the fixes above, 'B3:
-  Near-singular curves' is 'B3: Small embedding degree', the SafeCurves case
-  'near-singular mod 8380417' is 'embedding degree 6 mod 147457', and
-  'Conjecture 7 + genus-2 residue theorem verified by coqc' is "Conjecture 7
-  and Paper 7 Table 1 on this run's residues, verified by coqc". The two
-  'Primitivity' rows are "Engine zetas are FIPS 203's: 17^BitRev7(i) mod q,
-  17 of order 256" and "Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q,
-  1753 of order 512".
-
 ## [2.14.0] — 2026-10-23
 
 A feature release for the research and classical tracks, whose engines now
@@ -148,11 +13,11 @@ answer's certificate is checked. The CFL front end parses a real grammar and
 decides its obligations through the DQBF stage. Elliptic-curve point counts
 carry certificates, at any size for j = 0 and 1728 and up to 2³²⁰ for other
 curves by Schoof–Elkies–Atkin, which counts P-256 to its published order.
-Self-suite checks that passed whatever they found now fail when their claim
-is false; there are still 160. Native JSON reports name the pq-verify that
-wrote them (schema 1.2), and gain fields but lose none. No pinned vector or
-exit code changes, and no verdict on a vendor library depended on the
-rebuilt engines.
+Self-suite checks that passed whatever they found, post-quantum ones among
+them, now fail when their claim is false; there are still 160. Native JSON
+reports name the pq-verify that wrote them (schema 1.2), and gain fields but
+lose none. No pinned vector or exit code changes, and no verdict on a vendor
+library depended on the rebuilt engines.
 
 ### Added
 
@@ -183,6 +48,29 @@ rebuilt engines.
   name it, replacing v2.12.1's.
 - The linear-algebra engines' pivot order was described as Markowitz. It is a
   static order by ascending column count, and the code now says so.
+- **Engine 6's identity rows are named for what they check.** With Q
+  defined as −(U′ + U²), Theorem 1 holds for any matrices U, U′ and U″
+  (checked in exact arithmetic on unrelated random matrices), and so do
+  Lemma 3 at rank 2 and Observation 4 for a companion-form U. Those six rows
+  test the engine's arithmetic, not its periods, and are now named
+  "Theorem 1 identity in the engine's arithmetic, rank 2 (10 samples)" and
+  likewise at rank 4, rank-4 CY3 and rank 8, "Lemma 3 identity in the
+  engine's arithmetic (rank 2)" and "Observation 4 identity in the engine's
+  arithmetic (CY3, companion form)".
+- Five self-suite rows are renamed for what they now check: 'Coq daemon
+  startup' is 'Coq daemon rejects a false theorem', 'NTT Coq certificate
+  emitted' is 'NTT Coq certificate rejects a wrong output', 'Coq certificate
+  generation' is 'Coq batch certificate rejects a wrong zeta', 'Coq
+  certificate generated' is 'Engine 6 Coq certificate rejects a wrong λ₂',
+  and "Riccati U' = -U^2 - Q" is "Riccati inputs: U the Legendre periods'
+  connection, U′ and U″ its derivatives". With the fixes above, 'B3:
+  Near-singular curves' is 'B3: Small embedding degree', the SafeCurves case
+  'near-singular mod 8380417' is 'embedding degree 6 mod 147457', and
+  'Conjecture 7 + genus-2 residue theorem verified by coqc' is "Conjecture 7
+  and Paper 7 Table 1 on this run's residues, verified by coqc". The two
+  'Primitivity' rows are "Engine zetas are FIPS 203's: 17^BitRev7(i) mod q,
+  17 of order 256" and "Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q,
+  1753 of order 512".
 
 ### Fixed
 
@@ -207,8 +95,9 @@ rebuilt engines.
   definition, the point count and the twist's count, each certified, with
   #E + #E′ = 2p + 2, and the cubic count against complex multiplication.
   Point validation runs at every p, where before it ran only for p ≡ 3 mod 4.
-  Anomalous and near-singular curves are findings, as before. The
-  self-suite still has 160 checks.
+  Anomalous curves are findings, as before; the near-singular finding is
+  replaced by the embedding degree (below). The self-suite still has 160
+  checks.
 - **The cubic engine overflowed and accepted unreduced points.**
   - `cubic_solution_count` computed Sol₃ = p² + (p − 1)·B(a, b) in 64 bits,
     wrong past p ≈ 3 × 10⁹. It now computes in 128 bits and returns −2 when
@@ -314,8 +203,6 @@ rebuilt engines.
     the curve audit reported "curve singular", passed, and dropped its Hasse
     check. `pq_verify/ec.py` replaces that count, with a certificate for
     every count (the elliptic-curve entry above).
-  - The two "Coq certificate generated" checks passed without looking for
-    the file. They now check that it exists and is not empty.
   - **The ML-DSA full-NTT check was circular.** It compared 27 butterflies of
     pq-verify's own Python layer with the same formula, and sent one through
     the 32-bit engine. It now sends all 1,024 through that engine, 64 at a
@@ -323,6 +210,112 @@ rebuilt engines.
     through the 16-bit one. A wrong output anywhere in any layer fails it.
     Its progress line said 7 layers and 896 butterflies, ML-KEM's numbers;
     it now says 8 and 1,024.
+- **26 of the self-suite's 160 checks could not fail, 15 of them among the
+  54 counted as post-quantum evidence.** A re-audit of every row found each
+  passing whatever the code under it did. Each now fails when its claim is
+  false, and for each a test breaks the code it is about and requires the
+  row to fail, and fails on the code before this fix. There are still
+  160.
+  - **FIPS 205 sizes (12 rows)** checked the size table against arithmetic
+    on itself (pk = 2n with n = pk/2, and sig > 10 pk). Each size is now
+    checked against FIPS 205's formulas from Table 2's parameters, pinned
+    separately, and against the lengths in NIST's ACVP keyGen vectors. With
+    slh-dsa installed, its parameters must equal Table 2, and NIST's first
+    keyGen vector of each set must come out byte-exact.
+  - **All 3328 inverses in Z_3329** checked Python's own `pow(a, q - 2, q)`,
+    which no defect in pq-verify could make fail. Every a now goes through
+    the engine.
+  - **The three Coq certificate rows** checked at most that a file
+    pq-verify had just written existed. Each is now a control: the same
+    certificate with one value wrong, which coqc must reject. The values are
+    an NTT output, a zeta and λ₂. Without coqc the controls are skipped, as
+    the certificates' verification already was, so a run without Coq passes
+    three fewer.
+  - **The Coq daemon wrote to coqtop and never read a reply.** 'Batch 16
+    theorems' and 'Conjecture 7 via persistent Coq daemon' therefore
+    accepted any theorem, true or false, and 'Coq daemon startup' was a
+    hard-coded True. The daemon now reads coqtop's verdict on each theorem,
+    up to a marker. A theorem counts only if coqtop proves it and finds it
+    closed under the global context. The startup row is now a control that a
+    false theorem is rejected, and the Conjecture 7 row has one too.
+  - **CryptoMiniSat5 comparison** timed CMS5 on unit clauses and was a
+    hard-coded True. CMS5 now decides the AES system and the first 100 of the
+    GF(2) row's random systems, most of them unsatisfiable. Its verdicts
+    must agree with the engine's, and each model is checked against every
+    equation.
+  - **Conformity rows.** 'Valid computation' checked the engine's valid
+    flag, which is 0 only for ω = 0, on an input where it never is. The
+    engine must now also refuse ω = 0. 'Conformity D(t)', one row per curve
+    and three in the suite, checked that same flag. It now checks D against
+    2u′ + 4u² with u = Δ′/(12Δ), from the discriminant itself.
+  - **Riccati U′ = −U² − Q** (Engine 6, rank 2) counted a flag the engine
+    sets to 1 unconditionally: the engine defines Q as −(U′ + U²). The row
+    now checks what the equation rests on. The Legendre periods
+    F(z) = ₂F₁(½, ½; 1; z) and F(1 − z) must satisfy (ω, ω′)′ = U(ω, ω′) with
+    the engine's U, and the engine's U′ and U″ must equal central
+    differences of its U and U′. The engine exports U, U′ and U″ for this
+    (`period_legendre_connection`).
+  - **Python CFL pipeline ×100** timed a deterministic function and
+    repeated the parser's round trip. Each run now also takes a random
+    one-character edit of the specification. The edit must be rejected with
+    a line and column, or still be a specification that prints back to
+    itself; anything else, a crash among them, fails the row. 40,000 random
+    edits of the two specifications found nothing else.
+- **Six more rows checked less than they said.**
+  - 'GF(2) random systems' counted an "unsatisfiable" answer as verified
+    without checking it, 874 of its 1000. 'Null-space enumeration' did the
+    same, and compared the number of free variables only with the engine's
+    own. Both now decide each system's consistency and rank by elimination
+    apart from the engine, and check every assignment against every
+    equation. 'Unique solution (full-rank)' now requires the pinned
+    assignment.
+  - 'NTT output matches FIPS 203 reference' and 'Dilithium NTT matches FIPS
+    204 reference' compared two Python transforms that share one zeta table.
+    Both must now also equal the NTT's definition, computed without
+    butterflies or the table: f mod X² − ζ^(2·BitRev7(i)+1) for ML-KEM, and
+    f(ζ^(2·BitRev8(i)+1)) for ML-DSA.
+  - 'Correct NTT passes' (Freivalds) checked the engine's NTT only with a
+    Freivalds check that shares its zeta table. The NTT must now also be
+    FIPS 203's, by the definition.
+
+- **The near-singular finding is gone.** It flagged a curve HIGH when
+  |4a³ + 27b²|/p < 0.01, but over F_p a curve is singular or it is not, and
+  that ratio depends on which integers stand for a and b. In its place the
+  curve audit checks the embedding degree, SafeCurves' transfer criterion: a
+  HIGH finding when the largest prime-order subgroup's k = ord_ℓ(p) is at
+  most (ℓ − 1)/100, checked up to k = 100 (ECC.md). 'B3: Near-singular
+  curves' is now 'B3: Small embedding degree': ordinary curves with k = 1, 3,
+  4 and 6, each found by search and counted with a certificate at run time,
+  and two controls with k in the tens of thousands. The SafeCurves case
+  'near-singular mod 8380417' is now 'embedding degree 6 mod 147457'. Where
+  #E cannot be factored within a step limit, an INFO finding says the degree
+  was not checked (`pq_verify.ec.largest_prime_factor`).
+- **The Engine 6 Coq certificate stated integers fixed in this file,** and
+  its "genus-2 residue theorem" was a + b − b − a = 0. It now states the
+  residues this run computes exactly (SymPy). Conjecture 7 is stated on the
+  mirror quintic's residues, and the genus-2 residues, computed from the
+  engine's own M(z) with SymPy's exact derivative, must equal Paper 7's
+  Table 1. The residue theorem stays, described for what it is: true of any
+  connection of that shape. The daemon's Conjecture 7 row uses the same
+  residues, and without SymPy the three rows are skipped.
+
+- **The five zeta rows tested no implementation.** 'ζ^256 ≡ 1 mod q',
+  'ζ^128 ≢ 1 mod q (primitive)' and '128 distinct twiddle factors' applied
+  Python's pow to pq-verify's constant 17, and the two 'Primitivity' rows did
+  the same for 17 and 1753. The 16-bit and 32-bit engines now export the
+  zeta tables their NTTs and Freivalds checks use. The three twiddle rows
+  check the 16-bit engine's: its root has order 256, and it holds each of the
+  root's first 128 powers once. The two primitivity rows compare each
+  engine's table with ζ^BitRev(i) mod q, computed apart from the engine for
+  FIPS's ζ = 17 and ζ = 1753, and keep the order checks. That ties the tables
+  to the standard's definition, given its ζ: a different root of the same
+  order would leave every table consistently wrong, and only the standard's
+  text says 17 and 1753.
+- **A small trace was a HIGH finding where it carries no attack.**
+  "Near-anomalous" fired for every |t| ≤ 2, and two of the self-suite's own
+  curves were flagged for traces −1 and −2, which have no transfer attack. It
+  is now a finding for trace 2 only (#E = p − 1, embedding degree 1). Trace 0
+  is the supersingular finding, and trace 1 the anomalous one.
 
 ## [2.13.0] — 2026-10-19
 

@@ -8677,11 +8677,11 @@ def test_ec_count_uses_sea_from_2_64_to_its_limit():
 
 
 # ---- Self-suite rows that could not fail ----------------------------------------------
-# Through 2.14.0 each row below passed whatever the code under it did: a
+# Through 2.13.0 each row below passed whatever the code under it did: a
 # hard-coded True, a daemon that never read a verdict, a size table checked
 # against arithmetic on itself, Python's own pow, a file that had just been
 # written, an engine flag that is never 0. Each test breaks the code a row
-# is about and requires the row to fail; every one of them passed on 2.14.0.
+# is about and requires the row to fail, and fails on the code before the fix.
 
 import shutil as _shutil
 import sys as _sys
