@@ -16,6 +16,37 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The DQBF stage decided neither its clauses nor its quantifiers.** It
+  turned each clause into an XOR equation with fresh variables that nothing
+  else constrained, and solved for one assignment of every variable,
+  universals included, so dependency sets played no part. Its answer of
+  satisfiable said nothing about the formula. It gives that answer for
+  ∀u ∃x(∅). x ⊕ u = 0 and for the four 2-clauses over two variables, both
+  false, and it gave it for the Phase 4b module it checks, which is false
+  too, while all seven of its checks passed. `pq_verify/dqbf.py` now decides
+  a DQBF exactly, to the
+  specification in [DQBF.md](DQBF.md):
+  - an XOR matrix by affine Skolem functions, which are complete there, from
+    a linear system over GF(2) solved on `libpqv_gf2`;
+  - one with clauses by universal expansion, each constraint instantiated
+    over the universals it reads, and a CDCL solver, while the expansion has
+    at most 2¹⁸ variables and clauses; beyond that it is CANNOT VERIFY,
+    unless the XOR constraints alone refute it.
+
+  Every answer carries a certificate that a checker apart from the solver
+  verifies from the formula: Skolem functions checked against every
+  constraint, equations of the Skolem system that sum to 0 = 1, or a RUP
+  proof. An answer whose certificate fails is a CRITICAL finding, not a
+  result. The module parser was a set of regular expressions: it took
+  `parity="2"` (read as 0), skipped elements it did not know, accepted a
+  dependency on an existential and stopped with a KeyError on a misspelled
+  `deps`. It now parses the XML and refuses anything outside the format. The
+  self-suite still has seven DQBF checks: `F2 linearizer`, `GF(2) solve` and
+  `End-to-end pipeline` give way to `Phase 4b module decided`, `False
+  formulas refuted` and `Tampered certificates rejected`, and `1000-var DQBF
+  stress` decides a 1,000-variable formula planted to be true and checks
+  its Skolem functions. The DQBF stage is on the research track, and no
+  verdict on any library used it.
 - **The self-suite's engine checks could pass without checking what their
   names claim.** None of this reached a verdict on a library:
   `--audit-so` judges an NTT with the known-answer and Freivalds checks, and
@@ -34,13 +65,10 @@ versioning](https://semver.org/spec/v2.0.0.html).
     passed all three. `10,000 keygen instances` skipped such an instance,
     though each of its systems has the secret as a solution. All four now
     fail on it.
-  - **Four more checks could not fail on the case they name.**
+  - **Three more checks could not fail on the case they name.**
     - `Deterministic output hash` reported the hash of 1,000 engine
       butterflies and passed whatever it was. It now has to equal the hash of
       the same butterflies computed in Python.
-    - `1000-var DQBF stress` accepted any answer of satisfiable. Its system
-      is built around a known solution, and the assignment returned must now
-      satisfy it.
     - `B4: Anomalous-trace curves` passed as 0/0 when it found no anomalous
       curve. Each of its seven primes has one, so finding none now fails.
     - The cubic count was checked against itself. `cubic_solution_count`

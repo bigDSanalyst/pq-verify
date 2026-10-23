@@ -7372,3 +7372,454 @@ def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
         for m in row.get("ct_mutants", []):
             assert m["set"] in row["sets"] and m["fails"]
             assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}, m["name"]
+
+
+# ----------------------------------------------------------------------
+# DQBF (DQBF.md). Through 2.13.0 the pipeline turned clauses into XOR
+# equations with unconstrained fresh variables and solved for one
+# assignment of every variable, universals included: it decided neither
+# the clauses nor the quantifiers. pq_verify/dqbf.py decides a DQBF
+# exactly, and every answer carries a certificate that a checker separate
+# from the solver verifies.
+# ----------------------------------------------------------------------
+
+import itertools as _it
+import random as _random
+
+
+def _dqbf():
+    from pq_verify import dqbf
+    return dqbf
+
+
+def _skolem_brute(f):
+    """True iff some choice of Skolem functions (truth tables over each
+    existential's dependencies) satisfies every constraint on every
+    assignment of the universals. Written apart from pq_verify.dqbf."""
+    deps = {x: [u for u in f.universals if u in f.existentials[x]] for x in f.order}
+    slots = [(x, t) for x in f.order for t in _it.product((0, 1), repeat=len(deps[x]))]
+    for bits in _it.product((0, 1), repeat=len(slots)):
+        table = dict(zip(slots, bits))
+        ok = True
+        for sig in _it.product((0, 1), repeat=len(f.universals)):
+            val = dict(zip(f.universals, sig))
+            for x in f.order:
+                val[x] = table[(x, tuple(val[u] for u in deps[x]))]
+            if (any(sum(val[v] for v in n) % 2 != p for n, p in f.xors)
+                    or any(not any(val[v] == pos for v, pos in c) for c in f.clauses)):
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
+def _random_dqbf(rng, n, m, nx, nc, kmax=4, pdep=0.5):
+    D = _dqbf()
+    f = D.DQBF()
+    us = [f"u{i}" for i in range(n)]
+    f.forall(*us)
+    xs = [f"x{i}" for i in range(m)]
+    for x in xs:
+        f.exists(x, [u for u in us if rng.random() < pdep])
+    allv = us + xs
+    for _ in range(nx):
+        f.xor(rng.sample(allv, min(rng.randint(1, kmax), len(allv))), rng.randint(0, 1))
+    for _ in range(nc):
+        f.clause([(v, rng.random() < 0.5)
+                  for v in rng.sample(allv, min(rng.randint(1, kmax), len(allv)))])
+    return f
+
+
+def _recheck(f, d):
+    """d's certificate, checked again from the formula."""
+    D = _dqbf()
+    if d.truth is None:
+        return True
+    if d.method == "affine-skolem":
+        return (D.check_affine(f, d.certificate) if d.truth
+                else D.check_refutation(f, d.certificate))
+    return (D.check_tables(f, d.certificate) if d.truth
+            else D.check_expansion_refutation(f, d.certificate))
+
+
+def test_dqbf_decisions_agree_with_every_choice_of_skolem_functions():
+    D = _dqbf()
+    rng = _random.Random(20261022)
+    seen = set()
+    for _ in range(700):
+        f = _random_dqbf(rng, rng.randint(0, 3), rng.randint(1, 3), rng.randint(0, 4),
+                         0 if rng.random() < 0.35 else rng.randint(1, 5))
+        if sum(1 << len(f.existentials[x]) for x in f.order) > 12:
+            continue
+        d = D.decide(f)
+        want = _skolem_brute(f)
+        assert d.truth is want, (f.universals, f.existentials, f.xors, f.clauses, d)
+        assert D.brute_force(f) is want
+        assert _recheck(f, d)
+        seen.add((d.method, d.truth))
+    assert seen == {("affine-skolem", True), ("affine-skolem", False),
+                    ("expansion", True), ("expansion", False)}
+
+
+def test_dqbf_the_formulas_the_old_pipeline_called_satisfiable_are_false():
+    D = _dqbf()
+    from pq_verify.core import _PHASE4B_MODULE
+    a = D.DQBF().forall("u").exists("x", []).xor(["x", "u"], 0)
+    b = D.DQBF().exists("x1").exists("x2")
+    for s1, s2 in _it.product((True, False), repeat=2):
+        b.clause([("x1", s1), ("x2", s2)])
+    _, m = D.parse_module(_PHASE4B_MODULE)
+    for f in (a, b, m):
+        d = D.decide(f)
+        assert d.truth is False and _recheck(f, d) and _skolem_brute(f) is False
+
+
+def test_dqbf_affine_skolem_and_expansion_agree_beyond_enumeration():
+    D = _dqbf()
+    rng = _random.Random(7)
+    truths = set()
+    for _ in range(150):
+        n, m = rng.randint(2, 7), rng.randint(3, 10)
+        f = D.DQBF()
+        us = [f"u{i}" for i in range(n)]
+        f.forall(*us)
+        xs = [f"x{i}" for i in range(m)]
+        for x in xs:
+            f.exists(x, [u for u in us if rng.random() < 0.4])
+        sol = {x: (rng.randint(0, 1), {u for u in f.existentials[x] if rng.random() < 0.5})
+               for x in xs}
+        for _ in range(rng.randint(2, 12)):
+            E = rng.sample(xs, rng.randint(1, min(5, m)))
+            if rng.random() < 0.7:           # planted: holds under sol
+                W = set()
+                for x in E:
+                    W ^= sol[x][1]
+                f.xor(E + sorted(W), sum(sol[x][0] for x in E) % 2)
+            else:
+                f.xor(E + rng.sample(us, rng.randint(0, 2)), rng.randint(0, 1))
+        a = D.decide(f)
+        e = D._decide_expansion(f, D.MAX_CONFLICTS)
+        assert a.method == "affine-skolem" and e.method == "expansion"
+        assert a.truth is e.truth and _recheck(f, a)
+        truths.add(a.truth)
+    assert truths == {True, False}
+
+
+def test_dqbf_skolem_system_on_the_engine_agrees_with_elimination():
+    D = _dqbf()
+    core, eng = _all_engines()
+    rng = _random.Random(5)
+    engines = set()
+    for trial in range(120):
+        f = _random_dqbf(rng, rng.randint(1, 10), rng.randint(2, 30), rng.randint(1, 40), 0,
+                         kmax=5, pdep=0.3)
+        a, b = D.decide(f, eng["gf2"]), D.decide(f)
+        assert a.truth is b.truth and _recheck(f, a)
+        engines.add((a.truth, a.engine))
+    f = core._dqbf_planted(seed=3, nu=50, nx=300, ncons=500)
+    d = D.decide(f, eng["gf2"])
+    assert d.truth is True and d.engine == "libpqv_gf2" and _recheck(f, d)
+    engines.add((d.truth, d.engine))
+    assert {(True, "libpqv_gf2"), (False, "libpqv_gf2 and elimination")} <= engines
+
+
+def test_dqbf_an_engine_answer_that_fails_its_check_is_a_defect(monkeypatch):
+    D = _dqbf()
+    f = D.DQBF().forall("u1", "u2").exists("x", ["u1"]).exists("y", ["u1", "u2"])
+    f.xor(["x", "u1"], 1).xor(["x", "y", "u2"], 0)
+    real = D._engine_solve
+    monkeypatch.setattr(D, "_engine_solve",
+                        lambda g, n, eqs: ("sat", [b ^ (i == 0) for i, b in
+                                                   enumerate(D._eliminate(n, eqs)[1])]))
+    with pytest.raises(D.CertificateError):
+        D.decide(f, object())
+    monkeypatch.setattr(D, "_engine_solve", lambda g, n, eqs: ("unsat", None))
+    with pytest.raises(D.CertificateError):
+        D.decide(f, object())
+    monkeypatch.setattr(D, "_engine_solve", real)
+
+
+def test_dqbf_xor_constraints_alone_refute_a_formula_with_clauses():
+    D = _dqbf()
+    f = D.DQBF().forall(*[f"u{i}" for i in range(25)])
+    for i in range(25):
+        f.exists(f"x{i}", [f"u{i}"])
+    f.xor(["x0", "x1", "u2"], 0)                 # x0+x1 cannot equal u2
+    f.clause([(f"x{i}", True) for i in range(25)])
+    assert D.route(f) == "cannot-verify"
+    d = D.decide(f)
+    assert d.truth is False and d.method == "affine-skolem"
+    assert D.check_refutation(f, d.certificate)
+
+
+def test_dqbf_local_expansion_is_the_full_expansion():
+    D = _dqbf()
+    rng = _random.Random(11)
+    for _ in range(200):
+        f = _random_dqbf(rng, rng.randint(0, 4), rng.randint(1, 4), rng.randint(0, 3),
+                         rng.randint(0, 4), kmax=3)
+        if any(sum(1 for v in n if v in f.existentials) > 3 for n, _ in f.xors):
+            continue                             # no Tseitin variables to rename
+        nv, cnf, copies = D.expand(f)
+        full = set()
+        for sig in _it.product((0, 1), repeat=len(f.universals)):
+            s = dict(zip(f.universals, sig))
+            var = lambda x: copies[(x, tuple(s[u] for u in f.deps(x)))]
+            for names, p in f.xors:
+                vs = [var(x) for x in f.order if x in names]
+                par = p ^ (sum(s[u] for u in names & f.uset) % 2)
+                for bits in _it.product((0, 1), repeat=len(vs)):
+                    if sum(bits) % 2 != par:
+                        full.add(frozenset(-v if b else v for v, b in zip(vs, bits)))
+            for lits in f.clauses:
+                if any(v in f.uset and s[v] == pos for v, pos in lits):
+                    continue
+                c = frozenset(var(v) if pos else -var(v) for v, pos in lits if v not in f.uset)
+                if not any(-l in c for l in c):
+                    full.add(c)
+        assert {frozenset(c) for c in cnf} == full
+        vbound, cbound = D.expansion_size(f)
+        assert nv == vbound and len(cnf) <= cbound
+
+
+def test_cdcl_answers_match_brute_force_and_carry_checked_certificates():
+    D = _dqbf()
+    rng = _random.Random(3)
+    got = set()
+    for _ in range(400):
+        nv = rng.randint(1, 12)
+        cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), min(nv, rng.randint(1, 3)))]
+               for _ in range(int(nv * rng.uniform(1.5, 6)))]
+        sat, out = D._CDCL(nv, cnf).solve()
+        brute = any(all(any(bits[abs(l) - 1] == (l > 0) for l in c) for c in cnf)
+                    for bits in _it.product((False, True), repeat=nv))
+        assert sat is brute
+        if sat:
+            assert all(any(out[abs(l)] == (l > 0) for l in c) for c in cnf)
+        else:
+            assert D.check_rup(nv, cnf, out)
+        got.add(sat)
+    for nv in (60, 90):                          # beyond brute force: certificates only
+        for _ in range(4):
+            cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), 3)]
+                   for _ in range(int(4.26 * nv))]
+            sat, out = D._CDCL(nv, cnf).solve()
+            assert (all(any(out[abs(l)] == (l > 0) for l in c) for c in cnf) if sat
+                    else D.check_rup(nv, cnf, out))
+    assert got == {True, False}
+
+
+def _naive_rup_check(nv, clauses, proof):
+    if not proof or list(proof[-1]):
+        return False
+    db = [list(c) for c in clauses]
+    for lemma in proof:
+        if any(type(l) is not int or l == 0 or abs(l) > nv for l in lemma):
+            return False
+        val, conflict = {}, False
+        for l in lemma:
+            if val.get(abs(l), l < 0) != (l < 0):
+                conflict = True
+            val[abs(l)] = l < 0
+        changed = not conflict
+        while changed and not conflict:
+            changed = False
+            for c in db:
+                if any(abs(x) in val and val[abs(x)] == (x > 0) for x in c):
+                    continue
+                free = [x for x in c if abs(x) not in val]
+                if not free:
+                    conflict = True
+                    break
+                if len(free) == 1:
+                    val[abs(free[0])] = free[0] > 0
+                    changed = True
+        if not conflict:
+            return False
+        db.append(list(lemma))
+    return True
+
+
+def test_rup_checker_agrees_with_a_naive_checker_on_real_and_tampered_proofs():
+    D = _dqbf()
+    rng = _random.Random(9)
+    outcomes = set()
+    for _ in range(600):
+        nv = rng.randint(2, 10)
+        cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), rng.randint(1, min(3, nv)))]
+               for _ in range(int(nv * rng.uniform(2, 7)))]
+        sat, out = D._CDCL(nv, cnf).solve()
+        if sat:
+            proof = [[rng.choice((1, -1)) * rng.randint(1, nv) for _ in range(rng.randint(0, 3))]
+                     for _ in range(rng.randint(0, 5))] + [[]]
+        else:
+            proof = [list(c) for c in out]
+            r = rng.random()
+            if r < 0.25 and len(proof) > 1:
+                del proof[rng.randrange(len(proof) - 1)]
+            elif r < 0.5 and len(proof) > 1:
+                proof[rng.randrange(len(proof) - 1)] = [rng.choice((1, -1)) * rng.randint(1, nv)
+                                                        for _ in range(rng.randint(1, 3))]
+            elif r < 0.75:
+                cnf = cnf[:rng.randrange(len(cnf))]
+        ok = D.check_rup(nv, cnf, proof)
+        assert ok is _naive_rup_check(nv, cnf, proof)
+        if sat:
+            assert not ok, "a refutation of a satisfiable formula was accepted"
+        outcomes.add(ok)
+    assert outcomes == {True, False}
+
+
+def test_rup_checker_rejects_malformed_proofs():
+    D = _dqbf()
+    cnf = [[1, 2], [-1, 2], [1, -2], [-1, -2]]
+    sat, proof = D._CDCL(2, cnf).solve()
+    assert sat is False and D.check_rup(2, cnf, proof)
+    for bad in ([], [[2]], proof[:-1], [[3]] + proof, [[0]] + proof, [[1.0]] + proof,
+                [[True]] + proof, (tuple(proof))):
+        assert not D.check_rup(2, cnf, bad), bad
+    assert not D.check_rup(2, cnf + [[5]], proof)
+    for bad in ([[1], 3, []], [[1], None], [[1], "x"], [{1: 2}, []]):
+        assert not D.check_rup(2, cnf, bad), bad
+
+
+def test_dqbf_checkers_reject_malformed_certificates_without_raising():
+    D = _dqbf()
+    f = D.DQBF().forall("u").exists("x", ["u"]).xor(["x", "u"], 0)
+    good = {"x": (0, frozenset({"u"}))}
+    assert D.check_affine(f, good)
+    for bad in (None, [], {}, {"x": (0,)}, {"x": [0, {"u"}]}, {"x": (2, set())},
+                {"x": (True, {"u"})}, {"x": (0, ["u"])}, {"x": (0, {"w"})},
+                {"x": (0, {"u"}), "y": (0, set())}):
+        assert not D.check_affine(f, bad), bad
+    g = D.DQBF().forall("u").exists("x", []).xor(["x", "u"], 0)
+    assert D.check_refutation(g, [1])
+    for bad in (None, [], [1, 1], [[1]], [1.0], [True], [7], [-1], (1,), [{}]):
+        assert not D.check_refutation(g, bad), bad
+    h = D.DQBF().forall("u").exists("x", ["u"]).clause([("x", True), ("u", True)])
+    assert D.check_tables(h, {"x": {(0,): 1, (1,): 0}})
+    for bad in (None, {}, {"x": None}, {"x": {(0,): 1}}, {"x": {(0,): 1, (1,): 2}},
+                {"x": {(0,): True, (1,): 0}}, {"x": {(0,): 1, (1,): 0, (2,): 0}},
+                {"x": {0: 1, 1: 0}}):
+        assert not D.check_tables(h, bad), bad
+
+
+def test_cdcl_conflict_budget_is_cannot_verify_not_an_answer():
+    D = _dqbf()
+    f = D.DQBF()                                 # 6 pigeons, 5 holes: false
+    p = {(i, j): f"p{i}_{j}" for i in range(6) for j in range(5)}
+    for v in p.values():
+        f.exists(v)
+    for i in range(6):
+        f.clause([(p[(i, j)], True) for j in range(5)])
+    for j in range(5):
+        for a, b in _it.combinations(range(6), 2):
+            f.clause([(p[(a, j)], False), (p[(b, j)], False)])
+    d = D.decide(f, max_conflicts=3)
+    assert d.truth is None and "CANNOT VERIFY" in d.detail
+    d = D.decide(f)
+    assert d.truth is False and _recheck(f, d)
+
+
+def test_dqbf_formulas_are_validated():
+    D = _dqbf()
+    f = D.DQBF().forall("u").exists("x", ["u"])
+    for bad in (lambda: f.exists("y", ["x"]), lambda: f.exists("y", ["w"]),
+                lambda: f.forall("x"), lambda: f.exists("u"), lambda: f.xor(["x", "z"], 1),
+                lambda: f.xor(["x"], 2), lambda: f.xor(["x"], True),
+                lambda: f.clause([("z", True)]), lambda: f.forall("")):
+        with pytest.raises(D.DQBFError):
+            bad()
+
+
+def test_dqbf_module_parser_is_strict():
+    D = _dqbf()
+    from pq_verify.core import _PHASE4B_MODULE as M
+    name, f = D.parse_module(M)
+    assert name == "ntt_verify" and f.universals == ["u1", "u2"]
+    bad = [
+        M.replace('deps="u1" />', 'dep="u1" />', 1),          # misspelled attribute
+        M.replace(' deps="u2"', ''),                           # no deps
+        M.replace('deps="u2"', 'deps="x1"'),                   # depends on an existential
+        M.replace('parity="1"', 'parity="2"'),
+        M.replace('parity="1"', ''),
+        M.replace("x1 x3</or>", "x1 x9</or>"),                 # undeclared
+        M.replace("x1 x3</or>", "x1 !!x3</or>"),
+        M.replace("x1 x3</or>", "</or>"),                      # empty clause
+        M.replace("</constraints>", "<and>x1 x2</and></constraints>"),
+        M.replace("<vars>", "<vars>stray text"),
+        M.replace('<forall vars="u1 u2" />', '<forall vars="u1 u2">u3</forall>'),
+        M.replace('id="c4"', 'id="c3"'),                       # duplicate id
+        M.replace('<module name="ntt_verify">', '<module>'),
+        M.replace("module", "modul"),
+        '<!DOCTYPE m [<!ENTITY e "x1">]>' + M.strip(),
+        M.replace("</module>", ""),                            # not well-formed
+        "<module name='m'><constraints><xor parity='0'>a</xor></constraints><vars/></module>",
+        "<module name='m'><vars><forall vars='u'/></vars><vars/></module>",
+    ]
+    for text in bad:
+        assert text.strip() != M.strip()
+        with pytest.raises(D.DQBFError):
+            D.parse_module(text)
+
+
+def _dqbf_rows(engines):
+    import pq_verify.core as core
+    r = core.audit_dqbf_pipeline(engines)
+    return r, {t["name"]: t for t in r.tests}
+
+
+def test_dqbf_self_suite_rows_pass_and_each_can_fail(monkeypatch):
+    D = _dqbf()
+    core, eng = _all_engines()
+    r, rows = _dqbf_rows(eng)
+    assert len(rows) == 7 and all(t["passed"] for t in rows.values()), \
+        [(n, t["detail"]) for n, t in rows.items() if not t["passed"]]
+    assert not r.findings
+
+    def failing(**patches):
+        with monkeypatch.context() as m:
+            for name, value in patches.items():
+                m.setattr(D, name, value)
+            r, rows = _dqbf_rows(eng)
+        return r, {n for n, t in rows.items() if not t["passed"]}
+
+    real_parse = D.parse_module
+
+    def lenient(text):                          # accepts every variant as the module
+        return real_parse(core._PHASE4B_MODULE)
+    assert "CFL XML parser" in failing(parse_module=lenient)[1]
+
+    def dropped_dependency(text):
+        name, f = real_parse(text)
+        f.existentials["x2"] = frozenset({"u1"})
+        return name, f
+    assert "DQBF conversion" in failing(parse_module=dropped_dependency)[1]
+
+    r, bad = failing(route=lambda f: "affine-skolem")
+    assert "Structural routing" in bad and any(x["severity"] == "CRITICAL" for x in r.findings)
+
+    forged = lambda f, mc: D.Decision(False, "expansion", [[]], "forged", "cdcl")
+    r, bad = failing(_decide_expansion=forged)
+    assert {"Phase 4b module decided", "False formulas refuted"} <= bad
+
+    assert "Tampered certificates rejected" in failing(check_tables=lambda f, t: True)[1]
+    assert "Tampered certificates rejected" in failing(check_rup=lambda nv, c, p: True)[1]
+
+    real_engine = D._engine_solve
+
+    def corrupt(gf2, n, eqs):
+        out = real_engine(gf2, n, eqs)
+        if out and out[0] == "sat" and n > 100:
+            out = ("sat", [b ^ (i == 7) for i, b in enumerate(out[1])])
+        return out
+    r, bad = failing(_engine_solve=corrupt)
+    assert bad == {"1000-var DQBF stress"}
+    assert any(x["severity"] == "CRITICAL" for x in r.findings)
+
+
+def test_dqbf_self_suite_without_the_engine_skips_only_the_engine_row():
+    r, rows = _dqbf_rows({})
+    assert [n for n, t in rows.items() if t.get("skipped")] == ["1000-var DQBF stress"]
+    assert all(t["passed"] for n, t in rows.items() if not t.get("skipped"))

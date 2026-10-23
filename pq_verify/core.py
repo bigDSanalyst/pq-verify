@@ -3140,236 +3140,261 @@ def audit_c_cfl(engines):
 
 
 # ================================================================
-# ENGINE 7: CFL→DQBF→GF(2)→Null-Space Pipeline (Phase 4b)
-# XML CFL parser, DQBF quantifier-aware decomposition,
-# F₂ linearizer with Tseitin splitting, α_eff feedback.
+# ENGINE 7: the DQBF stage (Phase 4b), decided exactly (DQBF.md)
+# The module format parsed strictly; an XOR matrix decided by affine
+# Skolem functions on the GF(2) engine, one with clauses by universal
+# expansion and CDCL; every answer's certificate checked by a checker
+# that does not use the solver (pq_verify/dqbf.py).
 # ================================================================
 
-from itertools import combinations as _combinations
+# The Phase 4b module. It is false: c1 and c2 force x2 = k constant,
+# x1 = 1+k+u1 and x3 = k+u2 (x1 sees only u1 and x3 only u2), and then
+# c3 fails at u1=1, u2=0 for k=0 and at u1=0, u2=1 for k=1. Through
+# 2.13.0 the pipeline called it satisfiable (DQBF.md).
+_PHASE4B_MODULE = """
+<module name="ntt_verify">
+  <vars>
+    <forall vars="u1 u2" />
+    <exists vars="x1" deps="u1" />
+    <exists vars="x2" deps="u1 u2" />
+    <exists vars="x3" deps="u2" />
+  </vars>
+  <constraints>
+    <xor id="c1" parity="1">x1 x2 u1</xor>
+    <xor id="c2" parity="0">x2 x3 u2</xor>
+    <or id="c3">x1 x3</or>
+    <or id="c4">!x1 x2 !x3</or>
+  </constraints>
+</module>
+"""
 
-class _CModule:
-    """Parsed CFL module."""
-    def __init__(self, name):
-        self.name = name
-        self.foralls = []
-        self.existentials = []  # list of (name, deps_set)
-        self.xor_constraints = []  # (var_names, parity)
-        self.or_constraints = []   # list of (var_name, is_positive) lists
 
-class _CFLXMLParser:
-    """Single-pass XML CFL parser for <module> syntax."""
-    @staticmethod
-    def parse(text):
-        import re
-        m = re.search(r'<module\s+name="([^"]+)"', text)
-        mod = _CModule(m.group(1) if m else 'unnamed')
-        for fm in re.finditer(r'<forall\s+vars="([^"]+)"', text):
-            mod.foralls.extend(fm.group(1).split())
-        for em in re.finditer(r'<exists\s+vars="([^"]+)"\s+deps="([^"]*)"', text):
-            vs = em.group(1).split()
-            ds = set(em.group(2).split()) if em.group(2).strip() else set()
-            for v in vs:
-                mod.existentials.append((v, ds))
-        for xm in re.finditer(r'<xor[^>]*parity="(\d)"[^>]*>([^<]+)</xor>', text):
-            par = int(xm.group(1))
-            vs = xm.group(2).strip().split()
-            mod.xor_constraints.append((vs, par))
-        for om in re.finditer(r'<or[^>]*>([^<]+)</or>', text):
-            lits = []
-            for tok in om.group(1).strip().split():
-                if tok.startswith('!'):
-                    lits.append((tok[1:], False))
-                else:
-                    lits.append((tok, True))
-            mod.or_constraints.append(lits)
-        return mod
-
-class _DQBFFormula:
-    """Dependency QBF with explicit existential dependency sets."""
-    def __init__(self):
-        self.universals = set()
-        self.existentials = set()
-        self.dependencies = {}
-        self.clauses = []
-        self.xor_constraints = []
-        self.var_to_id = {}
-        self.id_to_var = {}
-    def add_var(self, name, qtype, deps=None):
-        if name not in self.var_to_id:
-            vid = len(self.var_to_id) + 1
-            self.var_to_id[name] = vid
-            self.id_to_var[vid] = name
-        if qtype == 'A': self.universals.add(name)
-        elif qtype == 'E':
-            self.existentials.add(name)
-            self.dependencies[name] = deps or set()
-    def add_xor(self, names, parity):
-        self.xor_constraints.append(([self.var_to_id[n] for n in names], parity))
-    def add_clause(self, lits):
-        c = []
-        for name, pos in lits:
-            vid = self.var_to_id[name]
-            c.append(vid if pos else -vid)
-        self.clauses.append(c)
-    @property
-    def num_vars(self): return len(self.var_to_id)
-    @property
-    def num_clauses(self): return len(self.clauses)
-
-class _F2Linearizer:
-    """Converts DQBF to GF(2) XOR equations via ANF + Tseitin."""
-    def __init__(self):
-        self.next_aux = 0
-    def linearize(self, formula):
-        self.next_aux = formula.num_vars
-        xor_eqs = list(formula.xor_constraints)
-        tags = {}
-        for name, vid in formula.var_to_id.items():
-            tags[vid] = 'A' if name in formula.universals else 'E'
-        for clause in formula.clauses:
-            xor_eqs.extend(self._clause_to_gf2(clause))
-        n_total = self.next_aux
-        for aux_id in range(formula.num_vars + 1, n_total + 1):
-            tags[aux_id] = 'aux'
-        return {'xor_equations': xor_eqs, 'num_original_vars': formula.num_vars,
-                'num_total_vars': n_total, 'quantifier_tags': tags}
-    def _clause_to_gf2(self, clause):
-        lits = [(abs(l), l < 0) for l in clause]
-        k = len(lits)
-        if k == 0: return []
-        if k == 1:
-            v, n = lits[0]
-            return [([v], 0 if n else 1)]
-        if k == 2:
-            (v1,n1),(v2,n2) = lits
-            aux = self._aux()
-            if not n1 and not n2: return [([v1,v2,aux], 1)]
-            elif n1 and not n2: return [([v1,aux], 0)]
-            elif not n1 and n2: return [([v2,aux], 0)]
-            else: return [([aux], 0)]
-        if k <= 3:
-            evars = [v for v,_ in lits]
-            auxs = [self._aux() for _ in range(4)]
-            nn = sum(1 for _,n in lits if n)
-            p = 1 if nn == 0 else (0 if nn % 2 == 1 else 1)
-            return [(evars + auxs, p)]
-        return self._split(lits)
-    def _split(self, lits):
-        if len(lits) <= 3: return self._clause_to_gf2([v if not n else -v for v,n in lits])
-        mid = len(lits)//2
-        aux = self._aux()
-        return (self._split(lits[:mid] + [(aux, False)]) +
-                self._split([(aux, True)] + lits[mid:]))
-    def _aux(self):
-        self.next_aux += 1
-        return self.next_aux
-
-def _module_to_dqbf(mod):
-    """Convert parsed CFL module to DQBF formula."""
-    f = _DQBFFormula()
-    for u in mod.foralls: f.add_var(u, 'A')
-    for name, deps in mod.existentials: f.add_var(name, 'E', deps)
-    for vs, p in mod.xor_constraints: f.add_xor(vs, p)
-    for lits in mod.or_constraints: f.add_clause(lits)
+def _dqbf_planted(seed=42, nu=200, nx=800, ncons=1500):
+    """A true XOR DQBF of nu + nx variables: x_i depends on u_(i mod nu),
+    and each constraint sums 2 to 4 existentials and exactly the
+    universals that make it hold under chosen affine Skolem functions."""
+    import random as _rng
+    from . import dqbf as D
+    rng = _rng.Random(seed)
+    f = D.DQBF()
+    us = [f'u{i}' for i in range(nu)]
+    f.forall(*us)
+    xs = [f'x{i}' for i in range(nx)]
+    for i, x in enumerate(xs):
+        f.exists(x, [us[i % nu]])
+    c = {x: rng.randint(0, 1) for x in xs}
+    a = {x: rng.randint(0, 1) for x in xs}
+    for _ in range(ncons):
+        E = rng.sample(xs, rng.randint(2, 4))
+        W = set()
+        for x in E:
+            if a[x]:
+                W ^= f.existentials[x]
+        f.xor(E + sorted(W), sum(c[x] for x in E) % 2)
     return f
 
+
 def audit_dqbf_pipeline(engines):
-    """Phase 4b: CFL→DQBF→GF(2)→null-space end-to-end test."""
+    """The DQBF stage (DQBF.md): the Phase 4b module parsed strictly and
+    decided exactly, every answer's certificate checked, and the checkers
+    shown to reject tampered certificates."""
+    import time as _time
+    from . import dqbf as D
     r = AuditResult('DQBF Pipeline (Phase 4b)')
     lib_gf2 = engines.get('gf2')
+
+    def row(name, run):
+        """run() -> (passed, detail). A rejected certificate is CRITICAL."""
+        t0 = _time.perf_counter()
+        try:
+            ok, detail = run()
+        except D.CertificateError as e:
+            r.add_test(name, False, f'CRITICAL: {e}')
+            r.add_finding('CRITICAL', f'DQBF {name}: an answer failed its '
+                          f'certificate check', str(e))
+            return
+        except Exception as e:           # a defect in the check itself
+            ok, detail = False, f'error: {type(e).__name__}: {e}'
+        r.add_test(name, ok, detail, (_time.perf_counter() - t0) * 1e6)
+
+    def module():
+        return D.parse_module(_PHASE4B_MODULE)
+
+    # 1. The strict parser: the module parses, and each malformed variant
+    # is an error, not a silent misreading.
+    def parser():
+        name, _ = module()
+        bad = {
+            'deps misspelled': _PHASE4B_MODULE.replace('deps="u1" />', 'dep="u1" />', 1),
+            'a dependency on an existential': _PHASE4B_MODULE.replace('deps="u2"', 'deps="x1"'),
+            'parity 2': _PHASE4B_MODULE.replace('parity="1"', 'parity="2"'),
+            'an undeclared variable': _PHASE4B_MODULE.replace('x1 x3</or>', 'x1 x9</or>'),
+            'an unknown element': _PHASE4B_MODULE.replace('</constraints>', '<and>x1 x2</and></constraints>'),
+            'an <exists> without deps': _PHASE4B_MODULE.replace(' deps="u2"', ''),
+        }
+        accepted = []
+        for what, text in bad.items():
+            if text == _PHASE4B_MODULE:
+                accepted.append(f'{what} (variant not built)')
+                continue
+            try:
+                D.parse_module(text)
+                accepted.append(what)
+            except D.DQBFError:
+                pass
+        ok = name == 'ntt_verify' and not accepted
+        return ok, (f'module {name} parsed; {len(bad) - len(accepted)}/{len(bad)} '
+                    f'malformed variants rejected'
+                    + (f' — accepted: {", ".join(accepted)}' if accepted else ''))
+    row('CFL XML parser', parser)
+
+    # 2. The formula is the module's.
+    def conversion():
+        _, f = module()
+        want_x = {'x1': {'u1'}, 'x2': {'u1', 'u2'}, 'x3': {'u2'}}
+        want_xor = [({'x1', 'x2', 'u1'}, 1), ({'x2', 'x3', 'u2'}, 0)]
+        want_cl = [(('x1', True), ('x3', True)), (('x1', False), ('x2', True), ('x3', False))]
+        ok = (f.universals == ['u1', 'u2']
+              and {x: set(d) for x, d in f.existentials.items()} == want_x
+              and [(set(n), p) for n, p in f.xors] == want_xor
+              and f.clauses == want_cl)
+        return ok, (f'{len(f.universals)} universals, {len(f.order)} existentials '
+                    f'with dependency sets, {len(f.xors)} XOR, {len(f.clauses)} clauses'
+                    + ('' if ok else ' — not the module'))
+    row('DQBF conversion', conversion)
+
+    # 3. Routing on the formula's structure.
+    def routing():
+        _, f = module()
+        xor_only = D.DQBF().forall('u').exists('x', ['u']).xor(['x', 'u'], 0)
+        big = D.DQBF()
+        big.forall(*[f'u{i}' for i in range(20)])
+        for i in range(20):
+            big.exists(f'x{i}', [f'u{i}'])
+        big.clause([(f'x{i}', True) for i in range(20)])
+        big.clause([(f'x{i}', False) for i in range(20)])
+        got = (D.route(f), D.route(xor_only), D.route(big))
+        d = D.decide(big)
+        ok = got == ('expansion', 'affine-skolem', 'cannot-verify') and d.truth is None
+        return ok, (f'module (clauses) → {got[0]}; XOR-only → {got[1]}; '
+                    f'clauses over 20 universals → {got[2]}, '
+                    f'{"CANNOT VERIFY" if d.truth is None else d.truth}')
+    row('Structural routing', routing)
+
+    # 4. The module decided, and the answer checked twice: its certificate,
+    # and an enumeration of every choice of Skolem functions.
+    def phase4b():
+        _, f = module()
+        d = D.decide(f, lib_gf2)
+        checked = d.truth is False and D.check_expansion_refutation(f, d.certificate)
+        brute = D.brute_force(f)
+        ok = checked and brute is False and d.method == 'expansion'
+        return ok, (f'{"FALSE" if d.truth is False else d.truth} by {d.method}: '
+                    f'{d.detail}; every Skolem choice enumerated: '
+                    f'{"none works" if brute is False else "one works"}')
+    row('Phase 4b module decided', phase4b)
+
+    # 5. False formulas refuted, one by each procedure.
+    def refuted():
+        a = D.DQBF().forall('u').exists('x', []).xor(['x', 'u'], 0)
+        b = D.DQBF().exists('x1').exists('x2')
+        for s1 in (True, False):
+            for s2 in (True, False):
+                b.clause([('x1', s1), ('x2', s2)])
+        da, db_ = D.decide(a, lib_gf2), D.decide(b, lib_gf2)
+        ok = (da.truth is False and da.method == 'affine-skolem'
+              and D.check_refutation(a, da.certificate)
+              and db_.truth is False and db_.method == 'expansion'
+              and D.check_expansion_refutation(b, db_.certificate)
+              and D.brute_force(a) is False and D.brute_force(b) is False)
+        return ok, (f'∀u ∃x(∅). x⊕u=0: {da.truth}, {da.detail}; '
+                    f'the four 2-clauses: {db_.truth}, {db_.detail}')
+    row('False formulas refuted', refuted)
+
+    # 6. The checkers reject tampered certificates, each made from a valid
+    # certificate known by hand; the procedures must find the valid ones.
+    def tampered():
+        right, total = 0, 0
+
+        def expect(accepted, want):
+            nonlocal right, total
+            total += 1
+            right += accepted == want
+        # Skolem tables: y = u1 AND u2 is the only Skolem function, so every
+        # flipped entry must be rejected.
+        g = D.DQBF().forall('u1', 'u2').exists('y', ['u1', 'u2'])
+        g.clause([('y', False), ('u1', True)]).clause([('y', False), ('u2', True)])
+        g.clause([('y', True), ('u1', False), ('u2', False)])
+        and_table = {'y': {(0, 0): 0, (0, 1): 0, (1, 0): 0, (1, 1): 1}}
+        dg = D.decide(g)
+        expect(dg.truth is True and dg.certificate == and_table, True)
+        expect(D.check_tables(g, and_table), True)
+        for tau in and_table['y']:
+            t = {'y': dict(and_table['y'])}
+            t['y'][tau] ^= 1
+            expect(D.check_tables(g, t), False)
+        # Functions that satisfy the constraint by reading a universal outside
+        # the dependency set: x = u for forall u exists x(). x+u = 0.
+        a = D.DQBF().forall('u').exists('x', []).xor(['x', 'u'], 0)
+        expect(D.check_affine(a, {'x': (0, frozenset({'u'}))}), False)
+        expect(D.check_tables(a, {'x': {(0,): 0, (1,): 1}}), False)
+        # Affine functions: x = 1+u1 and y = 1+u1+u2 are the only ones; a
+        # flipped constant must be rejected.
+        h = D.DQBF().forall('u1', 'u2').exists('x', ['u1']).exists('y', ['u1', 'u2'])
+        h.xor(['x', 'u1'], 1).xor(['x', 'y', 'u2'], 0)
+        affine = {'x': (1, frozenset({'u1'})), 'y': (1, frozenset({'u1', 'u2'}))}
+        dh = D.decide(h, lib_gf2)
+        expect(dh.truth is True and dh.certificate == affine, True)
+        expect(D.check_affine(h, affine), True)
+        expect(D.check_affine(h, dict(affine, x=(0, frozenset({'u1'})))), False)
+        # A refutation that needs all three of its equations: the
+        # coefficients of u in x1 = u, x1 = x2 and x2 = y, with y blind to u.
+        k = D.DQBF().forall('u').exists('x1', ['u']).exists('x2', ['u']).exists('y', [])
+        k.xor(['x1', 'u'], 0).xor(['x1', 'x2'], 0).xor(['x2', 'y'], 0)
+        unknowns, eqs = D.skolem_system(k)
+        rows3 = [i for i, (lhs, _) in enumerate(eqs)
+                 if lhs and all(unknowns[j][1] == 'u' for j in lhs)]
+        dk = D.decide(k, lib_gf2)
+        expect(dk.truth is False and D.check_refutation(k, dk.certificate), True)
+        expect(len(rows3) == 3 and D.check_refutation(k, rows3), True)
+        for i in range(3):
+            expect(D.check_refutation(k, rows3[:i] + rows3[i + 1:]), False)
+        # A RUP proof of the four 2-clauses, checked against each satisfiable
+        # three of them, and with its learned clauses removed.
+        b = D.DQBF().exists('x1').exists('x2')
+        for s1 in (True, False):
+            for s2 in (True, False):
+                b.clause([('x1', s1), ('x2', s2)])
+        nv, cnf, _ = D.expand(b)
+        db_ = D.decide(b)
+        expect(db_.truth is False and D.check_rup(nv, cnf, db_.certificate), True)
+        proof = [[1], []]                    # x1 by propagation, then the conflict
+        expect(D.check_rup(nv, cnf, proof), True)
+        for i in range(len(cnf)):
+            expect(D.check_rup(nv, cnf[:i] + cnf[i + 1:], proof), False)
+        expect(D.check_rup(nv, cnf, [[]]), False)
+        return right == total, (f'{right}/{total} as expected: valid certificates '
+                                f'found and accepted; flipped Skolem table entries, '
+                                f'functions reading a universal outside their '
+                                f'dependency set, a flipped affine constant, a '
+                                f'refutation with an equation dropped and a RUP proof '
+                                f'against satisfiable clauses rejected')
+    row('Tampered certificates rejected', tampered)
+
+    # 7. A 1000-variable XOR DQBF on the GF(2) engine.
     if not lib_gf2:
-        r.add_skip('DQBF pipeline', 'GF(2) engine not available (gcc?)')
+        r.add_skip('1000-var DQBF stress', 'GF(2) engine not available (gcc?)')
         return r
-    import time as _time
-    t0 = _time.perf_counter()
-    cfl_text = """
-    <module name="ntt_verify">
-      <vars>
-        <forall vars="u1 u2" />
-        <exists vars="x1" deps="u1" />
-        <exists vars="x2" deps="u1 u2" />
-        <exists vars="x3" deps="u2" />
-      </vars>
-      <constraints>
-        <xor id="c1" parity="1">x1 x2 u1</xor>
-        <xor id="c2" parity="0">x2 x3 u2</xor>
-        <or id="c3">x1 x3</or>
-        <or id="c4">!x1 x2 !x3</or>
-      </constraints>
-    </module>
-    """
-    mod = _CFLXMLParser.parse(cfl_text)
-    r.add_test('CFL XML parser', mod.name == 'ntt_verify',
-               f'module={mod.name}, {len(mod.foralls)}A + {len(mod.existentials)}E vars, '
-               f'{len(mod.xor_constraints)} XOR + {len(mod.or_constraints)} OR')
-    formula = _module_to_dqbf(mod)
-    r.add_test('DQBF conversion', formula.num_vars == 5 and len(formula.xor_constraints) == 2,
-               f'{formula.num_vars} vars, {len(formula.xor_constraints)} XOR, '
-               f'{formula.num_clauses} OR, deps={len(formula.dependencies)}')
-    lin = _F2Linearizer()
-    gf2 = lin.linearize(formula)
-    n = gf2['num_total_vars']
-    n_eqs = len(gf2['xor_equations'])
-    r.add_test('F2 linearizer', n > 0 and n_eqs > 0,
-               f'{n} vars ({gf2["num_original_vars"]} original + '
-               f'{n - gf2["num_original_vars"]} aux), {n_eqs} XOR eqs')
-    # Route check
-    num_xor = len(formula.xor_constraints)
-    xor_ratio = num_xor / max(formula.num_clauses + num_xor, 1)
-    route = 'LINEARIZE_GF2' if xor_ratio <= 0.8 else 'DIRECT_GF2'
-    r.add_test('Structural routing', True, f'xor_ratio={xor_ratio:.2f}, route={route}')
-    # Solve with pqverify GF(2) engine
-    s = GF2S(); res = GF2R()
-    lib_gf2.gf2_init(ctypes.byref(s), n)
-    for var_ids, parity in gf2['xor_equations']:
-        zi = [v - 1 for v in var_ids]
-        arr = (ctypes.c_int * len(zi))(*zi)
-        lib_gf2.gf2_add_xor(ctypes.byref(s), arr, len(zi), parity)
-    lib_gf2.gf2_solve(ctypes.byref(s), ctypes.byref(res))
-    sat = res.satisfiable
-    t_us = res.solve_time_us
-    nf = res.num_free_vars
-    # Compute rho and alpha_eff
-    tags = gf2['quantifier_tags']
-    rho = nf / n if n > 0 else 1.0
-    alpha_eff = 20.0 * (1 + rho)
-    total_us = (_time.perf_counter() - t0) * 1e6
-    r.add_test('GF(2) solve', sat == 1,
-               f'SAT={sat}, {t_us:.1f}us, free={nf}, rho={rho:.3f}, alpha_eff={alpha_eff:.2f}')
-    r.add_test(f'End-to-end pipeline', True,
-               f'{total_us:.0f}us total (parse+convert+linearize+solve)')
-    # 1000-var stress test
-    import random as _rng
-    _rng.seed(42)
-    stress_n = 1000
-    sf = _DQBFFormula()
-    for i in range(200): sf.add_var(f'u{i}', 'A')
-    for i in range(800): sf.add_var(f'x{i}', 'E', {f'u{i%200}'})
-    all_names = [f'u{i}' for i in range(200)] + [f'x{i}' for i in range(800)]
-    known_sol = {name: _rng.randint(0, 1) for name in all_names}
-    for _ in range(1500):
-        vs = _rng.sample(all_names, _rng.randint(2, 4))
-        par = 0
-        for v in vs: par ^= known_sol[v]
-        sf.add_xor(vs, par)
-    slin = _F2Linearizer()
-    sgf2 = slin.linearize(sf)
-    sn = sgf2['num_total_vars']
-    ss = GF2S(); sr = GF2R()
-    lib_gf2.gf2_init(ctypes.byref(ss), sn)
-    for var_ids, parity in sgf2['xor_equations']:
-        zi = [v-1 for v in var_ids]
-        arr = (ctypes.c_int * len(zi))(*zi)
-        lib_gf2.gf2_add_xor(ctypes.byref(ss), arr, len(zi), parity)
-    lib_gf2.gf2_solve(ctypes.byref(ss), ctypes.byref(sr))
-    # Built around a known solution: it must be satisfiable, and the
-    # assignment returned must satisfy every equation.
-    s_ok = (sr.satisfiable == 1
-            and lib_gf2.gf2_verify(ctypes.byref(ss), sr.assignment) == 1)
-    r.add_test(f'1000-var DQBF stress', s_ok,
-               f'{sn} vars, {len(sgf2["xor_equations"])} eqs, '
-               f'{sr.solve_time_us:.0f}us, free={sr.num_free_vars}'
-               + (', assignment verified' if s_ok else ' \u2014 no verified solution'))
+
+    def stress():
+        f = _dqbf_planted()
+        d = D.decide(f, lib_gf2)
+        ok = (d.truth is True and d.engine == 'libpqv_gf2'
+              and D.check_affine(f, d.certificate))
+        return ok, (f'{f.num_vars} variables ({len(f.universals)} universal), '
+                    f'{len(f.xors)} constraints: {d.truth} on {d.engine}, {d.detail}, '
+                    f'Skolem functions checked')
+    row('1000-var DQBF stress', stress)
     return r
 
 

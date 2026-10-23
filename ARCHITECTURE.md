@@ -142,12 +142,19 @@ constraints:
 
 ```
 CFL spec → lexer → parser → FOL → QBF → field router → engine dispatch
-XML module → DQBF (Henkin dependency sets) → Tseitin linearization → GF(2)
+XML module → DQBF (Henkin dependency sets) → affine Skolem functions on GF(2),
+             or universal expansion → CDCL; either way a checked certificate
 ```
 
-The router picks the correct engine from the constraint structure — XOR-dense
-systems route to GF(2), ring arithmetic to the Z_q engines. Both paths are
-exercised in the self-suite (CFL 6/6, DQBF 7/7).
+The CFL router picks an engine from the constraint structure: XOR-dense
+systems route to GF(2), ring arithmetic to the Z_q engines. The DQBF stage
+decides a module exactly: an XOR matrix by affine Skolem functions, from a
+linear system solved on the GF(2) engine, and one with clauses by universal
+expansion and a CDCL solver while the expansion fits. Every answer carries a
+certificate that a checker apart from the solver verifies
+([DQBF.md](DQBF.md)); through 2.13.0 this path turned clauses into XOR
+equations that constrained nothing and ignored the quantifiers. Both paths
+are exercised in the self-suite (CFL 6/6, DQBF 7/7).
 
 ---
 

@@ -181,3 +181,7 @@ pq-verify's reference and the source it is pinned to would not show.
   directly. The rest check the harness, or are classical and research
   engines, and are never counted as post-quantum evidence
   ([ARCHITECTURE.md](ARCHITECTURE.md#engines-and-where-they-are-heading)).
+  The research track's DQBF stage decides XOR matrices, and matrices with
+  clauses whose expansion has at most 2¹⁸ variables and clauses; a larger
+  one is CANNOT VERIFY unless its XOR constraints alone refute it
+  ([DQBF.md](DQBF.md)).
