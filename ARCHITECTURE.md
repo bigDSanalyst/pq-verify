@@ -141,13 +141,18 @@ Alongside the engines, a pipeline turns a formal specification into field
 constraints:
 
 ```
-CFL spec → lexer → parser → FOL → QBF → field router → engine dispatch
+CFL spec → lexer → parser → checker → FOL → QBF (DQBF stage) → router → engine checks
 XML module → DQBF (Henkin dependency sets) → affine Skolem functions on GF(2),
              or universal expansion → CDCL; either way a checked certificate
 ```
 
-The CFL router picks an engine from the constraint structure: XOR-dense
-systems route to GF(2), ring arithmetic to the Z_q engines. The DQBF stage
+The CFL front end parses a specification strictly and turns each required
+property into a first-order obligation. The obligation is decided twice, as
+a QBF by the DQBF stage and on the specification's model directly, and the
+two must agree. The property is routed by its declared field and dispatched
+to the check registered for it, which must also fail on an instance made
+wrong ([CFL.md](CFL.md)); through 2.13.0 this path dropped what it did not
+parse, routed by substrings and dispatched fixed systems. The DQBF stage
 decides a module exactly: an XOR matrix by affine Skolem functions, from a
 linear system solved on the GF(2) engine, and one with clauses by universal
 expansion and a CDCL solver while the expansion fits. Every answer carries a

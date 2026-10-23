@@ -7823,3 +7823,273 @@ def test_dqbf_self_suite_without_the_engine_skips_only_the_engine_row():
     r, rows = _dqbf_rows({})
     assert [n for n, t in rows.items() if t.get("skipped")] == ["1000-var DQBF stress"]
     assert all(t["passed"] for n, t in rows.items() if not t.get("skipped"))
+
+
+# ----------------------------------------------------------------------
+# CFL front end (CFL.md). Through 2.13.0 its lexer dropped characters it
+# did not know, its parser ended a CONTEXT at REQUIRE's closing brace, its
+# "prenex" step stopped at the first nested quantifier, its router searched
+# the whole FOL string for a field's name, and its dispatch solved fixed
+# systems whatever the specification said.
+# ----------------------------------------------------------------------
+
+def _cfl():
+    from pq_verify import cfl
+    return cfl
+
+
+def _random_closed_formula(rng, depth=4):
+    C = _cfl()
+    arity = {"P": 1, "Q": 2, "R": 2}
+
+    def go(d, scope):
+        if d == 0 or rng.random() < 0.25:
+            name = rng.choice("PQR")
+            args = [C.var(rng.choice(scope)) if scope and rng.random() < 0.85
+                    else C.const(rng.choice("ab")) for _ in range(arity[name])]
+            return C.pred(name, *args)
+        op = rng.choice(["not", "and", "or", "implies", "forall", "exists", "forall", "exists"])
+        if op in ("forall", "exists"):
+            v = rng.choice("xyz")                # names reused: shadowing
+            return (op, v, go(d - 1, scope + [v]))
+        if op == "not":
+            return ("not", go(d - 1, scope))
+        return (op, go(d - 1, scope), go(d - 1, scope))
+
+    f = go(depth, [])
+    for v in sorted(C.free_vars(f)):
+        f = (rng.choice(["forall", "exists"]), v, f)
+    return f
+
+
+def _random_model(rng, f):
+    dom = list(range(rng.randint(1, 3)))
+    arity = {"P": 1, "Q": 2, "R": 2}
+    rels = {}
+    for name, k in arity.items():
+        pool = list(_it.product(dom + ["a", "b"], repeat=k))
+        rels[name] = {t for t in pool if rng.random() < 0.5}
+    return dom, rels
+
+
+def test_cfl_prenex_form_is_equivalent_and_prenex():
+    C = _cfl()
+    rng = _random.Random(31)
+    for _ in range(400):
+        f = _random_closed_formula(rng)
+        prefix, matrix = C.prenex(f)
+        g = C.from_prenex(prefix, matrix)
+        assert len({v for _, v in prefix}) == len(prefix), "bound names not apart"
+        assert not C.free_vars(g)
+        stack = [matrix]
+        while stack:
+            h = stack.pop()
+            assert h[0] not in ("forall", "exists", "implies"), C.show(matrix)
+            if h[0] == "not":
+                assert h[1][0] == "pred", "negation not on a predicate"
+            elif h[0] in ("and", "or"):
+                stack.extend(h[1:])
+        for _ in range(8):
+            dom, rels = _random_model(rng, f)
+            assert C.evaluate(f, dom, rels) == C.evaluate(g, dom, rels), (C.show(f), C.show(g))
+
+
+def test_cfl_qbf_encoding_decided_by_the_dqbf_stage_equals_model_checking():
+    C = _cfl()
+    D = _dqbf()
+    rng = _random.Random(32)
+    seen = set()
+    for _ in range(120):
+        f = _random_closed_formula(rng, depth=3)
+        if len(C.prenex(f)[0]) > 3:
+            continue
+        dom, rels = _random_model(rng, f)
+        truth, d = C.decide(f, dom, rels)
+        assert d.truth is truth and truth == C.evaluate(f, dom, rels)
+        assert _recheck(C.to_qbf(f, dom, rels)[0], d)
+        seen.add(truth)
+    assert seen == {True, False}
+
+
+def test_cfl_lexer_reports_positions_and_refuses_what_it_does_not_define():
+    C = _cfl()
+    toks = C.lex('CONTEXT ( K ) {\n  // a comment\n  DEFINE property <N> { type: "linear"; }\n}')
+    assert [t.kind for t in toks][:5] == ["KEYWORD", "(", "IDENT", ")", "{"]
+    d = next(t for t in toks if t.value == "DEFINE")
+    assert (d.line, d.col) == (3, 3)
+    assert toks[-1].kind == "EOF"
+    for text, where in (('CONTEXT ( K ) { @ }', "line 1, column 17"),
+                        ('CONTEXT ( K ) {\n "open', "line 2, column 2"),
+                        ('"a\\b"', "line 1, column 1"),
+                        ('CONTEXT ( Kéy )', "line 1, column 12")):
+        with pytest.raises(C.CFLError) as e:
+            C.lex(text)
+        assert e.value.messages[0].startswith(where), e.value.messages
+
+
+def test_cfl_parser_keeps_what_follows_require_and_reports_positions():
+    C = _cfl()
+    s = C.parse('CONTEXT ( K ) { REQUIRE Full { N } DEFINE property <N> '
+                '{ type: "linear"; field: "GF2"; } }\nCONTEXT ( L ) { }')
+    assert [c.name for c in s.contexts] == ["K", "L"]
+    assert [d.name for d in s.contexts[0].defines] == ["N"]
+    assert s.contexts[0].requires[0].shape() == ("REQUIRE", "Full", ("N",))
+    for text, where in (('CONTEXT ( K ) { DEFINE property <N> { type: "x" } }', "line 1, column 49"),
+                        ('CONTEXT ( K', "line 1, column 12"),
+                        ('CONTEXT ( K ) { REQUIRE Full { A B } }', "line 1, column 34"),
+                        ('DEFINE', "line 1, column 1")):
+        with pytest.raises(C.CFLError) as e:
+            C.parse(text)
+        assert e.value.messages[0].startswith(where), e.value.messages
+
+
+def test_cfl_checker_lists_every_problem():
+    C = _cfl()
+    text = ('CONTEXT ( K ) {\n'
+            '  DEFINE property <N> { type: "cubic"; field: "GF2"; }\n'
+            '  DEFINE property <N> { type: "linear"; field: "Z_7"; colour: "red"; }\n'
+            '  REQUIRE Partial { M }\n'
+            '}\nCONTEXT ( K ) { }')
+    with pytest.raises(C.CFLError) as e:
+        C.check(C.parse(text))
+    msgs = e.value.messages
+    for words in ("decides linear constraints, not \"cubic\"", "K.N is defined again",
+                  "unknown field \"Z_7\"", "unknown attribute colour", "the only level is Full",
+                  "REQUIRE names M", "context K is defined again"):
+        assert any(words in m for m in msgs), (words, msgs)
+    assert all(m.startswith("line ") for m in msgs)
+
+
+def test_cfl_required_properties_follow_require():
+    C = _cfl()
+    props = C.check(C.parse(
+        'CONTEXT ( A ) { DEFINE property <X> { type: "linear"; field: "GF2"; } '
+        'DEFINE property <Y> { type: "linear"; field: "GF2"; } REQUIRE Full { Y } }'
+        'CONTEXT ( B ) { DEFINE property <Z> { type: "cubic"; field: "cubic"; } }'
+        'CONTEXT ( E ) { DEFINE property <W> { type: "linear"; field: "Z_3329"; } REQUIRE Full { } }'))
+    assert {p.key: p.required for p in props} == {"A.X": False, "A.Y": True, "B.Z": True, "E.W": True}
+
+
+def test_cfl_round_trip_on_random_specifications():
+    C = _cfl()
+    rng = _random.Random(33)
+    fields = list(C.FIELDS)
+    for _ in range(200):
+        parts = []
+        for c in range(rng.randint(0, 3)):
+            items = []
+            names = [f"P{i}" for i in range(rng.randint(0, 3))]
+            for n in names:
+                fld = rng.choice(fields)
+                typ = rng.choice(C.TYPES[C.FIELDS[fld]])
+                items.append(f'DEFINE property <{n}> {{ type: "{typ}"; field: "{fld}"; }}')
+            if names and rng.random() < 0.5:
+                items.insert(rng.randrange(len(items) + 1),
+                             f'REQUIRE Full {{ {", ".join(rng.sample(names, rng.randint(0, len(names))))} }}')
+            parts.append(f"CONTEXT ( C{c} ) {{ {' '.join(items)} }}")
+        text = "\n".join(parts)
+        ast = C.parse(text)
+        assert C.parse(C.to_text(ast)).shape() == ast.shape()
+        C.check(ast)
+
+
+def test_cfl_router_reads_the_parsed_field():
+    C = _cfl()
+    props = C.check(C.parse(
+        'CONTEXT ( GF2_cubic ) { DEFINE property <period_Z_3329> { type: "linear"; field: "Z_8380417"; } }'))
+    assert C.route(props[0]) == "Zq32"
+
+
+def test_cfl_obligations_pass_and_reject_their_corruption():
+    core, eng = _all_engines()
+    for (ctx, name), (field, check) in core.CFL_OBLIGATIONS.items():
+        ok, detail = check(eng)
+        assert ok, (ctx, name, detail)
+        bad = check(eng, corrupt=True)
+        assert bad is not None and not bad[0], (ctx, name, "passed when corrupted")
+
+
+def test_cfl_dispatch_reports_what_it_cannot_run_or_find():
+    import pq_verify.core as core
+    C = _cfl()
+    props = C.check(C.parse('CONTEXT ( Kyber ) { DEFINE property <NTTCorrect> '
+                            '{ type: "linear"; field: "Z_3329"; } }'
+                            'CONTEXT ( X ) { DEFINE property <Y> { type: "linear"; field: "GF2"; } }'))
+    out = core.cfl_dispatch(props, {}, core.CFL_OBLIGATIONS)
+    assert out["Kyber.NTTCorrect"][0] is None and "not built" in out["Kyber.NTTCorrect"][1]
+    assert out["X.Y"] == (None, "no obligation is registered for it")
+    wrong = C.check(C.parse('CONTEXT ( Kyber ) { DEFINE property <NTTCorrect> '
+                            '{ type: "linear"; field: "GF2"; } }'))
+    got = core.cfl_dispatch(wrong, {}, core.CFL_OBLIGATIONS)["Kyber.NTTCorrect"]
+    assert got[0] is False and "runs in Z_3329" in got[1]
+
+
+def test_cfl_self_suite_rows_pass_and_each_can_fail(monkeypatch):
+    import pq_verify.core as core
+    C = _cfl()
+    _, eng = _all_engines()
+
+    def rows(*patches):
+        with monkeypatch.context() as m:
+            for mod, name, value in patches:
+                m.setattr(mod, name, value)
+            r = core.audit_cfl_frontend(eng)
+        return r, {t["name"]: t for t in r.tests}
+
+    r, good = rows()
+    assert len(good) == 6 and all(t["passed"] for t in good.values()), \
+        [(n, t["detail"]) for n, t in good.items() if not t["passed"]]
+
+    def failing(*patches):
+        return {n for n, t in rows(*patches)[1].items() if not t["passed"]}
+
+    real_lex = C.lex
+    assert "CFL lexer" in failing((C, "lex", lambda t: real_lex(t.replace("@", ""))))
+    real_parse = C.parse
+    lenient = lambda t: real_parse(t) if "property" in t else C.Spec([])
+    assert "CFL parser" in failing((C, "parse", lenient))
+    shallow = lambda f: ([("forall", "c")], f[2])    # the old string stripper's answer
+    assert "FOL generation" in failing((C, "prenex", shallow))
+    real_to_qbf = C.to_qbf
+
+    def inverted(f, dom, rels):
+        q, bits = real_to_qbf(f, dom, rels)
+        q.clauses[-1] = tuple((n, not pos) for n, pos in q.clauses[-1])
+        return q, bits
+    r, bad = rows((C, "to_qbf", inverted))
+    assert "QBF encoder" in {n for n, t in bad.items() if not t["passed"]}
+    assert any(x["severity"] == "CRITICAL" for x in r.findings)
+    assert "Field router" in failing((C, "route", lambda p: "GF2"))
+    always = dict(core.CFL_OBLIGATIONS)
+    always[("AES", "SboxAffine")] = ("GF2", lambda engines, corrupt=False: (True, "always"))
+    assert "Engine dispatch (6 obligations)" in failing((core, "CFL_OBLIGATIONS", always))
+
+
+def test_engine6_cfl_rows_pass_and_dispatch_can_fail(monkeypatch):
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    if not all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        pytest.skip("an Engine 6 library did not build")
+    pytest.importorskip("sympy")
+    r = core.audit_engine6_cfl(e6)
+    assert [t["passed"] for t in r.tests] == [True] * 6, [(t["name"], t["detail"]) for t in r.tests]
+    always = dict(core.PAPER7_OBLIGATIONS)
+    always[("Paper7", "Conjecture6")] = ("period", lambda engines, corrupt=False: (True, "always"))
+    monkeypatch.setattr(core, "PAPER7_OBLIGATIONS", always)
+    r = core.audit_engine6_cfl(e6)
+    assert [t["name"] for t in r.tests if not t["passed"]] == \
+        ["Engine dispatch via router (4 obligations)"]
+
+
+def test_cfl_benchmark_row_fails_when_the_round_trip_does(monkeypatch):
+    import pq_verify.core as core
+    C = _cfl()
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_c_cfl({})
+    assert [t["passed"] for t in r.tests] == [True]
+    monkeypatch.setattr(C, "to_text", lambda spec: "")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_c_cfl({})
+    assert [t["passed"] for t in r.tests] == [False]

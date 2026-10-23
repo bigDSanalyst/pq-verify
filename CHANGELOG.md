@@ -16,6 +16,28 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The CFL front end checked nothing it named.** Its lexer dropped
+  characters it did not know. Its parser ended a CONTEXT at REQUIRE's closing
+  brace, so a DEFINE after a REQUIRE was lost, and raised IndexError on input
+  that ended early. Its "prenex" step left nested quantifiers in place, so its
+  QBFs were first-order formulas that nothing decided. Its router searched the
+  whole formula for a field's name, and its dispatch solved five fixed systems
+  whatever the specification said. Its six checks counted tokens, contexts
+  and formulas. `pq_verify/cfl.py` now implements the language as
+  [CFL.md](CFL.md) defines it:
+  - a lexer and a recursive-descent parser that report a line and column,
+    and a checker that lists every problem;
+  - each required property's obligation as a first-order formula with a
+    correct prenex form, decided as a QBF by the DQBF stage, its certificate
+    checked, and on the specification's model directly, which must agree;
+  - routing by the parsed field, and dispatch to a check registered for each
+    property, which must pass and must fail on an instance made wrong.
+
+  Engine 6's CFL section runs the same stages, each Paper 7 property
+  dispatched to its own check. The CFL benchmark passed unconditionally; it
+  now checks that a hundred runs agree and that the AST survives a round
+  trip, and the C build it can time (`PQV_CFL_SO`) is reported, not checked.
+  The self-suite still has 160 checks.
 - **The DQBF stage decided neither its clauses nor its quantifiers.** It
   turned each clause into an XOR equation with fresh variables that nothing
   else constrained, and solved for one assignment of every variable,

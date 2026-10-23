@@ -2,6 +2,7 @@ include README.md
 include LICENSE
 include QUICKSTART.md
 include ARCHITECTURE.md
+include CFL.md
 include DQBF.md
 include HYBRID.md
 include DEMO.ipynb

@@ -31,7 +31,7 @@ Colab:
 Author: Nicholas Maino (iamweare)
 License: MIT
 """
-import os, sys, ctypes, time, random, json, math, hashlib, struct
+import os, sys, ctypes, time, random, json, math, hashlib, struct, itertools
 import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
@@ -2466,93 +2466,10 @@ def audit_freivalds_ntt(lib):
 
 
 # ================================================================
-# CFL FRONT-END + FIELD ROUTER
-# Paper 2 (DOI: 10.5281/zenodo.19302050)
-# CFL \u2192 AST \u2192 FOL \u2192 field router \u2192 engines \u2192 Coq
+# CFL FRONT-END (CFL.md; Paper 2, DOI: 10.5281/zenodo.19302050)
+# CFL text -> tokens -> AST -> checked properties -> FOL obligations
+#   -> QBF, decided by the DQBF stage -> field router -> engine checks
 # ================================================================
-
-class Token:
-    def __init__(s,t,v): s.typ=t; s.val=v
-
-def cfl_lex(text):
-    tokens=[]; kw={'CONTEXT','DEFINE','REQUIRE','property'}; i=0
-    while i<len(text):
-        if text[i:i+2]=='//':
-            while i<len(text) and text[i]!='\n': i+=1
-            continue
-        if text[i].isspace(): i+=1; continue
-        if text[i] in '{}();<>:':
-            tokens.append(Token({'(':'LP',')':'RP','{':'LB','}':'RB',';':'S','<':'LA','>':'RA',':':'C'}[text[i]],text[i])); i+=1; continue
-        if text[i]=='"':
-            j=text.index('"',i+1); tokens.append(Token('STR',text[i+1:j])); i=j+1; continue
-        if text[i].isalnum() or text[i]=='_':
-            j=i
-            while j<len(text) and (text[j].isalnum() or text[j]=='_'): j+=1
-            w=text[i:j]; tokens.append(Token('KW' if w in kw else 'ID',w)); i=j; continue
-        i+=1
-    return tokens
-
-def cfl_parse(tokens):
-    ast={'type':'PROG','ctx':[]}; i=0
-    while i<len(tokens):
-        if tokens[i].typ=='KW' and tokens[i].val=='CONTEXT':
-            i+=1
-            while i<len(tokens) and tokens[i].typ!='ID': i+=1
-            cn=tokens[i].val; i+=1; ctx={'name':cn,'defs':[],'reqs':[]}
-            while i<len(tokens) and not(tokens[i].typ=='RB' and tokens[i].val=='}'):
-                if tokens[i].typ=='KW' and tokens[i].val=='DEFINE':
-                    i+=1
-                    while i<len(tokens) and tokens[i].typ!='LA': i+=1
-                    i+=1; pn=tokens[i].val; i+=1; ps={}
-                    while i<len(tokens) and not(tokens[i].typ=='RB'):
-                        if tokens[i].typ=='ID':
-                            k=tokens[i].val; i+=2; ps[k]=tokens[i].val; i+=1
-                        else: i+=1
-                    ctx['defs'].append({'name':pn,'props':ps})
-                elif tokens[i].typ=='KW' and tokens[i].val=='REQUIRE':
-                    i+=1; ctx['reqs'].append(tokens[i].val)
-                i+=1
-            ast['ctx'].append(ctx)
-        i+=1
-    return ast
-
-def cfl_to_fol(ast):
-    fols=[]
-    for c in ast['ctx']:
-        for d in c['defs']:
-            f=d['props'].get('field','')
-            fols.append(f"forall c (InCtx(c,\"{c['name']}\") => exists p (HasProp(p,\"{d['name']}\") & Field(p,\"{f}\")))")
-    return fols
-
-def field_route(f):
-    if 'Z_3329' in f: return 'Zq'
-    if 'Z_8380417' in f: return 'Zq32'
-    if 'GF2' in f: return 'GF2'
-    if 'cubic' in f: return 'cubic'
-    if 'conformity' in f: return 'conformity'
-    if 'period' in f: return 'period'
-    return 'general'
-
-def fol_to_qbf(fols):
-    """FOL \u2192 QBF encoder. Paper 2 \u00a73.4: prenex normal form with field annotations."""
-    qbfs = []
-    for f in fols:
-        prefix_parts = []
-        body = f
-        while body.startswith('forall') or body.startswith('exists'):
-            q_type = '\u2200' if body.startswith('forall') else '\u2203'
-            space = body.index(' ', 0)
-            rest = body[space+1:]
-            paren = rest.index('(')
-            var = rest[:paren].strip()
-            prefix_parts.append(f'{q_type}{var}')
-            body = rest[paren+1:]
-            if body.endswith(')'): body = body[:-1]
-        prefix = ' '.join(prefix_parts) if prefix_parts else '\u2200x'
-        matrix = body.replace('=>', '\u2192').replace('&', '\u2227').replace('|', '\u2228')
-        qbfs.append({'prefix': prefix, 'matrix': matrix, 'fol': f,
-                     'field': field_route(f)})
-    return qbfs
 
 CFL_SPEC = '''
 CONTEXT ( Kyber ) {
@@ -2572,88 +2489,439 @@ CONTEXT ( Curves ) {
 }
 '''
 
+# An obligation's check takes the engines and returns (passed, detail), or
+# None when an engine it needs is missing. With corrupt=True it runs on an
+# instance made wrong on purpose, which it must reject.
+
+def _ob_mlkem_ntt(engines, corrupt=False):
+    lib = engines.get('zq')
+    if not lib:
+        return None
+    rng = random.Random(203)
+    f = [rng.randrange(KYBER_Q) for _ in range(256)]
+    zetas = _kyber_zeta_table()
+    cur, n_bf = f, 0
+    for layer in range(7):
+        nxt = _ntt_layer(cur, layer, zetas)
+        if corrupt and layer == 3:
+            nxt[17] = (nxt[17] + 1) % KYBER_Q
+        ok, nb, _ = _verify_ntt_layer(lib, cur, nxt, layer, zetas)
+        n_bf += nb
+        if not ok:
+            return False, f'layer {layer + 1} has no solution with its outputs'
+        cur = nxt
+    if cur != _reference_ntt(f):
+        return False, 'the layers do not compose to FIPS 203 Algorithm 9'
+    return True, (f'7 layers, {n_bf} butterflies on the Zq engine, composing to '
+                  f'FIPS 203 Algorithm 9')
+_ob_mlkem_ntt.corruption = 'an output of layer 4 off by one'
+
+
+def _ob_mlkem_keygen(engines, corrupt=False):
+    lib = engines.get('zq')
+    if not lib:
+        return None
+    rng = random.Random(2031)
+    Q, k, n = KYBER_Q, 3, 50
+    s, res = ZqS(), ZqR()
+    for trial in range(n):
+        while True:
+            A = [[rng.randrange(Q) for _ in range(k)] for _ in range(k)]
+            det = (A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+                   - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+                   + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0])) % Q
+            if det:
+                break
+        sec = [rng.randrange(Q) for _ in range(k)]
+        rhs = [sum(A[i][j] * sec[j] for j in range(k)) % Q for i in range(k)]
+        if corrupt and trial == n // 2:
+            rhs[0] = (rhs[0] + 1) % Q
+        lib.zq_init(ctypes.byref(s), k, Q)
+        for i in range(k):
+            lib.zq_add_equation(ctypes.byref(s), (ctypes.c_uint16 * k)(*A[i]), rhs[i])
+        lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
+        if res.satisfiable != 1 or [res.assignment[j] for j in range(k)] != sec:
+            return False, f'instance {trial + 1}: the engine did not return the secret'
+    return True, f'{n} invertible systems A·s = t − e: the Zq engine returns each secret'
+_ob_mlkem_keygen.corruption = 'one right-hand side off by one'
+
+
+def _ob_mldsa_ntt(engines, corrupt=False):
+    lib = engines.get('zq32')
+    if not lib:
+        return None
+    rng = random.Random(204)
+    f = [rng.randrange(DILI_Q) for _ in range(256)]
+    zetas = _dilithium_zeta_table()
+    cur, n_bf = f, 0
+    for layer in range(8):
+        nxt = _ntt_layer_dili(cur, layer, zetas)
+        if corrupt and layer == 5:
+            nxt[200] = (nxt[200] + 1) % DILI_Q
+        ok, nb, _ = _verify_ntt_layer_dili(lib, cur, nxt, layer, zetas)
+        n_bf += nb
+        if not ok:
+            return False, f'layer {layer + 1} has no solution with its outputs'
+        cur = nxt
+    if cur != _reference_ntt_dili(f):
+        return False, 'the layers do not compose to FIPS 204 Algorithm 41'
+    return True, (f'8 layers, {n_bf} butterflies on the Zq32 engine, composing to '
+                  f'FIPS 204 Algorithm 41')
+_ob_mldsa_ntt.corruption = 'an output of layer 6 off by one'
+
+
+_AES_AFFINE = [[1, 0, 0, 0, 1, 1, 1, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 1, 1, 0, 0, 0, 1, 1],
+               [1, 1, 1, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 0, 0, 0], [0, 1, 1, 1, 1, 1, 0, 0],
+               [0, 0, 1, 1, 1, 1, 1, 0], [0, 0, 0, 1, 1, 1, 1, 1]]
+_AES_C = [1, 1, 0, 0, 0, 1, 1, 0]          # 0x63, least significant bit first
+# FIPS 197, Table 4 (the S-box), at six inputs.
+_AES_SBOX_AT = {0x00: 0x63, 0x01: 0x7c, 0x02: 0x77, 0x03: 0x7b, 0x53: 0xed, 0xff: 0x16}
+
+
+def _gf256_inv(a):
+    """a^-1 in GF(2^8) mod x^8+x^4+x^3+x+1, with 0 to 0 (FIPS 197 5.1.1)."""
+    def mul(x, y):
+        p = 0
+        while y:
+            if y & 1:
+                p ^= x
+            x <<= 1
+            if x & 0x100:
+                x ^= 0x11b
+            y >>= 1
+        return p
+    r, e = 1, 254
+    while e:
+        if e & 1:
+            r = mul(r, a)
+        a, e = mul(a, a), e >> 1
+    return r
+
+
+def _ob_aes_sbox(engines, corrupt=False):
+    lib = engines.get('gf2')
+    if not lib:
+        return None
+    M = [row[:] for row in _AES_AFFINE]
+    if corrupt:
+        M[2][5] ^= 1
+    s, res = GF2S(), GF2R()
+    sbox = []
+    for x in range(256):
+        y = _gf256_inv(x)
+        lib.gf2_init(ctypes.byref(s), 16)
+        for i in range(8):
+            lib.gf2_add_xor(ctypes.byref(s), (ctypes.c_int * 1)(i), 1, (y >> i) & 1)
+        for i in range(8):
+            vs = [8 + i] + [j for j in range(8) if M[i][j]]
+            lib.gf2_add_xor(ctypes.byref(s), (ctypes.c_int * len(vs))(*vs), len(vs), _AES_C[i])
+        lib.gf2_solve(ctypes.byref(s), ctypes.byref(res))
+        if not res.satisfiable:
+            return False, f'no solution at input {x:#04x}'
+        sbox.append(sum((res.assignment[8 + i] & 1) << i for i in range(8)))
+    for x, want in _AES_SBOX_AT.items():
+        if sbox[x] != want:
+            return False, f'S({x:#04x}) = {sbox[x]:#04x}; FIPS 197 has {want:#04x}'
+    if sorted(sbox) != list(range(256)):
+        return False, 'not a permutation'
+    if any(sbox[x] in (x, x ^ 0xff) for x in range(256)):
+        return False, 'a fixed or opposite fixed point'
+    return True, ('S(x) = A·x⁻¹ + c solved on the GF(2) engine for all 256 '
+                  'inputs: a permutation with no fixed or opposite fixed point, equal '
+                  'to FIPS 197 at 0x00-0x03, 0x53, 0xff')
+_ob_aes_sbox.corruption = 'one bit of the affine matrix flipped'
+
+
+def _ob_j0_count(engines, corrupt=False):
+    lib = engines.get('cubic')
+    if not lib:
+        return None
+    primes = [7, 13, 19, 31, 37, 43, 61, 67]
+    for p in primes:
+        got = lib.cubic_solution_count(p)
+        want = _fermat_cubic_count(p) + (1 if corrupt and p == 37 else 0)
+        if got != want:
+            return False, f'p = {p}: the engine counts {got}, a direct count {want}'
+    return True, (f'x³+y³+z³ = 0 over F_p for {len(primes)} primes p ≡ 1 '
+                  f'mod 3: the engine\'s p²+(p−1)·B(a,b) equals a direct count')
+_ob_j0_count.corruption = 'one expected count off by one'
+
+
+def _ob_conformity(engines, corrupt=False):
+    lib = engines.get('conformity')
+    if not lib:
+        return None
+    worst = 0.0
+    for t in (0.5, 1.0, 1.5, 2.0):
+        w = math.exp(-t * t / 2)
+        pd = PeriodData(w, -t * w, (t * t - 1) * w, (-t ** 3 + 3 * t) * w, t)
+        res = lib.conformity_compute(ctypes.byref(pd))
+        u_want, d_want = -t, -2.0 + 4 * t * t
+        if corrupt and t == 1.5:
+            d_want += 1e-6
+        err = max(abs(res.u - u_want), abs(res.D - d_want) / max(1.0, abs(d_want)))
+        worst = max(worst, err)
+        if not res.valid or err > 1e-9:
+            return False, f't = {t}: u = {res.u:.12g}, D = {res.D:.12g}; closed forms {u_want}, {d_want}'
+    return True, (f'ω = exp(−t²/2) at 4 points: u = −t and '
+                  f'D = 2u′ + 4u² to {worst:.1e}')
+_ob_conformity.corruption = 'one closed form off by 1e-6'
+
+
+#: (context, property) -> (field, check)
+CFL_OBLIGATIONS = {
+    ('Kyber', 'NTTCorrect'): ('Z_3329', _ob_mlkem_ntt),
+    ('Kyber', 'KeygenValid'): ('Z_3329', _ob_mlkem_keygen),
+    ('Dilithium', 'NTTCorrect'): ('Z_8380417', _ob_mldsa_ntt),
+    ('AES', 'SboxAffine'): ('GF2', _ob_aes_sbox),
+    ('Curves', 'J0Count'): ('cubic', _ob_j0_count),
+    ('Curves', 'Conformity'): ('conformity', _ob_conformity),
+}
+
+
+def cfl_dispatch(props, engines, registry):
+    """Each property's registered check, run on its engine, and run on a
+    corrupted instance: {key: (status, detail)}, status True (passed and
+    rejected the corruption), False, or None (no obligation is registered,
+    or an engine it needs is missing)."""
+    out = {}
+    for p in props:
+        entry = registry.get((p.context, p.name))
+        if entry is None:
+            out[p.key] = (None, 'no obligation is registered for it')
+            continue
+        field, check = entry
+        if field != p.field:
+            out[p.key] = (False, f'declared in {p.field}; its obligation runs in {field}')
+            continue
+        got = check(engines)
+        if got is None:
+            out[p.key] = (None, 'an engine it needs is not built')
+            continue
+        ok, detail = got
+        if ok:
+            what = getattr(check, 'corruption', 'a corrupted instance')
+            bad = check(engines, corrupt=True)
+            if bad is None or bad[0]:
+                ok, detail = False, f'{detail}; but it passed with {what}'
+            else:
+                detail += f'; fails with {what}'
+        out[p.key] = (ok, detail)
+    return out
+
+
+_CFL_BAD_TEXT = {
+    'an unknown character': 'CONTEXT ( Kyber ) { DEFINE property <N> { type: "linear"; field: "Z_3329"; } @ }',
+    'an unterminated string': 'CONTEXT ( Kyber ) { DEFINE property <N> { type: "linear; } }',
+    'a backslash in a string': 'CONTEXT ( K ) { DEFINE property <N> { type: "a\\b"; } }',
+}
+_CFL_BAD_SYNTAX = {
+    'a missing semicolon': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear" field: "GF2"; } }',
+    'a missing closing brace': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; }',
+    'a DEFINE outside a context': 'DEFINE property <N> { type: "linear"; field: "GF2"; }',
+    'input that ends early': 'CONTEXT ( K',
+    'a keyword as a name': 'CONTEXT ( property ) { }',
+}
+_CFL_BAD_MEANING = {
+    'a context defined twice': 'CONTEXT ( K ) { } CONTEXT ( K ) { }',
+    'a property defined twice': ('CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; } '
+                                 'DEFINE property <N> { type: "linear"; field: "GF2"; } }'),
+    'an unknown field': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "Z_7"; } }',
+    'a type the field\'s engine does not decide': 'CONTEXT ( K ) { DEFINE property <N> { type: "cubic"; field: "GF2"; } }',
+    'an unknown attribute': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; level: "x"; } }',
+    'a missing field': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; } }',
+    'REQUIRE naming an undefined property': 'CONTEXT ( K ) { REQUIRE Full { M } }',
+    'an unknown REQUIRE level': ('CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; } '
+                                 'REQUIRE Partial { } }'),
+}
+
+
+def _cfl_stages(r, spec, engines, registry, names, expected, routes, lib_gf2=None):
+    """The six CFL checks on spec (CFL.md): names maps each stage to its row
+    name; expected is the spec's shape; routes maps property keys to engines."""
+    from . import cfl as C
+    from . import dqbf as D
+
+    def row(name, run):
+        t0 = time.perf_counter()
+        try:
+            ok, detail = run()
+        except D.CertificateError as e:
+            r.add_test(name, False, f'CRITICAL: {e}')
+            r.add_finding('CRITICAL', f'CFL {name}: an answer failed its check', str(e))
+            return
+        except Exception as e:           # a defect in the check itself
+            ok, detail = False, f'error: {type(e).__name__}: {e}'
+        r.add_test(name, ok, detail, (time.perf_counter() - t0) * 1e6)
+
+    def rejects(texts, stage):
+        """The cases of texts that stage accepted."""
+        missed = []
+        for what, text in texts.items():
+            try:
+                stage(text)
+                missed.append(what)
+            except C.CFLError as e:
+                if not all(m.startswith('line ') for m in e.messages):
+                    missed.append(f'{what} (no position)')
+        return missed
+
+    def lexer():
+        toks = C.lex(spec)
+        missed = rejects(_CFL_BAD_TEXT, C.lex)
+        return not missed and toks[-1].kind == 'EOF', (
+            f'{len(toks) - 1} tokens; {len(_CFL_BAD_TEXT) - len(missed)}/{len(_CFL_BAD_TEXT)} '
+            f'malformed inputs rejected with a position'
+            + (f' — accepted: {", ".join(missed)}' if missed else ''))
+    row(names['lexer'], lexer)
+
+    def parser():
+        ast = C.parse(spec)
+        round_trip = C.parse(C.to_text(ast)).shape() == ast.shape()
+        # REQUIRE before DEFINE: the DEFINE after it must survive.
+        late = C.parse('CONTEXT ( K ) { REQUIRE Full { } '
+                       'DEFINE property <N> { type: "linear"; field: "GF2"; } }')
+        kept = [d.name for d in late.contexts[0].defines] == ['N']
+        missed = rejects(_CFL_BAD_SYNTAX, C.parse) + rejects(
+            _CFL_BAD_MEANING, lambda t: C.check(C.parse(t)))
+        n_bad = len(_CFL_BAD_SYNTAX) + len(_CFL_BAD_MEANING)
+        ok = ast.shape() == expected and round_trip and kept and not missed
+        n_props = sum(len(c.defines) for c in ast.contexts)
+        return ok, (f'{len(ast.contexts)} context(s), {n_props} properties'
+                    f'{", round trip" if round_trip else ", round trip FAILED"}; '
+                    f'a DEFINE after REQUIRE {"kept" if kept else "LOST"}; '
+                    f'{n_bad - len(missed)}/{n_bad} malformed specifications rejected'
+                    + (f' — accepted: {", ".join(missed)}' if missed else '')
+                    + ('' if ast.shape() == expected else ' — not the expected AST'))
+    row(names['parser'], parser)
+
+    props = C.check(C.parse(spec))
+    required = [p for p in props if p.required]
+
+    def fol():
+        import random as _r
+        rng = _r.Random(1)
+        obligations = [C.obligation(p) for p in required]
+        closed = all(not C.free_vars(f) for f in obligations)
+        # Prenex form against the original on random models; the second
+        # formula reuses a bound name, so it needs renaming apart.
+        x, y = C.var('x'), C.var('y')
+        tricky = ('or', ('forall', 'x', C.pred('P', x)),
+                  ('exists', 'x', ('and', C.pred('Q', x),
+                                   ('not', ('forall', 'y', C.pred('R', x, y))))))
+        disagree = 0
+        for f in obligations + [tricky]:
+            pre, m = C.prenex(f)
+            g = C.from_prenex(pre, m)
+            if not all(q in ('forall', 'exists') for q, _ in pre) or _quantified(m):
+                disagree += 1
+                continue
+            for _ in range(60):
+                n = rng.randint(1, 3)
+                dom = list(range(n))
+                consts = sorted({t[1] for a in _atoms(f) for t in a[2] if t[0] == 'const'})
+                rels = {}
+                for a in _atoms(f):
+                    arity = len(a[2])
+                    pool = [tuple(v) for v in itertools.product(dom + consts, repeat=arity)]
+                    rels[a[1]] = {t for t in pool if rng.random() < 0.5}
+                if C.evaluate(f, dom, rels) != C.evaluate(g, dom, rels):
+                    disagree += 1
+                    break
+        ok = closed and disagree == 0 and len(obligations) == len(required)
+        shown = C.show(C.from_prenex(*C.prenex(obligations[0]))) if obligations else ''
+        return ok, (f'{len(obligations)} closed obligations; prenex forms equal the '
+                    f'originals on random models ({disagree} disagree), e.g. {shown}')
+    row(names['fol'], fol)
+
+    t_dispatch = time.perf_counter()
+    dispatched = cfl_dispatch(props, engines, registry)
+    dispatch_us = (time.perf_counter() - t_dispatch) * 1e6
+    verified = {k for k, (ok, _) in dispatched.items() if ok}
+
+    def qbf():
+        dom, rels = C.model(props, verified)
+        agree, details = 0, []
+        for p in required:
+            truth, d = C.decide(C.obligation(p), dom, rels, lib_gf2)
+            agree += d.truth is truth and truth == (p.key in verified)
+            details.append(d)
+        # Made false: one property unverified, and one in the wrong field.
+        p0 = required[0]
+        dom2, rels2 = C.model(props, verified - {p0.key})
+        t_unv, d_unv = C.decide(C.obligation(p0), dom2, rels2, lib_gf2)
+        wrong = C.Property(p0.context, p0.name, p0.type,
+                           next(f for f in C.FIELDS if f != p0.field),
+                           None, True, p0.line, p0.col)
+        t_wrong, d_wrong = C.decide(C.obligation(wrong), dom, rels, lib_gf2)
+        falsified = (t_unv, d_unv.truth, t_wrong, d_wrong.truth) == (False,) * 4
+        ok = agree == len(required) and falsified
+        sizes = sorted({d.detail.split('expansion ')[-1] for d in details})
+        return ok, (f'{agree}/{len(required)} decided by the DQBF stage, certificates '
+                    f'checked, equal to the model; an unverified property and a wrong '
+                    f'field decided false{"" if falsified else " — NOT"}; '
+                    f'expansion {", ".join(sizes)}')
+    row(names['qbf'], qbf)
+
+    def router():
+        got = {p.key: C.route(p) for p in props}
+        # A name that contains another field's name routes by its field.
+        decoy = C.check(C.parse('CONTEXT ( GF2_cubic ) { DEFINE property <period_Z_8380417> '
+                                '{ type: "linear"; field: "Z_3329"; } }'))
+        by_field = C.route(decoy[0]) == 'Zq'
+        ok = got == routes and by_field
+        return ok, (f'routes: {sorted(set(got.values()))}; names containing other '
+                    f'fields route by their field{"" if by_field else " — NOT"}')
+    row(names['router'], router)
+
+    def dispatch():
+        missing = [k for k, (ok, _) in dispatched.items() if ok is None]
+        if missing:
+            return None, f'could not run: {", ".join(missing)}'
+        failed = [k for k, (ok, _) in dispatched.items() if not ok]
+        return not failed, ('; '.join(f'{k}: {d}' for k, (_, d) in dispatched.items()))
+    ok, detail = dispatch()
+    if ok is None:
+        r.add_skip(names['dispatch'], detail)
+    else:
+        r.add_test(names['dispatch'], ok, detail, dispatch_us)
+
+
+def _atoms(f):
+    if f[0] == 'pred':
+        return [f]
+    if f[0] in ('forall', 'exists'):
+        return _atoms(f[2])
+    return [a for g in f[1:] for a in _atoms(g)]
+
+
+def _quantified(f):
+    if f[0] in ('forall', 'exists'):
+        return True
+    if f[0] == 'pred':
+        return False
+    return any(_quantified(g) for g in f[1:])
+
+
 def audit_cfl_frontend(engines):
-    """CFL \u2192 AST \u2192 FOL \u2192 field router \u2192 engine dispatch \u2192 verify."""
+    """CFL -> AST -> FOL -> QBF -> field router -> engine dispatch (CFL.md)."""
     r = AuditResult('CFL Front-End')
-    t0 = time.perf_counter()
-
-    toks = cfl_lex(CFL_SPEC)
-    r.add_test('CFL lexer', len(toks) > 0, f'{len(toks)} tokens')
-
-    ast = cfl_parse(toks)
-    n_ctx = len(ast['ctx'])
-    r.add_test('CFL parser', n_ctx == 4, f'{n_ctx} contexts (Kyber, Dilithium, AES, Curves)')
-
-    fols = cfl_to_fol(ast)
-    r.add_test('FOL generation', len(fols) == 6, f'{len(fols)} FOL formulas')
-
-    qbfs = fol_to_qbf(fols)
-    qbf_ok = all(q['prefix'] and q['matrix'] and q['field'] for q in qbfs)
-    r.add_test('QBF encoder', qbf_ok and len(qbfs) == 6,
-               f'{len(qbfs)} QBF formulas, fields: {sorted(set(q["field"] for q in qbfs))}')
-
-    routes = [(f, field_route(f)) for f in fols]
-    route_map = {}
-    for f, rt in routes:
-        route_map.setdefault(rt, []).append(f)
-    expected_routes = {'Zq', 'Zq32', 'GF2', 'cubic', 'conformity'}
-    actual_routes = set(route_map.keys())
-    r.add_test('Field router', expected_routes == actual_routes,
-               f'routes: {sorted(actual_routes)}')
-
-    dispatch_ok = 0
-    dispatch_total = 0
-
-    if engines.get('gf2'):
-        dispatch_total += 1
-        s = GF2S(); res = GF2R()
-        engines['gf2'].gf2_init(ctypes.byref(s), 8)
-        vs = (ctypes.c_int*3)(0, 1, 2)
-        engines['gf2'].gf2_add_xor(ctypes.byref(s), vs, 3, 1)
-        engines['gf2'].gf2_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable: dispatch_ok += 1
-
-    if engines.get('zq'):
-        dispatch_total += 1
-        s = ZqS(); res = ZqR()
-        engines['zq'].zq_init(ctypes.byref(s), 4, KYBER_Q)
-        engines['zq'].zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, KYBER_ZETA)
-        vi = (ctypes.c_int*1)(0); vc = (ctypes.c_uint16*1)(1)
-        engines['zq'].zq_add_sparse(ctypes.byref(s), vi, vc, 1, 100)
-        vi = (ctypes.c_int*1)(1); vc = (ctypes.c_uint16*1)(1)
-        engines['zq'].zq_add_sparse(ctypes.byref(s), vi, vc, 1, 200)
-        engines['zq'].zq_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable: dispatch_ok += 1
-
-    if engines.get('zq32'):
-        dispatch_total += 1
-        s32 = Zq32S(); r32 = Zq32R()
-        engines['zq32'].zq32_init(ctypes.byref(s32), 4, DILI_Q)
-        engines['zq32'].zq32_add_ntt_butterfly(ctypes.byref(s32), 0, 1, 2, 3, DILI_ZETA)
-        vi = (ctypes.c_int*1)(0); vc = (ctypes.c_uint32*1)(1)
-        engines['zq32'].zq32_add_sparse(ctypes.byref(s32), vi, vc, 1, 100)
-        vi = (ctypes.c_int*1)(1); vc = (ctypes.c_uint32*1)(1)
-        engines['zq32'].zq32_add_sparse(ctypes.byref(s32), vi, vc, 1, 200)
-        engines['zq32'].zq32_solve(ctypes.byref(s32), ctypes.byref(r32))
-        if r32.satisfiable: dispatch_ok += 1
-
-    if engines.get('cubic'):
-        dispatch_total += 1
-        d = engines['cubic'].find_decomp(13)
-        if d.found: dispatch_ok += 1
-
-    if engines.get('conformity'):
-        dispatch_total += 1
-        t_val = 1.0
-        w = math.exp(-t_val**2/2)
-        pd = PeriodData(w, -t_val*w, (t_val**2-1)*w, (-t_val**3+3*t_val)*w, t_val)
-        cr = engines['conformity'].conformity_compute(ctypes.byref(pd))
-        if cr.valid: dispatch_ok += 1
-
-    elapsed = time.perf_counter() - t0
-    r.add_test(f'Engine dispatch ({dispatch_total} engines)', dispatch_ok == dispatch_total,
-               f'{dispatch_ok}/{dispatch_total} dispatched and verified, {elapsed*1e6:.0f}\u03bcs total')
-
+    _cfl_stages(r, CFL_SPEC, engines, CFL_OBLIGATIONS,
+                names={'lexer': 'CFL lexer', 'parser': 'CFL parser',
+                       'fol': 'FOL generation', 'qbf': 'QBF encoder',
+                       'router': 'Field router',
+                       'dispatch': f'Engine dispatch ({len(CFL_OBLIGATIONS)} obligations)'},
+                expected=(('Kyber', (('DEFINE', 'NTTCorrect', (('type', 'linear'), ('field', 'Z_3329'))),
+                                     ('DEFINE', 'KeygenValid', (('type', 'linear'), ('field', 'Z_3329'))),
+                                     ('REQUIRE', 'Full', ()))),
+                          ('Dilithium', (('DEFINE', 'NTTCorrect', (('type', 'linear'), ('field', 'Z_8380417'))),)),
+                          ('AES', (('DEFINE', 'SboxAffine', (('type', 'linear'), ('field', 'GF2'))),)),
+                          ('Curves', (('DEFINE', 'J0Count', (('type', 'cubic'), ('field', 'cubic'))),
+                                      ('DEFINE', 'Conformity', (('type', 'dynamical'), ('field', 'conformity')))))),
+                routes={'Kyber.NTTCorrect': 'Zq', 'Kyber.KeygenValid': 'Zq',
+                        'Dilithium.NTTCorrect': 'Zq32', 'AES.SboxAffine': 'GF2',
+                        'Curves.J0Count': 'cubic', 'Curves.Conformity': 'conformity'},
+                lib_gf2=engines.get('gf2'))
     return r
 
 # ================================================================
@@ -3079,7 +3347,11 @@ def audit_coq_daemon():
 # ================================================================
 
 def audit_c_cfl(engines):
-    """Benchmark C-compiled CFL pipeline vs Python CFL."""
+    """The CFL front end run 100 times: the same AST, properties and
+    obligations each time, and the AST printed back as CFL parses to itself.
+    A C build of the pipeline can be loaded by opt-in (PQV_CFL_SO) to time
+    against it; its answer is reported, not checked."""
+    from . import cfl as C
     r = AuditResult('C CFL Pipeline')
     # This benchmark used to load ./libgf2_cfl.so and /tmp/libgf2_cfl.so if they
     # happened to exist. Both are attacker-controllable -- the first by anyone
@@ -3105,16 +3377,23 @@ def audit_c_cfl(engines):
                 c_cfl = ctypes.CDLL(_cfl_so)
             except Exception as _e:
                 print(f"  {_BAD} PQV_CFL_SO failed to load: {_e}")
+    t0 = time.perf_counter()
+    first, same, trips = None, True, True
+    for _ in range(100):
+        ast = C.parse(CFL_SPEC)
+        props = C.check(ast)
+        text = C.to_text(ast)
+        trips = trips and C.parse(text).shape() == ast.shape()
+        out = (ast.shape(), tuple(repr(p) for p in props), text,
+               tuple(C.show(C.from_prenex(*C.prenex(C.obligation(p)))) for p in props))
+        first = first or out
+        same = same and out == first
+    elapsed = (time.perf_counter() - t0) / 100
+    r.add_test('Python CFL pipeline \u00d7100', same and trips,
+               f'{elapsed*1e6:.0f}\u03bcs/iter; the same AST, properties and obligations '
+               f'every time{"" if same else " — NOT"}; the printed AST parses to '
+               f'itself{"" if trips else " — NOT"}')
     if c_cfl is None:
-        t0 = time.perf_counter()
-        for _ in range(100):
-            toks = cfl_lex(CFL_SPEC)
-            ast = cfl_parse(toks)
-            fols = cfl_to_fol(ast)
-            qbfs = fol_to_qbf(fols)
-        elapsed = (time.perf_counter() - t0) / 100
-        r.add_test('Python CFL pipeline \u00d7100', True,
-                   f'{elapsed*1e6:.0f}\u03bcs/iter \u2014 C version (sub-100\u03bcs) needs libgf2_cfl.so')
         return r
     class PR(ctypes.Structure):
         _fields_ = [("satisfiable", ctypes.c_int), ("num_variables", ctypes.c_int),
@@ -3127,9 +3406,10 @@ def audit_c_cfl(engines):
         pr = PR()
         spec = b'CONTEXT(Kyber){DEFINE property<NTT>{type:"linear";field:"GF2";}}'
         c_cfl.cfl_verify_api(spec, ctypes.byref(pr))
-        r.add_test('C CFL pipeline', True,
-                   f'total={pr.total_us:.1f}\u03bcs (lex={pr.lex_us:.1f} parse={pr.parse_us:.1f} '
-                   f'solve={pr.solve_time_us:.1f})')
+        r.add_skip('C CFL pipeline',
+                   f'timed, not checked: an external library whose answer pq-verify '
+                   f'cannot verify; total={pr.total_us:.1f}\u03bcs (lex={pr.lex_us:.1f} '
+                   f'parse={pr.parse_us:.1f} solve={pr.solve_time_us:.1f})')
     except Exception as e:
         r.add_test('C CFL pipeline', False, f'API error: {e}')
     return r
@@ -4349,29 +4629,16 @@ def audit_engine6_quintic(lib):
             n_f2 += 1
     r.add_test('f2(z) matches Paper 7 closed form', n_f2 == 5, f'{n_f2}/5')
     # Conjecture 7: lambda_2 = -884266719222068786621093750/97  (exact, via SymPy)
-    try:
+    ratios = _e6_residue_ratios()
+    if ratios is None:
+        r.add_skip('Conjecture 7: CY3 residue rigidity',
+                   'SymPy not available — pip install sympy', 'sympy')
+    else:
         import sympy as sp
-        z = sp.Symbol('z')
-        a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
-        a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
-        U = sp.Matrix([[0,1,0,0],[0,0,1,0],[0,0,0,1],[-a0,-a1,-a2,-a3]])
-        Q = sp.simplify(-(U.diff(z) + U@U))
-        cQ = sp.simplify(U@Q - Q@U)
-        cQ2 = cQ@cQ
-        f2s = sp.cancel(sp.together(cQ2.trace()))
-        f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
-        lam2 = -sp.Rational(884266719222068786621093750, 97)
-        ok_c7 = True
-        for pt in (sp.Integer(0), sp.Rational(1, 3125)):
-            ratio = sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
-            if ratio != lam2:
-                ok_c7 = False
+        ok_c7 = all(q == sp.Rational(*_E6_LAMBDA2) for q in ratios)
         r.add_test('Conjecture 7: CY3 residue rigidity (lambda_2, exact)', ok_c7,
                    'Res(f4)/Res(f2) = -884266719222068786621093750/97 '
                    'at z=0 and z=1/3125')
-    except ImportError:
-        r.add_skip('Conjecture 7: CY3 residue rigidity',
-                   'SymPy not available — pip install sympy', 'sympy')
     return r
 
 # ============================================================
@@ -4386,7 +4653,7 @@ def audit_engine6_genus4(lib):
     rank; see ARCHITECTURE.md, "Engines and where they are heading"."""
     r = _AuditResult('Engine 6d: rank-8 genus-4 (NEW)')
     # Samples >= 2 from any singularity z = 0..7 (rank-8 double-precision floor)
-    samples = [-1.5, -2.5, -5.0, 9.5, 10.0, 12.0, 15.0]
+    samples = list(_E6_G4_SAMPLES)
     n = len(samples)
     nt = n_obs4 = 0
     worst_thm1 = worst_odd = 0.0
@@ -4413,37 +4680,17 @@ def audit_engine6_genus4(lib):
     if nt != n:
         r.add_finding('CRITICAL', f'genus-4 Theorem 1 failed on {n-nt} samples')
     # Conjecture 6 lower bound at g=4: rank of (f2,f4,f6,f8) sample matrix == 4
-    # Gaussian-elimination rank over the sample rows (no numpy dependency).
-    rows = [row[:] for row in fvecs]
-    rank = 0
-    for col in range(4):
-        piv = -1
-        for i in range(rank, len(rows)):
-            if abs(rows[i][col]) > 1e-300:
-                piv = i; break
-        if piv < 0:
-            continue
-        rows[rank], rows[piv] = rows[piv], rows[rank]
-        pv = rows[rank][col]
-        for i in range(len(rows)):
-            if i != rank and abs(rows[i][col]) > 0:
-                f = rows[i][col] / pv
-                for j in range(4):
-                    rows[i][j] -= f * rows[rank][j]
-        rank += 1
+    rank = _sample_rank(fvecs)
     r.add_test('Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent',
                rank == 4, f'sample-matrix rank = {rank}/4')
     return r
 
 # ============================================================
-# STACK INTEGRATION 1 — CFL -> FOL -> QBF -> AST front-end
+# STACK INTEGRATION 1 — the CFL front end (CFL.md)
 # ============================================================
-# Engine 6's properties must be reachable through the SAME pipeline as the
-# other five engines: CFL spec -> lex -> parse (AST) -> FOL -> QBF -> field
-# router -> engine dispatch.  This is what makes Engine 6 a stack peer rather
-# than an island.  The CFL pipeline functions (cfl_lex/cfl_parse/cfl_to_fol/
-# fol_to_qbf) live in the harness; this audit reuses them — so the CFL test
-# genuinely requires pq-verify to be loaded first.
+# Engine 6's properties go through the same pipeline as the other engines:
+# CFL spec -> lex -> parse (AST) -> FOL -> QBF -> field router -> engine
+# dispatch, each property to the Engine 6 check that discharges it.
 
 # Paper 7 CFL context — a sixth context alongside Kyber/Dilithium/AES/Curves.
 PAPER7_CFL_SPEC = '''
@@ -4455,83 +4702,165 @@ CONTEXT ( Paper7 ) {
 }
 '''
 
-def field_route_period(f):
-    """Extended field router: adds the 'period' route for Engine 6, and
-    delegates every other field to the harness field_route unchanged.
-    (For a full single-file merge, the harness field_route gains one line:
-       if 'period' in f: return 'period')"""
-    if 'period' in f or 'gauss-manin' in f:
-        return 'period'
-    _fr = globals().get('field_route')
-    return _fr(f) if _fr else 'general'
+_E6_KEYS = ('rank2', 'genus2', 'quintic', 'genus4')
+
+
+def _ob_e6_theorem1(engines, corrupt=False):
+    libs = {k: engines.get(k) for k in _E6_KEYS}
+    if not all(libs.values()):
+        return None
+    worst, bad = 0.0, []
+    for key, fn, cls, z, tol in (('rank2', 'period_audit_legendre', PeriodResult, 0.5, 1e-9),
+                                 ('genus2', 'period_g2_audit', PeriodG2Result, 0.5, 1e-9),
+                                 ('quintic', 'period_quintic_audit', PeriodG2Result, 0.5, 1e-9),
+                                 ('genus4', 'period_g4_audit', PeriodG4Result, -2.5, 1e-7)):
+        o = cls()
+        getattr(libs[key], fn)(ctypes.c_double(z), ctypes.c_double(1e-300 if corrupt else tol),
+                               ctypes.byref(o))
+        worst = max(worst, o.thm1_resid_max)
+        if not o.ok_theorem1:
+            bad.append(key)
+    if bad:
+        return False, f'Theorem 1 fails on {", ".join(bad)}'
+    return True, (f'Theorem 1 entry-wise at rank 2, genus 2, the mirror quintic and '
+                  f'genus 4, worst residual {worst:.1e}')
+_ob_e6_theorem1.corruption = 'a tolerance below its residuals'
+
+
+def _ob_e6_observation4(engines, corrupt=False):
+    libs = {k: engines.get(k) for k in ('genus2', 'quintic', 'genus4')}
+    if not all(libs.values()):
+        return None
+    bad = []
+    for key, fn in (('genus2', 'period_g2_audit'), ('quintic', 'period_quintic_audit')):
+        o = PeriodG2Result()
+        getattr(libs[key], fn)(ctypes.c_double(0.5), ctypes.c_double(1e-300 if corrupt else 1e-9),
+                               ctypes.byref(o))
+        if not (o.ok_traceless and o.ok_tr3_zero):
+            bad.append(key)
+    o = PeriodG4Result()
+    libs['genus4'].period_g4_audit(ctypes.c_double(-2.5), ctypes.c_double(1e-7), ctypes.byref(o))
+    if not o.worst_odd_rel < (1e-300 if corrupt else 1e-7):
+        bad.append('genus4')
+    if bad:
+        return False, f'an odd power trace of [U, Q] does not vanish on {", ".join(bad)}'
+    return True, ('tr[U, Q] = tr[U, Q]³ = 0 at genus 2 and the mirror quintic, and '
+                  f'every odd power trace at genus 4 ({o.worst_odd_rel:.1e} relative)')
+_ob_e6_observation4.corruption = 'a tolerance below its residuals'
+
+_E6_G4_SAMPLES = (-1.5, -2.5, -5.0, 9.5, 10.0, 12.0, 15.0)
+
+
+def _e6_f_vectors(lib, samples):
+    """(f2, f4, f6, f8) of the genus-4 engine at each sample point."""
+    out = []
+    for z in samples:
+        o = PeriodG4Result()
+        lib.period_g4_audit(ctypes.c_double(z), ctypes.c_double(1e-7), ctypes.byref(o))
+        out.append([o.f_invariants[i] for i in range(4)])
+    return out
+
+
+def _sample_rank(vectors):
+    """The rank of 4-vectors by Gaussian elimination (no numpy)."""
+    rows = [row[:] for row in vectors]
+    rank = 0
+    for col in range(4):
+        piv = -1
+        for i in range(rank, len(rows)):
+            if abs(rows[i][col]) > 1e-300:
+                piv = i
+                break
+        if piv < 0:
+            continue
+        rows[rank], rows[piv] = rows[piv], rows[rank]
+        pv = rows[rank][col]
+        for i in range(len(rows)):
+            if i != rank and abs(rows[i][col]) > 0:
+                f = rows[i][col] / pv
+                for j in range(4):
+                    rows[i][j] -= f * rows[rank][j]
+        rank += 1
+    return rank
+
+
+def _ob_e6_conjecture6(engines, corrupt=False):
+    lib = engines.get('genus4')
+    if not lib:
+        return None
+    samples = _E6_G4_SAMPLES[:3] if corrupt else _E6_G4_SAMPLES
+    rank = _sample_rank(_e6_f_vectors(lib, samples))
+    return rank == 4, (f'f2, f4, f6, f8 at {len(samples)} genus-4 points: rank {rank}/4, '
+                       f'so independent')
+_ob_e6_conjecture6.corruption = 'three of its seven points'
+
+_E6_LAMBDA2 = (-884266719222068786621093750, 97)
+_E6_RATIOS = []                          # filled once: SymPy is slow
+
+
+def _e6_residue_ratios():
+    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
+    exact rationals (SymPy); None without SymPy."""
+    if _E6_RATIOS:
+        return _E6_RATIOS[0]
+    try:
+        import sympy as sp
+    except ImportError:
+        return None
+    z = sp.Symbol('z')
+    a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
+    a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
+    U = sp.Matrix([[0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-a0, -a1, -a2, -a3]])
+    Q = sp.simplify(-(U.diff(z) + U@U))
+    cQ = sp.simplify(U@Q - Q@U)
+    cQ2 = cQ@cQ
+    f2s = sp.cancel(sp.together(cQ2.trace()))
+    f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
+    ratios = tuple(sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
+                   for pt in (sp.Integer(0), sp.Rational(1, 3125)))
+    _E6_RATIOS.append(ratios)
+    return ratios
+
+
+def _ob_e6_conjecture7(engines, corrupt=False):
+    ratios = _e6_residue_ratios()
+    if ratios is None:
+        return None
+    import sympy as sp
+    lam2 = sp.Rational(*_E6_LAMBDA2) + (1 if corrupt else 0)
+    return all(q == lam2 for q in ratios), (
+        f'Res(f4)/Res(f2) = {_E6_LAMBDA2[0]}/{_E6_LAMBDA2[1]} at z = 0 and z = 1/3125, '
+        f'in exact rationals')
+_ob_e6_conjecture7.corruption = 'λ₂ off by one'
+
+PAPER7_OBLIGATIONS = {
+    ('Paper7', 'Theorem1'): ('period', _ob_e6_theorem1),
+    ('Paper7', 'Observation4'): ('period', _ob_e6_observation4),
+    ('Paper7', 'Conjecture6'): ('period', _ob_e6_conjecture6),
+    ('Paper7', 'Conjecture7'): ('period', _ob_e6_conjecture7),
+}
+
 
 def audit_engine6_cfl(engines):
-    """Engine 6 through the CFL->FOL->QBF->field-router pipeline.
-    Reuses the harness CFL front-end; the Paper7 context routes to 'period'
-    and dispatches to a real Engine 6 verification."""
+    """Engine 6 through the CFL front end (CFL.md): the Paper 7 context
+    parsed, checked, its obligations decided as QBFs, routed to 'period' by
+    their field, and each dispatched to the Engine 6 check that discharges
+    it."""
     r = _AuditResult('Engine 6: CFL Front-End (Paper 7)')
-    g = globals()
-    cfl_lex    = g.get('cfl_lex')
-    cfl_parse  = g.get('cfl_parse')
-    cfl_to_fol = g.get('cfl_to_fol')
-    fol_to_qbf = g.get('fol_to_qbf')
-    if not all([cfl_lex, cfl_parse, cfl_to_fol, fol_to_qbf]):
-        r.add_test('CFL pipeline integration', False,
-                   'harness CFL front-end not loaded — import pq_verify first '
-                   '(CFL integration requires the stack)')
-        return r
-    t0 = time.perf_counter()
-    # Stage 1: lex
-    toks = cfl_lex(PAPER7_CFL_SPEC)
-    r.add_test('CFL lexer — Paper 7 context', len(toks) > 0, f'{len(toks)} tokens')
-    # Stage 2: parse to AST
-    ast = cfl_parse(toks)
-    n_ctx = len(ast['ctx'])
-    n_defs = sum(len(c['defs']) for c in ast['ctx'])
-    r.add_test('CFL parser — AST', n_ctx == 1 and n_defs == 4,
-               f'{n_ctx} context (Paper7), {n_defs} properties')
-    # Stage 3: FOL
-    fols = cfl_to_fol(ast)
-    r.add_test('FOL generation', len(fols) == 4, f'{len(fols)} FOL formulas')
-    # Stage 3b: QBF
-    qbfs = fol_to_qbf(fols)
-    qbf_ok = all(q['prefix'] and q['matrix'] for q in qbfs)
-    r.add_test('QBF encoder', qbf_ok and len(qbfs) == 4,
-               f'{len(qbfs)} QBF formulas (prenex + field annotation)')
-    # Stage 4: field routing — Paper 7 properties must route to 'period'
-    routes = [field_route_period(f) for f in fols]
-    all_period = all(rt == 'period' for rt in routes)
-    r.add_test('Field router — period route', all_period,
-               f"routes: {sorted(set(routes))} (Engine 6 = the 'period' field)")
-    # Stage 5: engine dispatch — actually run an Engine 6 verification per route
-    dispatched = 0
-    for key in ('rank2', 'genus2', 'quintic', 'genus4'):
-        lib = engines.get(key)
-        if not lib:
-            continue
-        if key == 'rank2':
-            o = PeriodResult()
-            lib.period_audit_legendre(ctypes.c_double(0.5), ctypes.c_double(1e-9),
-                                      ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-        elif key in ('genus2', 'quintic'):
-            o = PeriodG2Result()
-            fn = lib.period_g2_audit if key == 'genus2' else lib.period_quintic_audit
-            fn(ctypes.c_double(0.5), ctypes.c_double(1e-9), ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-        else:  # genus4
-            o = PeriodG4Result()
-            lib.period_g4_audit(ctypes.c_double(-2.5), ctypes.c_double(1e-7),
-                                ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-    elapsed = (time.perf_counter() - t0) * 1e6
-    n_eng = sum(1 for k in ('rank2','genus2','quintic','genus4') if engines.get(k))
-    r.add_test(f'Engine dispatch via router ({n_eng} period engines)',
-               dispatched == n_eng,
-               f'{dispatched}/{n_eng} dispatched and verified, {elapsed:.0f}us total')
+    period = (('type', 'algebraic'), ('field', 'period'))
+    _cfl_stages(r, PAPER7_CFL_SPEC, engines, PAPER7_OBLIGATIONS,
+                names={'lexer': 'CFL lexer — Paper 7 context',
+                       'parser': 'CFL parser — AST',
+                       'fol': 'FOL generation', 'qbf': 'QBF encoder',
+                       'router': 'Field router — period route',
+                       'dispatch': f'Engine dispatch via router '
+                                   f'({len(PAPER7_OBLIGATIONS)} obligations)'},
+                expected=(('Paper7', (('DEFINE', 'Theorem1', period),
+                                      ('DEFINE', 'Observation4', period),
+                                      ('DEFINE', 'Conjecture6', (('type', 'rank'), ('field', 'period'))),
+                                      ('DEFINE', 'Conjecture7', (('type', 'residue'), ('field', 'period'))))),),
+                routes={f'Paper7.{n}': 'period'
+                        for n in ('Theorem1', 'Observation4', 'Conjecture6', 'Conjecture7')})
     return r
 
 # ============================================================
