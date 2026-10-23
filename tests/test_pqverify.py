@@ -8674,3 +8674,470 @@ def test_ec_count_uses_sea_from_2_64_to_its_limit():
     big = E.Curve(p256 - 3, b256, p256)
     assert not E.check_count(big, E.Count(n256, "sea", {"p": p256, "residues": [], "parity": 1,
                                                         "curve": "E", "point": (0, 0)}))
+
+
+# ---- Self-suite rows that could not fail ----------------------------------------------
+# Through 2.14.0 each row below passed whatever the code under it did: a
+# hard-coded True, a daemon that never read a verdict, a size table checked
+# against arithmetic on itself, Python's own pow, a file that had just been
+# written, an engine flag that is never 0. Each test breaks the code a row
+# is about and requires the row to fail; every one of them passed on 2.14.0.
+
+import shutil as _shutil
+import sys as _sys
+
+
+def _rows(r):
+    return {t["name"]: t for t in r.tests}
+
+
+class _Swap:
+    """An engine with some functions replaced and the rest its own."""
+
+    def __init__(self, lib, **fns):
+        self._lib, self._fns = lib, fns
+
+    def __getattr__(self, name):
+        return self._fns[name] if name in self._fns else getattr(self._lib, name)
+
+
+def _gf2_unsat(lib):
+    """The GF(2) engine, answering 'unsatisfiable' to everything."""
+    def solve(s, res):
+        lib.gf2_solve(s, res)
+        res._obj.satisfiable = 0
+    return _Swap(lib, gf2_solve=solve)
+
+
+def test_gf2_rank_decides_consistency_and_rank():
+    import itertools
+    import pq_verify.core as core
+    rng = _random.Random(9)
+    for _ in range(300):
+        nv = rng.randint(1, 7)
+        eqs = [(rng.sample(range(nv), rng.randint(1, nv)), rng.randint(0, 1))
+               for _ in range(rng.randint(1, 9))]
+        sols = [x for x in itertools.product((0, 1), repeat=nv) if core._gf2_satisfied(eqs, list(x))]
+        consistent, rank = core._gf2_rank(eqs)
+        assert consistent == bool(sols)
+        if sols:
+            assert len(sols) == 2 ** (nv - rank)
+    assert not core._gf2_satisfied([([0], 1)], [2])          # only 0 and 1 are values
+
+
+def test_gf2_rows_check_an_unsatisfiable_answer():
+    core, eng = _all_engines()
+    lib = eng["gf2"]
+    name = "GF(2) random systems (1000)"
+    assert _rows(core.audit_gf2(lib))[name]["passed"] is True
+    assert _rows(core.audit_gf2(_gf2_unsat(lib)))[name]["passed"] is False
+    rows = _rows(core.audit_gf2_nullspace(_gf2_unsat(lib)))
+    assert rows["Null-space enumeration (200 systems)"]["passed"] is False
+
+    def flip(s, res):                     # a solution, but not the pinned one
+        lib.gf2_solve(s, res)
+        res._obj.assignment[0] ^= 1
+    rows = _rows(core.audit_gf2_nullspace(_Swap(lib, gf2_solve=flip)))
+    assert rows["Unique solution (full-rank)"]["passed"] is False
+
+
+def test_every_inverse_goes_through_the_engine():
+    core, eng = _all_engines()
+    lib = eng["zq"]
+
+    def off(s, res):
+        lib.zq_solve(s, res)
+        res._obj.assignment[100] = (res._obj.assignment[100] + 1) % core.KYBER_Q
+    name = "All 3328 inverses in Z_3329"
+    assert _rows(core.audit_exhaustive_inverses(lib))[name]["passed"] is True
+    assert _rows(core.audit_exhaustive_inverses(_Swap(lib, zq_solve=off)))[name]["passed"] is False
+
+
+def _without_slhdsa(monkeypatch):
+    for mod in [m for m in _sys.modules if m == "slhdsa" or m.startswith("slhdsa.")] + ["slhdsa"]:
+        monkeypatch.setitem(_sys.modules, mod, None)
+
+
+def test_fips205_sizes_are_checked_against_nist_and_table_2(monkeypatch):
+    import pq_verify.core as core
+    for params, sizes in ((core._FIPS205_TABLE2["128s"], (32, 64, 7856)),
+                          (core._FIPS205_TABLE2["192f"], (48, 96, 35664)),
+                          (core._FIPS205_TABLE2["256s"], (64, 128, 29792))):
+        assert core._fips205_sizes(*params) == sizes
+    _without_slhdsa(monkeypatch)          # the base profile: vectors and formulas only
+    with _isolated_degraded():
+        rows = _rows(core.audit_fips205_params())
+    names = [n for n in rows if n.endswith("FIPS 205 params")]
+    assert len(names) == 12 and all(rows[n]["passed"] for n in names), rows
+    assert all("NIST keyGen vectors" in rows[n]["detail"] for n in names)
+    monkeypatch.setitem(core._FIPS205_TABLE2, "128s", (16, 63, 7, 9, 12, 15, 4, 30))
+    with _isolated_degraded():
+        rows = _rows(core.audit_fips205_params())
+    assert {n for n in names if not rows[n]["passed"]} == {
+        "SLH-DSA-SHA2-128s FIPS 205 params", "SLH-DSA-SHAKE-128s FIPS 205 params"}
+    monkeypatch.undo()
+    _without_slhdsa(monkeypatch)
+    real = core._slhdsa_keygen_vectors()
+
+    def short():
+        v = dict(real)
+        t, want = v["SLH-DSA-SHA2-256f"]
+        v["SLH-DSA-SHA2-256f"] = (t, dict(want, pk=want["pk"][:-2]))
+        return v
+    monkeypatch.setattr(core, "_slhdsa_keygen_vectors", short)
+    with _isolated_degraded():
+        rows = _rows(core.audit_fips205_params())
+    assert {n for n in names if not rows[n]["passed"]} == {"SLH-DSA-SHA2-256f FIPS 205 params"}
+
+
+def test_fips205_rows_reproduce_a_nist_keygen_vector_with_slh_dsa():
+    pytest.importorskip("slhdsa")
+    import pq_verify.core as core
+    with _isolated_degraded():
+        rows = _rows(core.audit_fips205_params())
+    names = [n for n in rows if n.endswith("FIPS 205 params")]
+    assert len(names) == 12
+    assert all(rows[n]["passed"] and "byte-exact" in rows[n]["detail"] for n in names), rows
+
+
+def test_ntt_rows_compare_with_the_definition(monkeypatch):
+    core, eng = _all_engines()
+    rng = _random.Random(3)
+    for _ in range(3):
+        f = [rng.randrange(core.KYBER_Q) for _ in range(256)]
+        w = [rng.randrange(core.DILI_Q) for _ in range(256)]
+        assert core._mlkem_ntt_by_definition(f) == core._reference_ntt(f)
+        assert core._mldsa_ntt_by_definition(w) == core._reference_ntt_dili(w)
+
+    def no_coq(*a, **k):
+        raise FileNotFoundError("coqc not in PATH")
+    monkeypatch.setattr(core, "coq_check", no_coq)
+    assert _rows(core.audit_full_ntt(eng["zq"]))["NTT output matches FIPS 203 reference"]["passed"]
+    # The same wrong table under Algorithm 9 and every layer: only the
+    # definition sees it.
+    kem = [pow(core.KYBER_ZETA, i, core.KYBER_Q) for i in range(128)]
+    dsa = [pow(core.DILI_ZETA, i, core.DILI_Q) for i in range(256)]
+    monkeypatch.setattr(core, "_kyber_zeta_table", lambda: list(kem))
+    monkeypatch.setattr(core, "_dilithium_zeta_table", lambda: list(dsa))
+    assert not _rows(core.audit_full_ntt(eng["zq"]))["NTT output matches FIPS 203 reference"]["passed"]
+    rows = _rows(core.audit_full_ntt_dilithium(eng["zq32"]))
+    assert rows["Dilithium NTT matches FIPS 204 reference"]["passed"] is False
+
+
+def test_freivalds_row_checks_the_engines_ntt():
+    core, eng = _all_engines()
+    lib = eng["zq"]
+
+    def ntt_off(y, n, q, z):
+        lib.zq_ntt_forward(y, n, q, z)
+        y[5] = (y[5] + 1) % q
+    accept_all = lambda *a: 1                   # a check sharing the defect
+    name = "Correct NTT passes (10 rounds)"
+    assert _rows(core.audit_freivalds_ntt(lib))[name]["passed"] is True
+    bad = _Swap(lib, zq_ntt_forward=ntt_off, zq_freivalds_ntt=accept_all)
+    assert _rows(core.audit_freivalds_ntt(bad))[name]["passed"] is False
+
+
+def test_conformity_rows_check_their_values():
+    core, eng = _all_engines()
+    cf = eng.get("conformity") or pytest.skip("conformity engine unavailable")
+
+    def never_refuses(pd):
+        res = cf.conformity_compute(pd)
+        res.valid = 1
+        return res
+
+    def d_off(pd):
+        res = cf.conformity_compute(pd)
+        res.D += 1e-6 * max(1.0, abs(res.D))
+        return res
+    assert _rows(core.audit_conformity(cf))["Valid computation"]["passed"] is True
+    rows = _rows(core.audit_conformity(_Swap(cf, conformity_compute=never_refuses)))
+    assert rows["Valid computation"]["passed"] is False
+    with _isolated_degraded():
+        good = _rows(core.audit_curve(eng, 2, 3, 97))
+        bad = _rows(core.audit_curve(dict(eng, conformity=_Swap(cf, conformity_compute=d_off)), 2, 3, 97))
+    assert good["Conformity D(t)"]["passed"] is True
+    assert bad["Conformity D(t)"]["passed"] is False
+
+
+def test_cfl_pipeline_row_fails_on_a_crash(monkeypatch):
+    import pq_verify.core as core
+    from pq_verify import cfl as C
+    name = "Python CFL pipeline ×100"
+    row = _rows(core.audit_c_cfl({}))[name]
+    assert row["passed"] is True and "rejected with a line and column" in row["detail"]
+    real = C.parse
+
+    def fragile(text):
+        if "@" in text:
+            raise IndexError("list index out of range")
+        return real(text)
+    monkeypatch.setattr(C, "parse", fragile)
+    row = _rows(core.audit_c_cfl({}))[name]
+    assert row["passed"] is False and "IndexError" in row["detail"]
+
+
+def test_legendre_period_is_the_complete_elliptic_integral():
+    import pq_verify.core as core
+
+    def agm(a, b):
+        for _ in range(60):
+            a, b = (a + b) / 2, math.sqrt(a * b)
+        return a
+    for z in (0.05, 0.3, 0.5, 0.8, 0.95):
+        K = math.pi / (2 * agm(1.0, math.sqrt(1.0 - z)))
+        f, fp, fpp = core._legendre_period(z)
+        assert abs(math.pi / 2 * f - K) < 1e-13 * K
+        # its own Picard-Fuchs equation, independent of any engine
+        assert abs(z * (1 - z) * fpp + (1 - 2 * z) * fp - f / 4) < 1e-12 * (abs(fpp) + abs(fp) + f)
+
+
+def test_riccati_row_checks_the_engines_connection():
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    lib = e6.get("rank2") or pytest.skip("rank-2 engine unavailable")
+
+    def riccati(r):
+        return [t for t in r.tests if t["name"].startswith("Riccati")][0]
+    assert riccati(core.audit_engine6_rank2(lib))["passed"] is True
+
+    def b_prime_sign(z, U, Up, Upp):            # a sign error in b'(z)
+        lib.period_legendre_connection(z, U, Up, Upp)
+        Up[3] = -Up[3]
+
+    def a_scaled(z, U, Up, Upp):                # U itself not the periods' connection
+        lib.period_legendre_connection(z, U, Up, Upp)
+        U[2] *= 1.000001
+    for bad in (b_prime_sign, a_scaled):
+        row = riccati(core.audit_engine6_rank2(_Swap(lib, period_legendre_connection=bad)))
+        assert row["passed"] is False, bad.__name__
+
+
+@pytest.mark.skipif(_shutil.which("cryptominisat5") is None and _shutil.which("cryptominisat") is None,
+                    reason="CryptoMiniSat5 is not installed")
+def test_cryptominisat_row_compares_verdicts():
+    core, eng = _all_engines()
+    lib = eng["gf2"]
+    name = "CryptoMiniSat5 comparison"
+    good = _rows(core.audit_aes_sbox(lib))[name]
+    assert good["passed"] is True and "agree on 101" in good["detail"]
+    assert _rows(core.audit_aes_sbox(_gf2_unsat(lib)))[name]["passed"] is False
+
+
+@pytest.mark.skipif(_shutil.which("coqtop") is None, reason="coqtop is not installed")
+def test_coq_daemon_reads_its_verdicts():
+    import pq_verify.core as core
+    d = core.CoqDaemon()
+    try:
+        assert d.check_theorem("t_true", "(1 + 2) mod 3329 = 3")[0] is True
+        took, why = d.check_theorem("t_false", "(1 + 2) mod 3329 = 4")
+        assert took is False and "Error" in why
+        assert d.check_theorem("t_after", "(2 + 2) mod 3329 = 4")[0] is True
+        assert d.check_theorem("t_true", "(1 + 2) mod 3329 = 3")[0] is False   # exists already
+    finally:
+        d.close()
+    rows = _rows(core.audit_coq_daemon())
+    assert rows["Coq daemon rejects a false theorem"]["passed"] is True
+    assert rows["Batch 16 theorems"]["passed"] is True
+
+
+@pytest.mark.skipif(_shutil.which("coqc") is None, reason="coqc is not installed")
+def test_coq_certificate_controls_need_a_certificate_that_pins_its_claim(monkeypatch):
+    import os
+    core, eng = _all_engines()
+    wd = core._pqv_workdir()
+    # Engine 6 and the batch certificate, stated wrongly: coqc rejects both.
+    if core._e6_exact_residues() is not None:
+        wrong = core.gen_engine6_coq_cert(os.path.join(wd, "e6_wrong.v"),
+                                          -core._E6_LAMBDA2[0] + 1)[0]
+        assert core.coq_check(wrong)[0] is False
+    res = [core.AuditResult("Z_3329 (Kyber)"), core.AuditResult("Z_8380417 (Dilithium)")]
+    batch = core.gen_coq_cert(res, os.path.join(wd, "batch_wrong.v"), corrupt=True)
+    assert core.coq_check(batch)[0] is False
+    assert core.gen_coq_cert([core.AuditResult("Cubic B(a,b) + ECC")],
+                             os.path.join(wd, "none.v"), corrupt=True) is None
+    # The NTT control is real only if the certificate pins the outputs: a
+    # generator that states the true transform whatever it is given makes
+    # the control fail.
+    name = "NTT Coq certificate rejects a wrong output"
+    assert _rows(core.audit_full_ntt(eng["zq"]))[name]["passed"] is True
+    real = core.gen_coq_ntt_cert
+    monkeypatch.setattr(core, "gen_coq_ntt_cert",
+                        lambda scheme, f_in, f_out, fn: real(scheme, f_in, core._reference_ntt(f_in), fn))
+    rows = _rows(core.audit_full_ntt(eng["zq"]))
+    assert rows["NTT Coq certificate verified"]["passed"] is True
+    assert rows[name]["passed"] is False
+
+
+# ---- The four follow-ups: identity rows, Engine 6's certificate, embedding degree --------
+
+def test_engine6_identity_rows_say_they_check_arithmetic():
+    """Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U
+    hold for any matrices of their shape; the rows say so instead of
+    reading as verification of the periods."""
+    from fractions import Fraction as F
+    import pq_verify.core as core
+    rng = _random.Random(1)
+
+    def rnd(n):
+        return [[F(rng.randint(-9, 9), rng.randint(1, 5)) for _ in range(n)] for _ in range(n)]
+
+    def mul(A, B):
+        return [[sum(A[i][k] * B[k][j] for k in range(len(B))) for j in range(len(B[0]))]
+                for i in range(len(A))]
+
+    def lin(*terms):
+        return [[sum(c * M[i][j] for c, M in terms) for j in range(len(terms[0][1]))]
+                for i in range(len(terms[0][1]))]
+    for n in (2, 4, 8):                  # Theorem 1, as the engines compute it, for random U, U', U''
+        U, Up, Upp = rnd(n), rnd(n), rnd(n)
+        Q = lin((-1, Up), (-1, mul(U, U)))
+        Qp = lin((-1, Upp), (-1, mul(Up, U)), (-1, mul(U, Up)))
+        D = lin((2, mul(U, U)), (-2, Q))
+        A = lin((-4, mul(U, Up)), (-2, Qp))
+        S, Sp = lin((2, Q)), lin((2, Qp))
+        in1, in2, in3 = lin((1, A), (1, Sp)), lin((1, D), (1, S)), lin((1, D), (2, S))
+        R = lin((1, mul(in1, in1)), (-2, mul(in2, mul(in3, in3))))
+        C = lin((1, mul(U, Q)), (-1, mul(Q, U)))
+        assert R == lin((16, mul(U, mul(C, Up)))), n
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    names = {t["name"]: t for key, fn in (("rank2", core.audit_engine6_rank2),
+                                          ("genus2", core.audit_engine6_genus2),
+                                          ("quintic", core.audit_engine6_quintic),
+                                          ("genus4", core.audit_engine6_genus4))
+             if e6.get(key) for t in fn(e6[key]).tests}
+    ident = [n for n in names if "identity in the engine's arithmetic" in n]
+    if all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        assert len(ident) == 6, ident
+    assert all("for any" in names[n]["detail"] for n in ident), [names[n]["detail"] for n in ident]
+    assert not [n for n in names if n.startswith("Theorem 1 entry-wise")]
+
+
+def test_engine6_certificate_states_this_runs_residues(monkeypatch):
+    pytest.importorskip("sympy")
+    import os
+    import pq_verify.core as core
+    res = core._e6_exact_residues()
+    assert [(x.p, x.q) for x in res["genus2"]] == list(core._E6_G2_TABLE1)
+    num, den = core._E6_LAMBDA2                  # Res(f4)/Res(f2) = num/den at both points
+    assert all(r4 * den == r2 * num for r2, r4 in res["quintic"].values())
+    # A different genus-2 connection gives different residues, so the
+    # certificate's Table 1 theorem is about the engine it came from.
+    real = core._decode
+
+    def tweaked(blob):
+        text = real(blob)
+        if blob is core._SRC_GENUS2:
+            text = text.replace("M[3] = T((3.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));",
+                                "M[3] = T((5.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));", 1)
+            assert "5.0/2.0" in text
+        return text
+    monkeypatch.setattr(core, "_E6_EXACT", [])
+    monkeypatch.setattr(core, "_decode", tweaked)
+    other = core._e6_exact_residues()
+    assert [(x.p, x.q) for x in other["genus2"]] != list(core._E6_G2_TABLE1)
+    if _shutil.which("coqc"):
+        cert, _ = core.gen_engine6_coq_cert(os.path.join(core._pqv_workdir(), "e6_other.v"),
+                                            residues=other)
+        assert core.coq_check(cert)[0] is False
+        good, _ = core.gen_engine6_coq_cert(os.path.join(core._pqv_workdir(), "e6_good.v"),
+                                            residues=res)
+        assert core.coq_check(good)[0] is True
+
+
+def test_largest_prime_factor_is_bounded_and_right():
+    import time
+    E = _ec()
+    rng = _random.Random(4)
+    for _ in range(500):
+        n = rng.randrange(2, 10 ** rng.randint(1, 15))
+        assert E.largest_prime_factor(n) == max(E.factor(n)), n
+    t0 = time.perf_counter()
+    assert E.largest_prime_factor(((1 << 61) - 1) * 9223372036854775783) is None
+    assert time.perf_counter() - t0 < 10
+    assert E.largest_prime_factor(65537 ** 3) == 65537
+
+
+def test_embedding_degree_replaces_the_near_singular_finding(monkeypatch):
+    core, eng = _all_engines()
+    E = _ec()
+    pos = {1: (67089, 7437, 131267), 3: (13066, 76929, 132299),
+           4: (110478, 24182, 136531), 6: (138116, 141734, 147457)}
+    for k, (a, b, p) in pos.items():
+        found = [f["description"] for f in core.audit_curve(eng, a, b, p).findings
+                 if f["description"].startswith("Small embedding degree")]
+        assert len(found) == 1 and found[0].startswith(f"Small embedding degree k={k} "), (k, found)
+    for a, b, p in ((51725, 63044, 131267), (38135, 145724, 147457), (1, 6, 8380417), (1, 55, 8380417)):
+        r = core.audit_curve(eng, a, b, p)
+        assert not [f for f in r.findings if "embedding" in f["description"] or
+                    "ingular fiber" in f["description"]], r.findings
+        assert all("stability" not in t["detail"] for t in r.tests)
+    with contextlib.redirect_stdout(io.StringIO()):
+        rows = _rows(core.audit_adversarial(eng))
+    assert rows["B3: Small embedding degree"]["passed"] is True
+    assert _rows(core.audit_safecurves(eng))["embedding degree 6 mod 147457"]["passed"] is True
+    # With the subgroup's order unknown the finding cannot be made: B3 must
+    # fail, and the curve says it was not checked.
+    monkeypatch.setattr(E, "largest_prime_factor", lambda n, *a, **k: None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        rows = _rows(core.audit_adversarial(eng))
+    assert rows["B3: Small embedding degree"]["passed"] is False
+    r = core.audit_curve(eng, *pos[3])
+    assert any(f["severity"] == "INFO" and "Embedding degree not checked" in f["description"]
+               for f in r.findings)
+
+
+def test_zeta_rows_read_the_engines_own_tables():
+    core, eng = _all_engines()
+    kem, dsa = eng["zq"], eng["zq32"]
+    Q, Z, DQ, DZ = core.KYBER_Q, core.KYBER_ZETA, core.DILI_Q, core.DILI_ZETA
+    assert core._engine_zeta_table(kem, 128) == [pow(Z, core._bitrev(i, 7), Q) for i in range(128)]
+    assert core._engine_zeta_table(dsa, 256) == [pow(DZ, core._bitrev(i, 8), DQ) for i in range(256)]
+    fips203 = "Engine zetas are FIPS 203's: 17^BitRev7(i) mod q, 17 of order 256"
+    fips204 = "Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q, 1753 of order 512"
+    assert _rows(core.audit_fips203_zetas(kem))[fips203]["passed"] is True
+    assert _rows(core.audit_fips204_zetas(dsa))[fips204]["passed"] is True
+    assert all(t["passed"] for t in core.audit_twiddle_completeness(kem).tests)
+
+    def kem_with(mutate):
+        def table(buf, q, z):
+            kem.zq_zeta_table(buf, q, z)
+            mutate(buf)
+        return _Swap(kem, zq_zeta_table=table)
+
+    def duplicate(buf):                  # one entry repeated: not FIPS's, not distinct
+        buf[5] = buf[6]
+
+    def other_root(buf):                 # 17^3 also has order 256: consistent but not FIPS's
+        for i in range(128):
+            buf[i] = pow(Z, 3 * core._bitrev(i, 7), Q)
+    rows = _rows(core.audit_twiddle_completeness(kem_with(duplicate)))
+    assert rows["128 distinct twiddle factors"]["passed"] is False
+    assert _rows(core.audit_fips203_zetas(kem_with(duplicate)))[fips203]["passed"] is False
+    rows = _rows(core.audit_twiddle_completeness(kem_with(other_root)))
+    assert all(rows[n]["passed"] for n in ("ζ^256 ≡ 1 mod q", "ζ^128 ≢ 1 mod q (primitive)",
+                                          "128 distinct twiddle factors"))
+    assert _rows(core.audit_fips203_zetas(kem_with(other_root)))[fips203]["passed"] is False
+
+    def dsa_table(buf, q, z):
+        dsa.zq32_zeta_table(buf, q, z)
+        buf[200] = (buf[200] + 1) % q
+    rows = _rows(core.audit_fips204_zetas(_Swap(dsa, zq32_zeta_table=dsa_table)))
+    assert rows[fips204]["passed"] is False
+
+
+def test_trace_finding_is_for_trace_2_only():
+    core, eng = _all_engines()
+
+    def traces(a, b, p):
+        return [f["description"] for f in core.audit_curve(eng, a, b, p).findings
+                if f["description"].startswith(("Trace 2", "Near-anomalous"))]
+    assert traces(2, 2, 17) == [] and traces(2, 3, 97) == []     # t = -1 and t = -2
+    assert len(traces(67089, 7437, 131267)) == 1                 # t = 2: #E = p - 1
+    found = [f["description"] for f in core.audit_curve(eng, 0, 1, 23).findings]   # t = 0
+    assert any(d.startswith("Supersingular") for d in found) and not traces(0, 1, 23)

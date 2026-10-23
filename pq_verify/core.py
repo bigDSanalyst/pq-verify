@@ -261,6 +261,11 @@ static void _init_kyber_zetas(uint16_t q,uint16_t zeta){
 if(_kyber_zetas_ready)return;
 for(int i=0;i<128;i++)_kyber_zetas[i]=_pow_mod16(zeta,_bitrev7(i),q);
 _kyber_zetas_ready=1;}
+/* The table the NTT and the Freivalds check use, read out for checks
+   made apart from the engine. */
+void zq_zeta_table(uint16_t*out,uint16_t q,uint16_t zeta){
+_init_kyber_zetas(q,zeta);
+for(int i=0;i<128;i++)out[i]=_kyber_zetas[i];}
 /* ---- Forward NTT (FIPS 203 Cooley-Tukey, in-place) ---- */
 void zq_ntt_forward(uint16_t*f,int n,uint16_t q,uint16_t zeta){
 _init_kyber_zetas(q,zeta);
@@ -414,6 +419,11 @@ static void _init_dili_zetas(uint32_t q,uint32_t zeta){
 if(_dili_zetas_ready)return;
 for(int i=0;i<256;i++)_dili_zetas[i]=_pow_mod32(zeta,_bitrev8(i),q);
 _dili_zetas_ready=1;}
+/* The table the NTT and the Freivalds check use, read out for checks
+   made apart from the engine. */
+void zq32_zeta_table(uint32_t*out,uint32_t q,uint32_t zeta){
+_init_dili_zetas(q,zeta);
+for(int i=0;i<256;i++)out[i]=_dili_zetas[i];}
 
 /* Forward ML-DSA NTT, in place. 8 layers: len = 128,64,...,2,1. */
 void zq32_ntt_forward(uint32_t*f,int n,uint32_t q,uint32_t zeta){
@@ -862,6 +872,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint16), ctypes.c_int,
             ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint32]
         z.zq_freivalds_ntt.restype = ctypes.c_int
+        z.zq_zeta_table.argtypes = [ctypes.POINTER(ctypes.c_uint16), ctypes.c_uint16, ctypes.c_uint16]
+        z.zq_zeta_table.restype = None
         _checked(z.zq_init, z.zq_add_equation, z.zq_add_sparse, z.zq_add_ntt_butterfly)
 
     if engines.get('zq32'):
@@ -877,6 +889,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
             ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
         z32.zq32_freivalds_ntt.restype = ctypes.c_int
+        z32.zq32_zeta_table.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_uint32]
+        z32.zq32_zeta_table.restype = None
         _checked(z32.zq32_init, z32.zq32_add_equation, z32.zq32_add_sparse,
                  z32.zq32_add_ntt_butterfly)
 
@@ -944,63 +958,131 @@ class AuditResult:
 # AUDIT FUNCTIONS
 # ================================================================
 
+def _gf2_rank(eqs):
+    """(consistent, rank) of XOR equations [(variables, parity), ...]:
+    Gaussian elimination over GF(2) on Python integers, apart from the
+    engine. Each pivot row is kept under its lowest set bit, so reducing a
+    row by one only raises its lowest bit, and a row that reduces to 0 with
+    parity 1 is the contradiction 0 = 1."""
+    pivots = {}
+    consistent = True
+    for vs, p in eqs:
+        m = 0
+        for v in vs:
+            m ^= 1 << v
+        while m:
+            low = m & -m
+            if low not in pivots:
+                pivots[low] = (m, p)
+                break
+            pm, pp = pivots[low]
+            m ^= pm
+            p ^= pp
+        else:
+            consistent = consistent and not p
+    return consistent, len(pivots)
+
+
+def _gf2_satisfied(eqs, x):
+    """Whether the 0/1 assignment x satisfies every XOR equation."""
+    return (all(v in (0, 1) for v in x)
+            and all(sum(x[v] for v in vs) % 2 == p for vs, p in eqs))
+
+
 def audit_gf2(lib, n_trials=1000):
+    """Random XOR systems with at least as many equations as variables, so
+    most have no solution. Each answer is checked apart from the engine: an
+    assignment against every equation, an 'unsatisfiable' by elimination
+    here. Through 2.14.0 an unsatisfiable answer counted as verified
+    unchecked -- 874 of the 1000 -- so an engine that gave it to every
+    system passed."""
     r = AuditResult('GF(2)')
     random.seed(42)
-    ok = 0
+    n_sat = n_unsat = wrong = 0
     t_total = 0
     s = GF2S()  # reuse
     res = GF2R()
-    for _ in range(n_trials):
+    for trial in range(n_trials):
         nv = random.randint(8, 32)
         n_eq = random.randint(nv, nv + 10)
         lib.gf2_init(ctypes.byref(s), nv)
+        eqs = []
         for _ in range(n_eq):
             width = random.randint(2, min(6, nv))
             vs = random.sample(range(nv), width)
             p = random.randint(0, 1)
+            eqs.append((vs, p))
             cv = (ctypes.c_int * len(vs))(*vs)
             lib.gf2_add_xor(ctypes.byref(s), cv, len(vs), p)
         lib.gf2_solve(ctypes.byref(s), ctypes.byref(res))
         t_total += res.solve_time_us
         if res.satisfiable:
-            v = lib.gf2_verify(ctypes.byref(s), res.assignment)
-            if v: ok += 1
-            else: r.add_finding('CRITICAL', f'GF(2) verify failed')
+            n_sat += 1
+            good = (_gf2_satisfied(eqs, list(res.assignment[:nv]))
+                    and lib.gf2_verify(ctypes.byref(s), res.assignment) == 1)
+            why = 'an assignment that does not satisfy the system'
         else:
-            ok += 1  # UNSAT is valid
-    r.add_test(f'GF(2) random systems ({n_trials})', ok == n_trials,
-               f'{ok}/{n_trials} verified, {t_total:.0f}\u03bcs total', t_total)
+            n_unsat += 1
+            good = not _gf2_rank(eqs)[0]
+            why = '"unsatisfiable" for a system with a solution'
+        if not good:
+            wrong += 1
+            if wrong <= 3:
+                r.add_finding('CRITICAL', f'GF(2) engine: {why} (system {trial + 1})')
+    r.add_test(f'GF(2) random systems ({n_trials})', wrong == 0,
+               f'{n_sat} solved, each assignment checked against every equation; '
+               f'{n_unsat} unsatisfiable, each confirmed by elimination apart from '
+               f'the engine; {wrong} wrong, {t_total:.0f}\u03bcs total', t_total)
     return r
 
 def audit_gf2_nullspace(lib, n_trials=200):
-    """Null-space enumeration: verify ALL solutions for underdetermined GF(2) systems."""
+    """Null-space enumeration: every solution of underdetermined GF(2)
+    systems. Apart from the engine, elimination here gives each system's
+    consistency and rank: an 'unsatisfiable' must be right, and a consistent
+    system must have exactly 2^(variables - rank) solutions, each checked
+    against every equation and all distinct -- which makes the enumeration
+    complete. Through 2.14.0 an unsatisfiable answer counted as verified
+    unchecked, and the number of free variables was compared only with the
+    engine's own."""
     r = AuditResult('GF(2) Null-Space')
     random.seed(2026)
     t_total = 0
     # --- Test 1: underdetermined systems, enumerate + verify all solutions ---
     all_ok = 0
     total_solutions = 0
+    n_unsat = 0
     for trial in range(n_trials):
         nv = random.randint(8, 20)
         n_eq = random.randint(max(2, nv - 8), nv - 1)  # fewer eqs than vars → free vars
         s = GF2S()
         lib.gf2_init(ctypes.byref(s), nv)
+        eqs = []
         for _ in range(n_eq):
             width = random.randint(2, min(5, nv))
             vs = random.sample(range(nv), width)
             p = random.randint(0, 1)
+            eqs.append((vs, p))
             cv = (ctypes.c_int * len(vs))(*vs)
             lib.gf2_add_xor(ctypes.byref(s), cv, len(vs), p)
+        consistent, rank = _gf2_rank(eqs)
         res = GF2R()
         lib.gf2_solve(ctypes.byref(s), ctypes.byref(res))
         if not res.satisfiable:
-            all_ok += 1  # UNSAT is valid
+            n_unsat += 1
+            if consistent:
+                r.add_finding('CRITICAL', f'"unsatisfiable" for a system with a solution '
+                                          f'(system {trial + 1})')
+            else:
+                all_ok += 1
+            continue
+        if not consistent:
+            r.add_finding('CRITICAL', f'a solution claimed for a system with none (system {trial + 1})')
             continue
         ns = GF2NS()
         lib.gf2_nullspace(ctypes.byref(s), ctypes.byref(res), ctypes.byref(ns))
-        if ns.num_free != res.num_free_vars:
-            r.add_finding('CRITICAL', f'free var mismatch: ns={ns.num_free} res={res.num_free_vars}')
+        if not ns.num_free == res.num_free_vars == nv - rank:
+            r.add_finding('CRITICAL', f'free variables: null space {ns.num_free}, solver '
+                                      f'{res.num_free_vars}, elimination {nv - rank}')
             continue
         if ns.num_free > 20:
             all_ok += 1  # too many to enumerate, but count is valid
@@ -1018,20 +1100,22 @@ def audit_gf2_nullspace(lib, n_trials=200):
         trial_ok = True
         seen = set()
         for i in range(count):
-            sol = (ctypes.c_int * nv)(*[buf[i * nv + j] for j in range(nv)])
-            v = lib.gf2_verify(ctypes.byref(s), sol)
-            if not v:
+            x = [buf[i * nv + j] for j in range(nv)]
+            sol = (ctypes.c_int * nv)(*x)
+            if not (_gf2_satisfied(eqs, x) and lib.gf2_verify(ctypes.byref(s), sol) == 1):
                 r.add_finding('CRITICAL', f'solution {i} fails verification')
                 trial_ok = False
                 break
-            seen.add(tuple(sol[j] for j in range(nv)))
+            seen.add(tuple(x))
         if trial_ok and len(seen) == count:
             all_ok += 1
             total_solutions += count
         elif trial_ok:
             r.add_finding('CRITICAL', f'duplicate solutions: {count} generated, {len(seen)} unique')
     r.add_test(f'Null-space enumeration ({n_trials} systems)', all_ok == n_trials,
-               f'{all_ok}/{n_trials} verified, {total_solutions} total solutions, '
+               f'{all_ok}/{n_trials} verified: {total_solutions} solutions, 2^(variables '
+               f'\u2212 rank) per system by elimination apart from the engine, each '
+               f'checked against every equation; {n_unsat} unsatisfiable, each confirmed; '
                f'{t_total:.0f}\u03bcs enumerate', t_total)
     # --- Test 2: unique solution (full-rank square system) ---
     nv = 16
@@ -1046,9 +1130,14 @@ def audit_gf2_nullspace(lib, n_trials=200):
     lib.gf2_solve(ctypes.byref(s), ctypes.byref(res))
     ns = GF2NS()
     lib.gf2_nullspace(ctypes.byref(s), ctypes.byref(res), ctypes.byref(ns))
-    unique_ok = res.satisfiable and ns.num_free == 0 and ns.num_solutions_log2 == 0
+    # The one solution must be the one the equations pin, not merely a claim
+    # that there is one.
+    got = list(res.assignment[:nv])
+    unique_ok = (res.satisfiable and ns.num_free == 0 and ns.num_solutions_log2 == 0
+                 and got == x_true)
     r.add_test('Unique solution (full-rank)', unique_ok,
-               f'free={ns.num_free}, 2^{ns.num_solutions_log2} solutions')
+               f'free={ns.num_free}, 2^{ns.num_solutions_log2} solutions, '
+               f'{"the pinned assignment" if got == x_true else "NOT the pinned assignment"}')
     # --- Test 3: basis orthogonality (each basis vector independent) ---
     nv = 16
     n_eq = 8  # half-rank → 8 free vars, 256 solutions
@@ -1269,7 +1358,13 @@ def audit_conformity(lib):
     r.add_test('D = 2u\' + 4u\u00b2', D_err < 1e-12,
                f'D={res.D:.6f}, expected={D_expected:.6f}')
 
-    r.add_test('Valid computation', res.valid == 1, f'valid={res.valid}')
+    # The engine's one validity guard is omega = 0, where u = omega'/omega is
+    # undefined: it must refuse that point and accept the one above. Through
+    # 2.14.0 only the second was checked, which no input here could fail.
+    zero = lib.conformity_compute(ctypes.byref(PeriodData(0.0, wp, wpp, wppp, t0)))
+    r.add_test('Valid computation', res.valid == 1 and zero.valid == 0,
+               f'valid={res.valid} at t = {t0}; valid={zero.valid} with \u03c9 = 0, '
+               f'which it must refuse')
 
     # Test 2: Three-point conservation law verification
     dt = 0.001
@@ -1327,8 +1422,8 @@ def audit_curve(engines, a, b, p):
     j-invariant; its point count, and its twist's, each with a certificate
     checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
     its point validation; and the conformity gradient on its discriminant
-    family. Findings: singular, supersingular, anomalous and near-anomalous,
-    near-singular."""
+    family. Findings: singular, supersingular, anomalous, trace 2, and a
+    small embedding degree."""
     from . import ec as EC
     r = AuditResult(f'Curve y\u00b2=x\u00b3+{a}x+{b} mod {p}')
     lib_c = engines.get('cubic')
@@ -1387,9 +1482,33 @@ def audit_curve(engines, a, b, p):
         elif trace == 1:
             r.add_finding('CRITICAL',
                 f'Anomalous curve: #E={count.n}=p, trace=1 (Smart attack vulnerable)')
-        elif abs(trace) <= 2:
+        elif trace == 2:
+            # #E = p - 1: every prime l dividing #E divides p - 1, so the
+            # embedding degree is 1 and a pairing carries the discrete log
+            # into F_p*. Through 2.14.0 this fired for |t| <= 2, but traces
+            # -1 and -2 have no such structure, and 0 is the supersingular
+            # finding below.
             r.add_finding('HIGH',
-                f'Near-anomalous curve: #E={count.n}, |t|={abs(trace)} (transfer attacks possible)')
+                f'Trace 2: #E={count.n} = p \u2212 1, so the embedding degree is 1 (a '
+                f'pairing carries the discrete log into F_p*)')
+        if ok:
+            # Embedding degree, SafeCurves' "transfer" criterion: k is the least
+            # with l | p^k - 1, for l the largest prime factor of #E. The Weil
+            # or Tate pairing then carries the discrete log of the order-l
+            # subgroup into F_(p^k), and SafeCurves requires k > (l - 1)/100.
+            # Checked here up to k = 100; l = p is the anomalous case above.
+            big = EC.largest_prime_factor(count.n)
+            if big is None:
+                r.add_finding('INFO', f'Embedding degree not checked: #E={count.n} was not '
+                                      f'factored within the step limit')
+            elif big != p:
+                kmax = min(100, (big - 1) // 100)
+                k = next((k for k in range(1, kmax + 1) if pow(p, k, big) == 1), None)
+                if k is not None:
+                    r.add_finding('HIGH',
+                        f'Small embedding degree k={k} for the subgroup of order {big} '
+                        f'(SafeCurves requires k > (order \u2212 1)/100): a pairing carries '
+                        f'its discrete log into F_(p^{k})')
     twist = E.twist()
     tcount = EC.count(twist)
     if count is None or tcount is None:
@@ -1452,7 +1571,10 @@ def audit_curve(engines, a, b, p):
                    f'{sum(got)}/{len(got)}: a point of E, a point off it, an unreduced '
                    f'x and an unreduced b')
 
-    # CONFORMITY: stability via discriminant family
+    # CONFORMITY on the discriminant family (research framework). It used to
+    # report |4a^3 + 27b^2|/p as a "stability margin" and a curve under 0.01
+    # as a near-singular fiber (HIGH); over F_p a curve is singular or it is
+    # not, and that ratio depends on which integers stand for a and b.
     if lib_cf and disc_raw != 0:
         dt = 0.001
         points = []
@@ -1472,11 +1594,17 @@ def audit_curve(engines, a, b, p):
             points.append(PeriodData(omega, omega_p, omega_pp, omega_ppp, t_off))
         if len(points) == 3:
             res = lib_cf.conformity_compute(ctypes.byref(points[1]))
-            stability = abs(disc_raw) / float(p)
-            r.add_test('Conformity D(t)', res.valid == 1,
-                       f'D={res.D:.6f}; stability margin |\u0394|/p={stability:.4f}')
-            if stability < 0.01:
-                r.add_finding('HIGH', f'Near singular fiber: margin={stability:.6f}')
+            # D = 2u' + 4u^2 with u = omega'/omega = Delta'/(12 Delta), from the
+            # discriminant itself rather than the omega derivatives the engine
+            # was given. Through 2.14.0 the row checked only the engine's
+            # valid flag, which is 0 only for omega = 0.
+            dl, dlp = 4.0 * float(a) ** 3 + 27.0 * float(b) ** 2, 54.0 * float(b)
+            u = dlp / (12.0 * dl)
+            want = 2.0 * (54.0 * dl - dlp * dlp) / (12.0 * dl * dl) + 4.0 * u * u
+            d_ok = res.valid == 1 and math.isclose(res.D, want, rel_tol=1e-9, abs_tol=1e-300)
+            r.add_test('Conformity D(t)', d_ok,
+                       f'D={res.D:.6g}, {"" if d_ok else "NOT "}2u\u2032+4u\u00b2 for '
+                       f'u = \u0394\u2032/(12\u0394) ({want:.6g})')
             chk = lib_cf.conformity_verify(ctypes.byref(points[0]),
                     ctypes.byref(points[1]), ctypes.byref(points[2]), ctypes.c_double(dt))
             r.add_test('Conservation law on family', chk.cv_residual < 0.01,
@@ -1566,13 +1694,16 @@ def gen_coq_ntt_cert(scheme, f_in, f_out, filename):
     return filename, thms
 
 
-def gen_coq_cert(results, filename=None):
+def gen_coq_cert(results, filename=None, corrupt=False):
     """Batch certificate: the constants every NTT check in this run relies on.
 
     Proves, in Coq, that pq-verify's ML-KEM and ML-DSA zeta tables are the
     ones FIPS 203 and FIPS 204 define, and that each root has the order its
     transform needs. Earlier versions certified freshly drawn random numbers
     that no check had used, so the certificate said nothing about the run.
+
+    corrupt=True states the first table with one entry off by one, which
+    coqc must reject; None then if this run has no table to state.
     """
     if filename is None:
         filename = os.path.join(_pqv_workdir(), 'pq_verify_cert.v')
@@ -1593,6 +1724,15 @@ def gen_coq_cert(results, filename=None):
         tables.append(('mlkem', KYBER_Q, KYBER_ZETA, 7, 128, 256, _kyber_zeta_table()))
     if 'Z_8380417 (Dilithium)' in engines:
         tables.append(('mldsa', DILI_Q, DILI_ZETA, 8, 256, 512, _dilithium_zeta_table()))
+    if corrupt:
+        # Only the first table, wrong: a whole second certificate would
+        # double coqc's ~9 s, most of it ML-DSA's 256 powers.
+        if not tables:
+            return None
+        pre, q, root, bits, size, order, table = tables[0]
+        table = list(table)
+        table[1] = (table[1] + 1) % q
+        tables = [(pre, q, root, bits, size, order, table)]
     for pre, q, root, bits, size, order, table in tables:
         lines.append(f"Theorem {pre}_root_order : Z.modulo ({root} ^ {order // 2}) {q} = {q} - 1.")
         lines.append("Proof. vm_compute. reflexivity. Qed.")
@@ -1600,7 +1740,7 @@ def gen_coq_cert(results, filename=None):
                      f" (map Z.of_nat (seq 0 {size})) = {_coq_list(table)}.")
         lines.append("Proof. vm_compute. reflexivity. Qed.")
         thms += [f'{pre}_root_order', f'{pre}_zeta_table']
-    if 'Cubic B(a,b) + ECC' in engines:
+    if 'Cubic B(a,b) + ECC' in engines and not corrupt:
         # The cubic engine's CM curves need p = 1 (mod 3).
         for p in [7, 13, 19, 37]:
             lines.append(f"Theorem cubic_p{p}: {p} mod 3 = 1.")
@@ -1905,18 +2045,33 @@ def audit_fips203_params():
     return r
 
 def audit_exhaustive_inverses(lib):
-    """All 3328 modular inverses in Z_3329 \u2014 brute-force correctness."""
+    """Every inverse in Z_3329 through the engine, and a sample of a*x = b.
+
+    Through 2.14.0 the exhaustive row checked Python's own pow(a, q - 2, q)
+    against a*x = 1 -- Fermat's little theorem in the interpreter, which no
+    defect in pq-verify could make fail. Each a now goes through the engine,
+    and its answer is checked here."""
     r = AuditResult('Exhaustive Inverses')
     Q = KYBER_Q
     fails = 0
+    s = ZqS(); res = ZqR()
     t0 = time.perf_counter()
-    for a in range(1, Q):
-        inv_py = pow(a, Q-2, Q)
-        if (a * inv_py) % Q != 1:
-            fails += 1
+    # Two systems of 1664 equations a*x_a = 1, one variable each: solving
+    # them inverts every pivot. (One system per a resets a 16 MB system
+    # 3328 times, about 13 s.)
+    half = (Q - 1) // 2
+    for lo in (1, 1 + half):
+        lib.zq_init(ctypes.byref(s), half, Q)
+        for i in range(half):
+            lib.zq_add_sparse(ctypes.byref(s), (ctypes.c_int * 1)(i),
+                              (ctypes.c_uint16 * 1)(lo + i), 1, 1)
+        lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
+        fails += sum(1 for i in range(half)
+                     if not res.satisfiable or (lo + i) * res.assignment[i] % Q != 1)
     elapsed = time.perf_counter() - t0
     r.add_test(f'All {Q-1} inverses in Z_{Q}', fails == 0,
-               f'{fails} failures, {elapsed:.2f}s')
+               f'the engine solved a\u00b7x = 1 for every a \u2260 0, each x checked: '
+               f'{fails} wrong, {elapsed:.2f}s')
     random.seed(99)
     eng_fails = 0
     s = ZqS(); res = ZqR()
@@ -1933,21 +2088,40 @@ def audit_exhaustive_inverses(lib):
     r.add_test('Engine inverse (1000 samples)', eng_fails == 0, f'{eng_fails} failures')
     return r
 
+def _engine_zeta_table(lib, n):
+    """The zeta table an engine's NTT and Freivalds check use, read out of
+    the engine: the 16-bit engine's 128 (ML-KEM) or the 32-bit engine's 256
+    (ML-DSA)."""
+    if n == 128:
+        buf = (ctypes.c_uint16 * 128)()
+        lib.zq_zeta_table(buf, KYBER_Q, KYBER_ZETA)
+    else:
+        buf = (ctypes.c_uint32 * 256)()
+        lib.zq32_zeta_table(buf, DILI_Q, DILI_ZETA)
+    return list(buf)
+
+
 def audit_twiddle_completeness(lib):
-    """128 distinct Kyber twiddle factors, primitivity, butterfly correctness."""
+    """The engine's own 128 Kyber zetas: its root has order 256, the table
+    holds each of the root's first 128 powers once, and the butterfly is
+    right with each power. Through 2.14.0 the first three rows applied
+    Python's pow to pq-verify's constant 17, which tested no
+    implementation; they now read the table the engine's NTT and Freivalds
+    check use."""
     r = AuditResult('Twiddle Factors')
     Q, Z = KYBER_Q, KYBER_ZETA
-    r.add_test('\u03b6^256 \u2261 1 mod q', pow(Z, 256, Q) == 1,
-               f'{Z}^256 mod {Q} = {pow(Z, 256, Q)}')
-    r.add_test('\u03b6^128 \u2262 1 mod q (primitive)', pow(Z, 128, Q) != 1,
-               f'{Z}^128 mod {Q} = {pow(Z, 128, Q)}')
-    twiddles = set()
-    z = 1
-    for _ in range(128):
-        twiddles.add(z)
-        z = (z * Z) % Q
-    r.add_test('128 distinct twiddle factors', len(twiddles) == 128,
-               f'found {len(twiddles)} unique')
+    tab = _engine_zeta_table(lib, 128)
+    root = tab[64]                       # its zeta at BitRev7(i) = 1: the root
+    r.add_test('\u03b6^256 \u2261 1 mod q', pow(root, 256, Q) == 1,
+               f"the engine's root \u03b6 = {root} (its zeta where BitRev7(i) = 1): "
+               f'\u03b6^256 mod q = {pow(root, 256, Q)}')
+    r.add_test('\u03b6^128 \u2262 1 mod q (primitive)', pow(root, 128, Q) != 1,
+               f'\u03b6^128 mod q = {pow(root, 128, Q)}, so \u03b6 has order 256')
+    powers = {pow(root, j, Q) for j in range(128)}
+    r.add_test('128 distinct twiddle factors', len(set(tab)) == 128 and set(tab) == powers,
+               f"the engine's table holds {len(set(tab))} distinct values"
+               + (', each \u03b6^j for j < 128 once' if set(tab) == powers else
+                  ', NOT the powers \u03b6^j for j < 128'))
     tw_fails = 0
     z = 1
     s = ZqS(); res = ZqR()
@@ -2112,13 +2286,24 @@ def audit_adversarial(engines):
     r.add_test(f'B2: Supersingular curves', c2 == len(pos) and f2 == 0,
                f'{c2}/{len(pos)} flagged, {f2}/{len(neg)} ordinary j=0/1728 controls flagged')
 
-    c3 = 0; t3 = 0
-    for a, b, p in [(1,6,8380417),(1,55,8380417)]:
-        ar = audit_curve(engines, a, b, p)
-        high = any(f['severity'] in ('HIGH','CRITICAL') for f in ar.findings)
-        t3 += 1
-        if high: c3 += 1
-    r.add_test(f'B3: Near-singular curves', c3 == t3, f'{c3}/{t3} HIGH+ flagged')
+    # Small embedding degree (MOV / Frey-Ruck): ordinary curves whose largest
+    # prime-order subgroup has k = 1, 3, 4 and 6 (trace 2, and MNT-style
+    # orders), each found by search and its count certified at run time; and
+    # two controls whose k is in the tens of thousands. Through 2.14.0 this
+    # was "near-singular curves", flagged by |4a^3 + 27b^2|/p < 0.01, which
+    # means nothing over F_p.
+    def _k(a, b, p):
+        got = [f for f in audit_curve(engines, a, b, p).findings
+               if f['severity'] == 'HIGH' and f['description'].startswith('Small embedding degree')]
+        return int(got[0]['description'].split('k=')[1].split()[0]) if got else None
+    pos3 = {1: (67089, 7437, 131267), 3: (13066, 76929, 132299),
+            4: (110478, 24182, 136531), 6: (138116, 141734, 147457)}
+    neg3 = [(51725, 63044, 131267), (38135, 145724, 147457)]
+    c3 = sum(_k(*c) == k for k, c in pos3.items())
+    f3 = sum(_k(*c) is not None for c in neg3)
+    r.add_test(f'B3: Small embedding degree', c3 == len(pos3) and f3 == 0,
+               f'k = 1, 3, 4, 6 found exactly in {c3}/{len(pos3)}; {f3}/{len(neg3)} '
+               f'controls with large k flagged')
 
     c4 = 0; t4 = 0
     primes4 = [17, 23, 29, 37, 41, 43, 53]
@@ -2215,9 +2400,19 @@ def audit_fips203_zetas(lib):
     """Verify engine accepts all 128 FIPS 203 Kyber zetas."""
     r = AuditResult('FIPS 203 Zetas')
     Q, Z = KYBER_Q, KYBER_ZETA
-    r.add_test('Primitivity \u03b6^256\u22611, \u03b6^128\u2261-1',
-               pow(Z, 256, Q) == 1 and pow(Z, 128, Q) == Q-1,
-               f'\u03b6={Z}, q={Q}')
+    # The engine's table against FIPS 203's definition of it, zeta^BitRev7(i)
+    # mod q, computed here apart from the engine (its own bit reversal and
+    # power), compared mod q. Through 2.14.0 the row checked only that 17
+    # has order 256, by Python's pow on pq-verify's constant.
+    tab = _engine_zeta_table(lib, 128)
+    fips = [pow(Z, _bitrev(i, 7), Q) for i in range(128)]
+    off = [i for i in range(128) if (tab[i] - fips[i]) % Q]
+    order = pow(Z, 256, Q) == 1 and pow(Z, 128, Q) == Q - 1
+    r.add_test("Engine zetas are FIPS 203's: 17^BitRev7(i) mod q, 17 of order 256",
+               not off and order,
+               f"the engine's 128 zetas equal \u03b6^BitRev7(i) mod q for \u03b6 = {Z}"
+               + (f' \u2014 NOT at {len(off)}, first i = {off[0]}' if off else '')
+               + f'; \u03b6^128 \u2261 {pow(Z, 128, Q)} and \u03b6^256 \u2261 {pow(Z, 256, Q)} mod q')
     zetas = [pow(Z, _br7(i), Q) for i in range(128)]
     n_pass = 0
     s = ZqS(); res = ZqR()
@@ -2239,9 +2434,17 @@ def audit_fips204_zetas(lib, sample=64):
     """Verify engine accepts FIPS 204 Dilithium zetas."""
     r = AuditResult('FIPS 204 Zetas')
     Q, Z = DILI_Q, DILI_ZETA
-    r.add_test('Primitivity \u03b6^512\u22611, \u03b6^256\u2261-1',
-               pow(Z, 512, Q) == 1 and pow(Z, 256, Q) == Q-1,
-               f'\u03b6={Z}, q={Q}')
+    # As for FIPS 203: the 32-bit engine's table against zeta^BitRev8(i) mod
+    # q, computed here apart from the engine.
+    tab = _engine_zeta_table(lib, 256)
+    fips = [pow(Z, _bitrev(i, 8), Q) for i in range(256)]
+    off = [i for i in range(256) if (tab[i] - fips[i]) % Q]
+    order = pow(Z, 512, Q) == 1 and pow(Z, 256, Q) == Q - 1
+    r.add_test("Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q, 1753 of order 512",
+               not off and order,
+               f"the engine's 256 zetas equal \u03b6^BitRev8(i) mod q for \u03b6 = {Z}"
+               + (f' \u2014 NOT at {len(off)}, first i = {off[0]}' if off else '')
+               + f'; \u03b6^256 \u2261 {pow(Z, 256, Q)} and \u03b6^512 \u2261 {pow(Z, 512, Q)} mod q')
     zetas = [pow(Z, _br8(i), Q) for i in range(256)]
     indices = list(range(1, 256, max(1, 255//sample)))[:sample]
     n_pass = 0
@@ -2271,7 +2474,7 @@ def audit_safecurves(engines):
         ('supersingular j=1728 mod 23', 1, 0, 23, 'HIGH'),
         ('anomalous mod 17', 1, 3, 17, 'CRITICAL'),
         ('anomalous mod 23', 5, 3, 23, 'CRITICAL'),
-        ('near-singular mod 8380417', 1, 6, 8380417, 'HIGH'),
+        ('embedding degree 6 mod 147457', 138116, 141734, 147457, 'HIGH'),
         ('ordinary curve mod 31', 1, 4, 31, 'OK'),
     ]
     for label, a, b, p, expected in cases:
@@ -2321,6 +2524,45 @@ def _reference_ntt(f_in):
             start += 2 * length
         length //= 2
     return f
+
+def _bitrev(i, bits):
+    """i with its low `bits` bits reversed, by reversing its binary string:
+    written apart from the bit loops that build the zeta tables."""
+    return int(format(i, f'0{bits}b')[::-1], 2)
+
+
+def _mlkem_ntt_by_definition(f):
+    """FIPS 203's NTT of f from its definition (4.3), without butterflies:
+    (f^_2i, f^_2i+1) are the coefficients of f mod X^2 - zeta^(2 BitRev7(i) + 1),
+    for i < 128. Algorithm 9 and every layer check use the zeta table; this
+    does not, so a wrong table or butterfly order cannot pass both."""
+    Q, Z = KYBER_Q, KYBER_ZETA
+    out = []
+    for i in range(128):
+        g = pow(Z, 2 * _bitrev(i, 7) + 1, Q)
+        even = odd = 0
+        gp = 1
+        for j in range(0, 256, 2):
+            even += f[j] * gp
+            odd += f[j + 1] * gp
+            gp = gp * g % Q
+        out += [even % Q, odd % Q]
+    return out
+
+
+def _mldsa_ntt_by_definition(w):
+    """FIPS 204's NTT of w from its definition, without butterflies: w^_i is
+    w evaluated at zeta^(2 BitRev8(i) + 1), the 256 roots of X^256 + 1."""
+    Q, Z = DILI_Q, DILI_ZETA
+    out = []
+    for i in range(256):
+        x = pow(Z, 2 * _bitrev(i, 8) + 1, Q)
+        acc = 0
+        for c in reversed(w):
+            acc = (acc * x + c) % Q
+        out.append(acc)
+    return out
+
 
 def _ntt_layer(f_in, layer_idx, zetas):
     """Compute one NTT layer \u2014 returns output coefficients."""
@@ -2404,31 +2646,50 @@ def audit_full_ntt(lib):
                        f'{n_bf} butterflies \u2014 FAILED')
         f_layer = f_next
 
-    ntt_match = (f_layer == f_ntt)
+    # Algorithm 9 and the layers share the zeta table; the definition does
+    # not. Through 2.14.0 only the first two were compared.
+    defined = _mlkem_ntt_by_definition(f_input)
+    ntt_match = f_layer == f_ntt == defined
 
     r.add_test(f'7-layer NTT ({total_bf} butterflies)', all_pass,
                f'all layers SAT, {total_us:.0f}\u03bcs total')
     r.add_test('NTT output matches FIPS 203 reference', ntt_match,
-               f'256 coefficients, layer-by-layer == direct')
+               '256 coefficients: the layers compose to Algorithm 9'
+               + ('' if f_layer == f_ntt else ' \u2014 NOT')
+               + ', and both equal f mod X\u00b2 \u2212 \u03b6^(2\u00b7BitRev7(i)+1), the NTT\'s '
+               'definition' + ('' if f_ntt == defined else ' \u2014 NOT'))
 
     # The certificate states the whole transform -- input to all 256 outputs --
     # and Coq recomputes it from its own FIPS 203 definitions. Before 2.9.0 it
-    # held one layer-0 butterfly under a "Full NTT" header.
+    # held one layer-0 butterfly under a "Full NTT" header. Its control is the
+    # same certificate with one output off by one, which coqc must reject:
+    # through 2.14.0 that row only checked the file had been written.
+    names = ('NTT Coq certificate rejects a wrong output', 'NTT Coq certificate verified')
     ntt_cert_file = os.path.join(_pqv_workdir(), 'pq_ntt_cert.v')
     _, thms = gen_coq_ntt_cert('ML-KEM', f_input, f_ntt, ntt_cert_file)
-    r.add_test('NTT Coq certificate emitted', os.path.exists(ntt_cert_file),
-               ntt_cert_file)
-
-    import subprocess
+    k = 137
+    wrong = list(f_ntt)
+    wrong[k] = (wrong[k] + 1) % Q
+    wrong_file = os.path.join(_pqv_workdir(), 'pq_ntt_cert_wrong.v')
+    _, wrong_thms = gen_coq_ntt_cert('ML-KEM', f_input, wrong, wrong_file)
     try:
         ok, detail = coq_check(ntt_cert_file, thms)
-        r.add_test('NTT Coq certificate verified', ok, detail)
+        took, _ = coq_check(wrong_file, wrong_thms)
+    except FileNotFoundError:
+        for name in names:
+            r.add_skip(name, 'coqc not in PATH', 'coq')
+    except subprocess.TimeoutExpired:
+        for name in names:
+            r.add_skip(name, 'coqc timed out', 'coq')
+    else:
+        r.add_test(names[0], ok and not took,
+                   f'output {k} off by one: ' + ('rejected by coqc' if not took else 'ACCEPTED')
+                   + ('' if ok else '; the true certificate was rejected too, so this shows nothing'))
+        r.add_test(names[1], ok, detail)
         if not ok:
             r.add_finding('CRITICAL', f'NTT Coq certificate rejected: {detail}')
-    except FileNotFoundError:
-        r.add_skip('NTT Coq certificate verified', 'coqc not in PATH', 'coq')
-    except subprocess.TimeoutExpired:
-        r.add_skip('NTT Coq certificate verified', 'coqc timed out', 'coq')
+        if took:
+            r.add_finding('CRITICAL', 'NTT Coq certificate accepted a wrong output')
 
     return r
 
@@ -2474,8 +2735,14 @@ def audit_freivalds_ntt(lib):
     x = (ctypes.c_uint16 * N)(*[random.randint(0, Q - 1) for _ in range(N)])
     y = (ctypes.c_uint16 * N)(*x)  # copy
     lib.zq_ntt_forward(y, N, Q, Z)
+    # The engine's NTT and its Freivalds check share one zeta table, so the
+    # check accepting the NTT says nothing if that table is wrong. The NTT
+    # must also be FIPS 203's, by the definition; through 2.14.0 it was not
+    # compared with anything.
+    fips = list(y) == _mlkem_ntt_by_definition(list(x))
     ok = lib.zq_freivalds_ntt(x, y, N, Q, Z, 10, freivalds_seed(0))
-    r.add_test('Correct NTT passes (10 rounds)', ok == 1,
+    r.add_test('Correct NTT passes (10 rounds)', ok == 1 and fips,
+               f'the engine\'s NTT is {"" if fips else "NOT "}FIPS 203\'s by its definition; '
                f'Freivalds returned {ok}; {freivalds_seed_note()}')
     # Test 2: corrupted output should fail
     y_bad = (ctypes.c_uint16 * N)(*y)
@@ -3033,29 +3300,78 @@ def audit_aes_sbox(lib_gf2):
     r.add_test('AES S-box \u00d71000 batch', batch_fails == 0,
                f'{batch_fails} failures, {elapsed*1000:.1f}ms, {1000/elapsed:.0f}/sec')
 
-    import shutil
     cms_path = shutil.which('cryptominisat5') or shutil.which('cryptominisat')
     if cms_path:
-        import tempfile, subprocess
-        dimacs = "p cnf 16 16\n"
-        for i in range(8):
-            dimacs += f"{i+1} 0\n" if test_input[i] else f"-{i+1} 0\n"
-        for i in range(8):
-            dimacs += f"{8+i+1} 0\n" if expected[i] else f"-{8+i+1} 0\n"
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.cnf', delete=False) as f:
-            f.write(dimacs); cnf_path = f.name
-        t0_cms = time.perf_counter()
+        # Differential: an independent SAT solver decides the systems the
+        # engine decided -- this AES system, and the first 100 random ones of
+        # audit_gf2, most of them unsatisfiable -- and the two must agree,
+        # every model checked against every equation. Through 2.14.0 this row
+        # timed CMS5 on unit clauses and passed as a hard-coded True.
+        aes = [([i], test_input[i]) for i in range(8)] + [
+            ([8 + i] + [j for j in range(8) if aes_matrix[i][j]], aes_constant[i])
+            for i in range(8)]
+        systems = [(16, aes)]
+        rng = random.Random(42)               # audit_gf2's systems, in its order
         for _ in range(100):
-            subprocess.run([cms_path, '--verb=0', cnf_path],
-                           capture_output=True, timeout=10)
-        cms_time = (time.perf_counter() - t0_cms) / 100
-        os.unlink(cnf_path)
-        speedup = cms_time / (res.solve_time_us * 1e-6) if res.solve_time_us > 0 else 0
-        r.add_test('CryptoMiniSat5 comparison', True,
-                   f'CMS5={cms_time*1e6:.0f}\u03bcs, engine={res.solve_time_us:.1f}\u03bcs, '
-                   f'speedup={speedup:.0f}\u00d7')
+            nv = rng.randint(8, 32)
+            systems.append((nv, [(rng.sample(range(nv), rng.randint(2, min(6, nv))),
+                                  rng.randint(0, 1))
+                                 for _ in range(rng.randint(nv, nv + 10))]))
+        agree, n_sat, problems = 0, 0, []
+        cms_s = eng_us = 0.0
+        with tempfile.TemporaryDirectory(prefix='pqv-cms-') as td:
+            cnf_path = os.path.join(td, 'xor.cnf')
+            for idx, (nv, eqs) in enumerate(systems):
+                lib_gf2.gf2_init(ctypes.byref(s), nv)
+                for vs, p in eqs:
+                    lib_gf2.gf2_add_xor(ctypes.byref(s), (ctypes.c_int * len(vs))(*vs), len(vs), p)
+                lib_gf2.gf2_solve(ctypes.byref(s), ctypes.byref(res))
+                eng_us += res.solve_time_us
+                eng_sat = bool(res.satisfiable)
+                # CMS5's native XOR clauses: "x1 2 0" is x1 + x2 = 1, and a
+                # negated literal turns the parity to 0.
+                with open(cnf_path, 'w') as f:
+                    f.write(f'p cnf {nv} {len(eqs)}\n')
+                    for vs, p in eqs:
+                        lits = [str(v + 1) for v in vs]
+                        if not p:
+                            lits[0] = '-' + lits[0]
+                        f.write('x' + ' '.join(lits) + ' 0\n')
+                t0_cms = time.perf_counter()
+                try:
+                    out = subprocess.run([cms_path, '--verb=0', cnf_path],
+                                         capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    problems.append(f'system {idx}: CMS5 timed out')
+                    continue
+                cms_s += time.perf_counter() - t0_cms
+                if out.returncode not in (10, 20):
+                    problems.append(f'system {idx}: CMS5 exit {out.returncode}')
+                    continue
+                cms_sat = out.returncode == 10
+                x = [0] * nv
+                for ln in out.stdout.splitlines():
+                    if ln.startswith('v '):
+                        for lit in map(int, ln.split()[1:]):
+                            if 0 < abs(lit) <= nv:
+                                x[abs(lit) - 1] = int(lit > 0)
+                good = (cms_sat == eng_sat
+                        and (not cms_sat or _gf2_satisfied(eqs, x))
+                        and (not eng_sat or _gf2_satisfied(eqs, list(res.assignment[:nv]))))
+                agree += good
+                n_sat += cms_sat
+                if not good and len(problems) < 3:
+                    problems.append(f'system {idx}: CMS5 {"sat" if cms_sat else "unsat"}, '
+                                    f'engine {"sat" if eng_sat else "unsat"}')
+        n = len(systems)
+        r.add_test('CryptoMiniSat5 comparison', agree == n and not problems,
+                   f'{n} XOR systems (the AES affine one and {n - 1} random; {n_sat} '
+                   f'satisfiable, {n - n_sat} not): CMS5 and the engine agree on {agree}, '
+                   f'each model checked against every equation; CMS5 '
+                   f'{cms_s / n * 1e6:.0f}\u03bcs/system with start-up, engine '
+                   f'{eng_us / n:.1f}\u03bcs' + ('; ' + '; '.join(problems) if problems else ''))
     else:
-        # A benchmark that did not run is not a passed test -- and it is not a
+        # A comparison that did not run is not a passed test -- and it is not a
         # failed one either. add_skip records that and registers the dependency.
         r.add_skip('CryptoMiniSat5 comparison',
                    'CMS5 not installed, this comparison did NOT run '
@@ -3106,9 +3422,65 @@ def audit_fips204_params():
 # FIPS 205 SLH-DSA (SPHINCS+) PARAMETER VALIDATION
 # ================================================================
 
+# FIPS 205 Table 2, per parameter set: (n, h, d, h', a, k, lg_w, m). The SHA2
+# and SHAKE sets of a size share their parameters.
+_FIPS205_TABLE2 = {
+    '128s': (16, 63, 7, 9, 12, 14, 4, 30),
+    '128f': (16, 66, 22, 3, 6, 33, 4, 34),
+    '192s': (24, 63, 7, 9, 14, 17, 4, 39),
+    '192f': (24, 66, 22, 3, 8, 33, 4, 42),
+    '256s': (32, 64, 8, 8, 14, 22, 4, 47),
+    '256f': (32, 68, 17, 4, 9, 35, 4, 49),
+}
+
+
+def _fips205_sizes(n, h, d, hp, a, k, lg_w, m):
+    """(pk, sk, sig) bytes from FIPS 205's definitions, or None if the
+    parameters break one of its relations: h = d*h' (Table 2), m is the
+    digest length of Algorithm 19 (ceil(k*a/8) + ceil((h - h')/8) +
+    ceil(h'/8)), and len = len1 + len2 is the WOTS+ chain count (5.1).
+    pk = PK.seed || PK.root, sk = SK.seed || SK.prf || pk, and a signature is
+    R, then k FORS trees of a + 1 nodes, then d XMSS signatures of len + h'
+    nodes, every node n bytes."""
+    if h != d * hp or m != -(-k * a // 8) + -(-(h - hp) // 8) + -(-hp // 8):
+        return None
+    len1 = 8 * n // lg_w
+    lg = (len1 * ((1 << lg_w) - 1)).bit_length() - 1        # floor(log2(len1 (w - 1)))
+    len2 = lg // lg_w + 1
+    return 2 * n, 4 * n, (1 + k * (1 + a) + h + d * (len1 + len2)) * n
+
+
+def _slhdsa_keygen_vectors():
+    """{parameter set: (first test, NIST's expected pk and sk)} from the
+    pinned NIST ACVP keyGen vectors; {} if they are not installed."""
+    import json as _j
+    b = _load_bundle('SLH-DSA-keyGen-FIPS205/prompt.json')
+    prompt = b.get('SLH-DSA-keyGen-FIPS205/prompt.json')
+    expected = b.get('SLH-DSA-keyGen-FIPS205/expectedResults.json')
+    if not prompt or not expected:
+        return {}
+    prompt = _j.loads(prompt) if isinstance(prompt, str) else prompt
+    expected = _j.loads(expected) if isinstance(expected, str) else expected
+    want = {g['tgId']: {t['tcId']: t for t in g['tests']} for g in expected['testGroups']}
+    out = {}
+    for g in prompt['testGroups']:
+        if g['tests']:
+            t = g['tests'][0]
+            out[g['parameterSet']] = (t, want[g['tgId']][t['tcId']])
+    return out
+
+
 def audit_fips205_params():
-    """FIPS 205 parameter validation for SLH-DSA (SPHINCS+).
-    Hash-based signatures — no NTT, no lattice. Third NIST PQC standard."""
+    """FIPS 205 sizes for all twelve SLH-DSA parameter sets, and a keyGen
+    vector of each. Hash-based signatures — no NTT, no lattice.
+
+    Through 2.14.0 each row checked the table against arithmetic on itself
+    (pk = 2n with n = pk/2, and sig > 10 pk), which no wrong size could fail.
+    Each size is now checked against FIPS 205's formulas from Table 2's
+    parameters, pinned separately, and against the lengths in NIST's ACVP
+    keyGen vectors. With slh-dsa installed, its parameters must equal Table 2,
+    and NIST's first keyGen vector of each set must come out byte-exact:
+    pk.root is the top XMSS tree, computed here through the package."""
     r = AuditResult('FIPS 205 Parameters')
     fips205 = {
         'SLH-DSA-SHA2-128s':  {'pk': 32,   'sk': 64,   'sig': 7856},
@@ -3124,17 +3496,51 @@ def audit_fips205_params():
         'SLH-DSA-SHAKE-256s': {'pk': 64,   'sk': 128,  'sig': 29792},
         'SLH-DSA-SHAKE-256f': {'pk': 64,   'sk': 128,  'sig': 49856},
     }
-    # Structural checks on FIPS 205 parameter constraints
+    vectors = _slhdsa_keygen_vectors()
+    try:
+        from slhdsa.lowlevel.slhdsa import Address, XMSS
+        import slhdsa.lowlevel.parameters as _LP
+    except ImportError:
+        _LP = None
     for name, p in fips205.items():
-        # FIPS 205 Table 1: sk = 4*n, pk = 2*n where n = security level bytes
-        n = p['pk'] // 2
-        sk_ok = p['sk'] == 4 * n
-        pk_ok = p['pk'] == 2 * n
-        # Signature size must be > pk (hash-based sigs are large)
-        sig_ok = p['sig'] > p['pk'] * 10
-        ok = sk_ok and pk_ok and sig_ok
-        r.add_test(f'{name} FIPS 205 params', ok,
-                   f"n={n} pk={p['pk']}/{2*n} sk={p['sk']}/{4*n} sig={p['sig']}")
+        params = _FIPS205_TABLE2[name[-4:]]
+        n, h, d, hp, a, k, lg_w, m = params
+        sizes = _fips205_sizes(*params)
+        problems = []
+        if sizes is None:
+            problems.append("Table 2's parameters break a FIPS 205 relation")
+        elif sizes != (p['pk'], p['sk'], p['sig']):
+            problems.append(f'FIPS 205 gives pk {sizes[0]}, sk {sizes[1]}, sig {sizes[2]}')
+        detail = (f"n={n} h={h} d={d} h'={hp} a={a} k={k} m={m}: pk {p['pk']}, "
+                  f"sk {p['sk']}, sig {p['sig']} by FIPS 205's formulas")
+        vec = vectors.get(name)
+        if vec is None:
+            problems.append('no NIST keyGen vector pinned')
+        else:
+            t, want = vec
+            got = (len(want['pk']) // 2, len(want['sk']) // 2)
+            if got != (p['pk'], p['sk']):
+                problems.append(f'NIST keyGen vectors have pk {got[0]}, sk {got[1]}')
+            detail += "; NIST keyGen vectors' pk and sk the same"
+        if _LP is None:
+            detail += '; keyGen not run (slh-dsa not installed)'
+        elif vec is not None:
+            par = getattr(_LP, name.replace('SLH-DSA-', '').replace('-', '_').lower(), None)
+            theirs = par and tuple(getattr(par, f, None) for f in ('n', 'h', 'd', 'h_m', 'a', 'k', 'm'))
+            if theirs != (n, h, d, hp, a, k, m):
+                problems.append(f"slh-dsa's parameters are {theirs}")
+            else:
+                sk_seed, sk_prf, pk_seed = (bytes.fromhex(t[f]) for f in ('skSeed', 'skPrf', 'pkSeed'))
+                root = XMSS(par).node(sk_seed, 0, par.h_m, pk_seed, Address(par.d - 1, 0))
+                exact = ((pk_seed + root).hex().upper() == want['pk'].upper()
+                         and (sk_seed + sk_prf + pk_seed + root).hex().upper() == want['sk'].upper())
+                if exact:
+                    detail += (f"; slh-dsa's parameters equal Table 2, and NIST keyGen "
+                               f"tcId {t['tcId']} came out byte-exact")
+                else:
+                    problems.append(f"NIST keyGen tcId {t['tcId']} not reproduced")
+        r.add_test(f'{name} FIPS 205 params', not problems,
+                   detail if not problems else detail + ' \u2014 ' + '; '.join(problems))
     # Live roundtrip against a real FIPS 205 implementation.
     # NOTE: the PyPI package is `slh-dsa` but the MODULE is `slhdsa`. An
     # earlier version imported `slh_dsa`, which never resolved, so this check
@@ -3282,12 +3688,16 @@ def audit_full_ntt_dilithium(lib):
                        f'{n_bf} butterflies \u2014 FAILED')
         f_layer = f_next
 
-    ntt_match = (f_layer == f_ntt)
+    defined = _mldsa_ntt_by_definition(f_input)
+    ntt_match = f_layer == f_ntt == defined
     r.add_test(f'8-layer Dilithium NTT ({total_bf} butterflies)', all_pass,
                f"{'all layers SAT' if all_pass else 'a layer is UNSAT'}, "
                f'{total_us:.0f}\u03bcs total')
     r.add_test('Dilithium NTT matches FIPS 204 reference', ntt_match,
-               '256 coefficients, layer-by-layer == direct')
+               '256 coefficients: the layers compose to Algorithm 41'
+               + ('' if f_layer == f_ntt else ' \u2014 NOT')
+               + ', and both equal f(\u03b6^(2\u00b7BitRev8(i)+1)), the NTT\'s definition'
+               + ('' if f_ntt == defined else ' \u2014 NOT'))
 
     s32 = Zq32S(); r32 = Zq32R()
     lib.zq32_init(ctypes.byref(s32), 4, Q)
@@ -3306,43 +3716,103 @@ def audit_full_ntt_dilithium(lib):
     return r
 
 # ================================================================
-# COQ PERSISTENT DAEMON (8ms/proof vs 200ms subprocess)
+# COQ PERSISTENT DAEMON (one coqtop, no start-up per theorem)
 # ================================================================
 
 class CoqDaemon:
-    """Persistent coqtop process \u2014 avoids 200ms subprocess startup."""
+    """A persistent coqtop process: no coqc start-up per theorem.
+
+    Every statement goes to coqtop followed by a marker, and coqtop's reply
+    is read back up to that marker, so each verdict is coqtop's own. A
+    theorem counts only if coqtop proves it and Print Assumptions finds it
+    closed under the global context, with no axiom. Through 2.14.0 the
+    daemon wrote to coqtop and never read a reply: every theorem it was sent
+    was 'accepted', true or false.
+    """
+    TIMEOUT = 60        # seconds to wait for one reply
+
     def __init__(self):
         self.proc = None
+        self._lines = None
+        self._marker = 7_340_000_000
         self._start()
 
     def _start(self):
-        import shutil, subprocess
+        import queue, threading
         coqtop = shutil.which('coqtop')
         if not coqtop:
-            self.proc = None; return
+            return
         try:
+            # stderr merged: coqtop writes its errors there
             self.proc = subprocess.Popen(
-                [coqtop, '-quiet'],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True)
-            self.proc.stdin.write('Require Import ZArith.\n')
-            self.proc.stdin.write('Open Scope Z_scope.\n')
-            self.proc.stdin.flush()
-            time.sleep(0.5)
-        except Exception:
+                [coqtop, '-quiet'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        except OSError:
             self.proc = None
+            return
+        self._lines = queue.Queue()
+
+        def pump(stream, sink):
+            for line in stream:
+                sink.put(line)
+            sink.put(None)
+        threading.Thread(target=pump, args=(self.proc.stdout, self._lines),
+                         daemon=True).start()
+        ok, reply = self._send('Require Import ZArith.\nOpen Scope Z_scope.\n')
+        if not ok or 'Error' in reply:
+            self.close()
+            self.proc = None
+            return
+        # Not printing every goal makes a theorem ~6 ms instead of ~75;
+        # errors and Print Assumptions still print. Only a speed-up, so a
+        # coqtop without the option is used as it is.
+        self._send('Set Silent.\n')
+
+    def _send(self, text):
+        """(answered, reply): coqtop's whole reply to text, read up to a
+        marker sent after it. answered is False if coqtop died or did not
+        reach the marker within TIMEOUT."""
+        import queue
+        self._marker += 1
+        mark = str(self._marker)
+        try:
+            self.proc.stdin.write(f'{text}Check {mark}.\n')
+            self.proc.stdin.flush()
+        except (OSError, ValueError) as e:
+            return False, f'coqtop closed its input: {e}'
+        reply, deadline = [], time.monotonic() + self.TIMEOUT
+        while True:
+            try:
+                line = self._lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                return False, f'no reply from coqtop in {self.TIMEOUT}s'
+            if line is None:
+                return False, 'coqtop exited'
+            # The marker's own line: the number alone at the end (after any
+            # prompts), so a long number in a reply cannot be taken for it.
+            body = line.rstrip()
+            if body.endswith(mark) and not body[:-len(mark)][-1:].isdigit():
+                # The marker's type line ("     : Z") comes after it and opens
+                # the next reply; waiting for it costs ~30 ms a theorem, and
+                # it can say neither "Error" nor "Closed".
+                return True, ''.join(reply)
+            reply.append(line)
 
     def check_theorem(self, name, stmt):
+        """(accepted, detail): accepted only if coqtop proves stmt by
+        computation and finds the theorem closed under the global context."""
         if not self.proc or self.proc.poll() is not None:
             return False, 'daemon not running'
-        try:
-            self.proc.stdin.write(
-                f"Theorem {name}: {stmt}. Proof. vm_compute. reflexivity. Qed.\n")
-            self.proc.stdin.flush()
-            time.sleep(0.01)
-            return True, 'accepted'
-        except Exception as e:
-            return False, str(e)
+        ok, reply = self._send(f'Theorem {name}: {stmt}.\n'
+                               'Proof. vm_compute. reflexivity. Qed.\n'
+                               f'Print Assumptions {name}.\n')
+        if not ok:
+            return False, reply
+        if 'Error' in reply or 'Closed under the global context' not in reply:
+            self._send('Abort All.\n')          # a failed proof stays open
+            err = [ln.strip() for ln in reply.splitlines() if 'Error' in ln]
+            return False, (err[0] if err else 'not closed under the global context')[:120]
+        return True, 'closed under the global context'
 
     def close(self):
         if self.proc and self.proc.poll() is None:
@@ -3354,38 +3824,50 @@ class CoqDaemon:
                 self.proc.kill()
 
 def audit_coq_daemon():
-    """Test persistent coqtop daemon for batch proof checking."""
+    """The persistent coqtop daemon: a false theorem must be rejected, and 16
+    true ones each accepted, by coqtop's own reply. Through 2.14.0 its start
+    passed as a hard-coded True and the daemon never read a verdict, so both
+    rows passed whatever coqtop said."""
     r = AuditResult('Coq Daemon')
-    import shutil
     # Every check this function can report must be REGISTERED on every path.
     # Returning early without one does not make it pass or fail -- it makes it
     # vanish, so the suite's own total changes with the environment and a
     # documented count cannot be right in both. Skips carry the same names as
     # the tests they stand in for, so two runs can be diffed.
+    names = ('Coq daemon rejects a false theorem', 'Batch 16 theorems')
     if not shutil.which('coqtop'):
-        r.add_skip('Coq daemon startup', 'coqtop not in PATH', 'coq')
-        r.add_skip('Batch 16 theorems', 'coqtop not in PATH', 'coq')
+        for name in names:
+            r.add_skip(name, 'coqtop not in PATH', 'coq')
         return r
     daemon = CoqDaemon()
     if not daemon.proc:
-        r.add_skip('Coq daemon startup', 'coqtop failed to start', 'coq')
-        r.add_skip('Batch 16 theorems', 'coqtop failed to start', 'coq')
+        for name in names:
+            r.add_skip(name, 'coqtop failed to start', 'coq')
         return r
-    r.add_test('Coq daemon startup', True, 'coqtop persistent process')
+    # First the control: a daemon that does not read its verdicts accepts
+    # this, and then 16/16 below would mean nothing.
+    took, why = daemon.check_theorem('batch_false', '(1000 + 2000) mod 3329 = 3001')
+    r.add_test(names[0], not took,
+               '(1000 + 2000) mod 3329 = 3001: '
+               + (f'rejected by coqtop ({why})' if not took else
+                  'ACCEPTED, so the daemon is not reading coqtop\'s verdicts'))
 
     random.seed(7777)
     t0 = time.perf_counter()
-    n_ok = 0
+    n_ok, first_bad = 0, None
     for i in range(16):
         a = random.randint(100, 3328)
         b = random.randint(100, 3328)
         result = (a + b) % 3329
-        ok, _ = daemon.check_theorem(f'batch_{i}', f'({a} + {b}) mod 3329 = {result}')
-        if ok: n_ok += 1
+        ok, why = daemon.check_theorem(f'batch_{i}', f'({a} + {b}) mod 3329 = {result}')
+        n_ok += ok
+        first_bad = first_bad or (None if ok else why)
     elapsed = time.perf_counter() - t0
     per_proof = elapsed / 16 * 1000
-    r.add_test('Batch 16 theorems', n_ok == 16,
-               f'{n_ok}/16, {per_proof:.1f}ms/proof, {elapsed*1000:.0f}ms total')
+    r.add_test(names[1], n_ok == 16,
+               f'{n_ok}/16 proved by coqtop and closed under the global context, '
+               f'{per_proof:.1f}ms/proof, {elapsed*1000:.0f}ms total'
+               + (f'; first failure: {first_bad}' if first_bad else ''))
     daemon.close()
     return r
 
@@ -3424,9 +3906,20 @@ def audit_c_cfl(engines):
                 c_cfl = ctypes.CDLL(_cfl_so)
             except Exception as _e:
                 print(f"  {_BAD} PQV_CFL_SO failed to load: {_e}")
+    # Each run also takes one random one-character edit of the specification
+    # -- a character deleted, inserted or replaced -- which the pipeline must
+    # either reject with a CFLError giving a line and column, or accept as a
+    # specification that prints back to itself, with closed obligations. Any
+    # other outcome (an IndexError, an error with no position) fails the row.
+    # Through 2.14.0 the row timed 100 runs of a deterministic function and
+    # repeated the parser's round trip, which nothing could make fail.
+    rng = random.Random(2603)
+    alphabet = '(){}<>:;,"\\ \n_aZ09@'
     t0 = time.perf_counter()
     first, same, trips = None, True, True
-    for _ in range(100):
+    rejected = accepted = 0
+    odd = []
+    for i in range(100):
         ast = C.parse(CFL_SPEC)
         props = C.check(ast)
         text = C.to_text(ast)
@@ -3435,11 +3928,38 @@ def audit_c_cfl(engines):
                tuple(C.show(C.from_prenex(*C.prenex(C.obligation(p)))) for p in props))
         first = first or out
         same = same and out == first
+        spec = list(CFL_SPEC)
+        pos, op, ch = rng.randrange(len(spec)), rng.randrange(3), rng.choice(alphabet)
+        if op == 0:
+            del spec[pos]
+        elif op == 1:
+            spec.insert(pos, ch)
+        else:
+            spec[pos] = ch
+        edited = ''.join(spec)
+        try:
+            m_ast = C.parse(edited)
+            m_props = C.check(m_ast)
+            closed = all(not C.free_vars(C.obligation(p)) for p in m_props)
+            if C.parse(C.to_text(m_ast)).shape() == m_ast.shape() and closed:
+                accepted += 1
+            else:
+                odd.append(f'edit {i + 1} accepted but does not print back to itself')
+        except C.CFLError as e:
+            if all(m.startswith('line ') for m in e.messages):
+                rejected += 1
+            else:
+                odd.append(f'edit {i + 1}: an error with no position: {e}')
+        except Exception as e:           # a crash on malformed input
+            odd.append(f'edit {i + 1}: {type(e).__name__}: {e}')
     elapsed = (time.perf_counter() - t0) / 100
-    r.add_test('Python CFL pipeline \u00d7100', same and trips,
+    r.add_test('Python CFL pipeline \u00d7100', same and trips and not odd,
                f'{elapsed*1e6:.0f}\u03bcs/iter; the same AST, properties and obligations '
                f'every time{"" if same else " — NOT"}; the printed AST parses to '
-               f'itself{"" if trips else " — NOT"}')
+               f'itself{"" if trips else " — NOT"}; 100 one-character edits: {rejected} '
+               f'rejected with a line and column, {accepted} still a specification that '
+               f'prints back to itself, {len(odd)} otherwise'
+               + (f' ({"; ".join(odd[:3])})' if odd else ''))
     if c_cfl is None:
         return r
     class PR(ctypes.Structure):
@@ -4004,21 +4524,34 @@ def main(quick=False):
     print("  Generating batch Coq certificate...")
     coq_file = gen_coq_cert(results)
     cert_r = AuditResult('Coq Certificate')
-    cert_r.add_test('Coq certificate generation',
-                    bool(coq_file) and os.path.isfile(coq_file)
-                    and os.path.getsize(coq_file) > 0, coq_file)
-    import subprocess
+    # The control: the same certificate with one zeta off by one, which coqc
+    # must reject. Through 2.14.0 this row only checked that the file had
+    # been written.
+    names = ('Coq batch certificate rejects a wrong zeta', 'Coq batch verified by coqc')
+    wrong_file = gen_coq_cert(results, os.path.join(_pqv_workdir(), 'pq_verify_cert_wrong.v'),
+                              corrupt=True)
     try:
         ok, detail = coq_check(coq_file)
-        cert_r.add_test('Coq batch verified by coqc', ok, detail)
+        took = coq_check(wrong_file)[0] if wrong_file else None
     except FileNotFoundError:
-        cert_r.add_skip('Coq batch verified by coqc',
-                        'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
+        for name in names:
+            cert_r.add_skip(name, 'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
     except subprocess.TimeoutExpired:
-        cert_r.add_skip('Coq batch verified by coqc', 'coqc timed out', 'coq')
+        for name in names:
+            cert_r.add_skip(name, 'coqc timed out', 'coq')
     except Exception as e:
-        cert_r.add_skip('Coq batch verified by coqc',
-                        f'coqc could not be run: {str(e)[:80]}', 'coq')
+        for name in names:
+            cert_r.add_skip(name, f'coqc could not be run: {str(e)[:80]}', 'coq')
+    else:
+        if took is None:
+            cert_r.add_skip(names[0], 'no zeta table in this run to state wrongly')
+        else:
+            cert_r.add_test(names[0], ok and not took,
+                            'zeta table entry 1 off by one: '
+                            + ('rejected by coqc' if not took else 'ACCEPTED')
+                            + ('' if ok else '; the true certificate was rejected too, '
+                               'so this shows nothing'))
+        cert_r.add_test(names[1], ok, detail)
     results.append(cert_r)
 
     # ============================================================
@@ -4115,56 +4648,59 @@ else:
 # EMBEDDED ENGINE SOURCES  (gzip + base64 — zero uploads)
 # ============================================================
 _SRC_RANK2 = (
-    "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"
+    "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"
+    "GPV2B4o4vULxM9Tg5gHSD+GMzo++vD8+/HwwOfm69+lg79fPn96vkV7RWIM2eKVK/HOnmbFefXxEtW01kzaHKmapL7a2Ko9j/p6s"
+    "y8UrZLv/+1UjU5bCK9vFKe3Fd4O++yOVtIfNi5p4+zbd3uCj08dGm7eigj3U5f4E0RThkqUzQ2KmjbfZcjpQaUW74J3XiMq09KNJ"
+    "yg3VEm/cZh91ScmKS1JKSCTJmXUX1F2ZR8/nMJs+mHqd69kUTsaJyfuNABWDO97SCDlVI4/g1laiQd6nB2SqrTolqcZUXEB9x/tf"
+    "wcGMadDqp05tjNISdF2vNn/qj2Zw3/CO2NofMWzk5O2+6g8JYr0d7q3f3x/b9enM/f0WNtzfIwte9V0a/qpAZVpJApB/eZ8iQflL"
+    "qlw3NEO9lcF8ietf9k5O1nGd6x/2Dn9db2Sgam2/J6+miBhvzZOZzC+EE2ofAjeWt26Ib/XotKiqJ5t9Wk7FcfmklS5lVKJbbatU"
+    "wAqqcj/izngBAVULDWc0+Mt20woR2Hl8qNM5tOZFIxBB6W7jVmqwmwwDSvogcoRWrSIUky+SKG1haUQsKzg2JY7NBg6nG0eYzB66"
+    "kAzEQNug6Tf5eMVeuUUbtdXvSv6jQgxQFxzas39AEw1na/8BceocKP8tAAA="
 )
 _SRC_GENUS2 = (
     "H4sIAJ5XCGoC/+1bW2/buBJ+968gdh+O5EsiUbIs190cZBtgcR68qFPnqSgMRZYT1bakSnKaeLf//XB4kUhJTuTdsy4anKCoLpz5"
@@ -4538,6 +5074,8 @@ def bind_engine6(engines):
         l.period_audit_legendre.restype = None
         l.period_residue_numeric.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_int]
         l.period_residue_numeric.restype = ctypes.c_double
+        l.period_legendre_connection.argtypes = [ctypes.c_double] + [ctypes.POINTER(ctypes.c_double)] * 3
+        l.period_legendre_connection.restype = None
     if engines.get('genus2'):
         l = engines['genus2']
         l.period_g2_audit.argtypes = [ctypes.c_double, ctypes.c_double,
@@ -4560,6 +5098,66 @@ def bind_engine6(engines):
                                       ctypes.POINTER(PeriodG4Result)]
         l.period_g4_audit.restype = None
 
+def _legendre_period(z):
+    """(F, F', F'') at z for F = 2F1(1/2, 1/2; 1; z), by its hypergeometric
+    series (0 < |z| < 1). (pi/2) F is a period of y^2 = x(x - 1)(x - z), the
+    complete elliptic integral K; F(1 - z) is a second, independent one."""
+    t, n = 1.0, 0                        # t = c_n z^n, c_n = ((1/2)_n / n!)^2
+    f = fp = fpp = 0.0
+    while True:
+        f += t
+        fp += n * t / z
+        fpp += n * (n - 1) * t / (z * z)
+        t *= z * ((n + 0.5) / (n + 1)) ** 2
+        n += 1
+        if n > 10 and abs(t) < 1e-18 * abs(f) and abs(n * n * t / (z * z)) < 1e-18 * abs(fpp):
+            return f, fp, fpp
+        if n > 20000:
+            raise ArithmeticError(f'the hypergeometric series at z = {z} did not converge')
+
+
+def _legendre_connection_check(lib, samples):
+    """(ok, worst period residual, worst derivative error, periods checked).
+
+    The engine's Q is -(U' + U^2), so its Riccati equation U' = -U^2 - Q
+    holds by definition whatever U and U' are: the engine sets that flag to
+    1. What can be wrong is U and U' themselves. At each sample in (0, 1)
+    the periods F(z) and F(1 - z) must satisfy (w, w')' = U (w, w') with the
+    engine's U, which pins both of its free entries; and at every sample
+    U' and U'' must equal central differences of the engine's U and U'."""
+    def mats(z):
+        bufs = [(ctypes.c_double * 4)() for _ in range(3)]
+        lib.period_legendre_connection(ctypes.c_double(z), *bufs)
+        return [list(b) for b in bufs]
+    worst_p = worst_d = 0.0
+    n_p = 0
+    ok = True
+    for z in samples:
+        U, Up, Upp = mats(z)
+        if 0.0 < z < 1.0:
+            n_p += 1
+            F, G = _legendre_period(z), _legendre_period(1.0 - z)
+            for w, wp, wpp in (F, (G[0], -G[1], G[2])):
+                ok = ok and U[0] == 0.0 and U[1] == 1.0
+                res = abs(wpp - (U[2] * w + U[3] * wp)) / (abs(wpp) + abs(U[2] * w) + abs(U[3] * wp))
+                worst_p = max(worst_p, res)
+        h = 1e-5 * max(1.0, abs(z))
+        lo, hi = mats(z - h), mats(z + h)
+        for k, got in ((0, Up), (1, Upp)):
+            fd = [(b - a) / (2 * h) for a, b in zip(lo[k], hi[k])]
+            scale = max(abs(v) for v in got) or 1.0
+            worst_d = max(worst_d, max(abs(x - y) for x, y in zip(fd, got)) / scale)
+    ok = ok and worst_p < 1e-10 and worst_d < 1e-6
+    return ok, worst_p, worst_d, n_p
+
+
+# Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U hold
+# for any matrices of their shape, Q being defined from U: rows of them test
+# the engine's arithmetic, never its periods (ARCHITECTURE.md).
+_E6_IDENTITY = ("; an identity for any U, U\u2032, U\u2033, so it checks the engine's "
+                "arithmetic, not its periods")
+
+
 # ============================================================
 # AUDIT 6a — RANK 2  (Legendre, genus 1)
 # ============================================================
@@ -4569,7 +5167,7 @@ def audit_engine6_rank2(lib):
     r = _AuditResult('Engine 6a: rank-2 Legendre')
     samples = [0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9, 1.3, 2.0, -0.5]
     n = len(samples)
-    nt = nr = nc = nx = 0
+    nt = nc = nx = 0
     worst_thm1 = 0.0
     t0 = time.perf_counter()
     for z in samples:
@@ -4577,15 +5175,26 @@ def audit_engine6_rank2(lib):
         lib.period_audit_legendre(ctypes.c_double(z), ctypes.c_double(1e-9),
                                   ctypes.byref(o))
         nt += int(bool(o.ok_theorem1))
-        nr += int(bool(o.ok_riccati))
         nc += int(bool(o.ok_traceless) and bool(o.ok_scalar_comm2))
         nx += int(bool(o.ok_closed_form))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 2 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
-    r.add_test('Riccati U\' = -U^2 - Q', nr == n, f'{nr}/{n}')
-    r.add_test('Lemma 3 / traceless commutator', nc == n, f'{nc}/{n}')
+    # Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U
+    # hold for any matrices of their shape (Q is defined from U), so these
+    # rows test the engine's arithmetic, never its periods; the closed form
+    # and residue rows do that.
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 2 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
+    # Through 2.14.0 this row counted the engine's ok_riccati, which is set
+    # to 1 unconditionally (see _legendre_connection_check).
+    c_ok, c_per, c_der, c_n = _legendre_connection_check(lib, samples)
+    r.add_test('Riccati inputs: U the Legendre periods\' connection, U\u2032 and U\u2033 '
+               'its derivatives', c_ok,
+               f'{c_n} samples in (0, 1): F = \u2082F\u2081(\u00bd,\u00bd;1;z) and F(1\u2212z) '
+               f'satisfy (\u03c9,\u03c9\u2032)\u2032 = U(\u03c9,\u03c9\u2032) to {c_per:.1e}; '
+               f'at all {n}, U\u2032 and U\u2033 equal central differences to {c_der:.1e}')
+    r.add_test("Lemma 3 identity in the engine's arithmetic (rank 2)", nc == n,
+               f'{nc}/{n}; tr[U,Q] = 0 and [U,Q]\u00b2 scalar hold for any 2\u00d72 U and Q')
     r.add_test('Legendre closed form tr(U[U,Q]U\')', nx == n, f'{nx}/{n}')
     if nt != n:
         r.add_finding('CRITICAL', f'rank-2 Theorem 1 failed on {n-nt} samples')
@@ -4619,14 +5228,15 @@ def audit_engine6_genus2(lib):
         n3  += int(bool(o.ok_tr3_zero))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 4 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 4 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
     r.add_test('tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
-               ntr == n and n3 == n, f'traceless {ntr}/{n}, tr3 {n3}/{n}')
+               ntr == n and n3 == n, f'traceless {ntr}/{n} (true of any matrices), '
+               f'tr3 {n3}/{n} (this M is not in companion form, so tr3 is the check)')
     if nt != n:
         r.add_finding('CRITICAL', f'genus-2 Theorem 1 failed on {n-nt} samples')
     # Paper 7 Table 1 residues of f2 at z=0,1,2,3
-    f2_exact = [61495.0/15552.0, 45.0/64.0, -45.0/64.0, -61495.0/15552.0]
+    f2_exact = [a / b for a, b in _E6_G2_TABLE1]
     f2_got = [lib.period_g2_residue_f2(float(z), 0.4, 8192) for z in range(4)]
     f2_ok = all(abs(g - e) < 1e-3 for g, e in zip(f2_got, f2_exact))
     r.add_test('Paper 7 Table 1: Res f2 at z=0,1,2,3', f2_ok,
@@ -4659,9 +5269,10 @@ def audit_engine6_quintic(lib):
         n3 += int(bool(o.ok_tr3_zero))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank-4 CY3 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
-    r.add_test('tr[U,Q]^3 = 0 (Observation 4, CY3)', n3 == n, f'{n3}/{n}')
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank-4 CY3 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
+    r.add_test("Observation 4 identity in the engine's arithmetic (CY3, companion form)", n3 == n,
+               f'{n3}/{n}; tr[U,Q]\u00b3 = 0 holds for any companion-form U')
     if nt != n:
         r.add_finding('CRITICAL', f'mirror quintic Theorem 1 failed on {n-nt} samples')
     # f2(z) matches Paper 7 closed form
@@ -4719,8 +5330,8 @@ def audit_engine6_genus4(lib):
         best_odd   = min(best_odd, o.worst_odd_rel)
         fvecs.append([o.f_invariants[i] for i in range(4)])
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 8 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 8 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
     r.add_test('Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0', n_obs4 == n,
                f'{n_obs4}/{n}, best {best_odd:.2e}, worst {worst_odd:.2e} '
                f'(Paper 7 verifies only through rank 6)')
@@ -4769,8 +5380,9 @@ def _ob_e6_theorem1(engines, corrupt=False):
             bad.append(key)
     if bad:
         return False, f'Theorem 1 fails on {", ".join(bad)}'
-    return True, (f'Theorem 1 entry-wise at rank 2, genus 2, the mirror quintic and '
-                  f'genus 4, worst residual {worst:.1e}')
+    return True, (f'Theorem 1, an identity for any connection, holds in the engines\' '
+                  f'arithmetic at rank 2, genus 2, the mirror quintic and genus 4, worst '
+                  f'residual {worst:.1e}')
 _ob_e6_theorem1.corruption = 'a tolerance below its residuals'
 
 
@@ -4842,18 +5454,33 @@ def _ob_e6_conjecture6(engines, corrupt=False):
 _ob_e6_conjecture6.corruption = 'three of its seven points'
 
 _E6_LAMBDA2 = (-884266719222068786621093750, 97)
-_E6_RATIOS = []                          # filled once: SymPy is slow
+_E6_EXACT = []                           # filled once: SymPy is slow
+
+# Paper 7, Table 1: the residues of f2 = tr([U,Q]^2) for genus 2, at z = 0..3.
+_E6_G2_TABLE1 = ((61495, 15552), (45, 64), (-45, 64), (-61495, 15552))
 
 
-def _e6_residue_ratios():
-    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
-    exact rationals (SymPy); None without SymPy."""
-    if _E6_RATIOS:
-        return _E6_RATIOS[0]
+def _e6_exact_residues():
+    """This run's exact residues, by SymPy, or None without it.
+
+    {'quintic': {z0: (Res f2, Res f4)} at z0 = 0 and 1/3125, from the mirror
+     quintic's Picard-Fuchs operator,
+     'genus2': [Res f2 at z = 0, 1, 2, 3], from the genus-2 engine's own
+     M(z), read from its source, with SymPy's exact derivative in place of
+     the engine's hand-written M'(z)}.
+
+    The genus-2 f2 is built as polynomials over the common denominator
+    D = z(z-1)(z-2)(z-3): with M = N/D, -Q D^2 = N'D - ND' + N^2 and
+    [M,Q] D^3 = PN - NP, so f2 = tr((NP - PN)^2) / D^6 and each residue is a
+    Taylor coefficient at a simple root of D (simplifying the rational
+    entries instead takes about 50 s)."""
+    if _E6_EXACT:
+        return _E6_EXACT[0]
     try:
         import sympy as sp
     except ImportError:
         return None
+    import re as _re6
     z = sp.Symbol('z')
     a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
     a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
@@ -4863,10 +5490,51 @@ def _e6_residue_ratios():
     cQ2 = cQ@cQ
     f2s = sp.cancel(sp.together(cQ2.trace()))
     f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
-    ratios = tuple(sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
-                   for pt in (sp.Integer(0), sp.Rational(1, 3125)))
-    _E6_RATIOS.append(ratios)
-    return ratios
+    quintic = {pt: (sp.Rational(sp.residue(f2s, z, pt)), sp.Rational(sp.residue(f4s, z, pt)))
+               for pt in (sp.Integer(0), sp.Rational(1, 3125))}
+    src = _decode(_SRC_GENUS2)
+    body = src[src.index('static void compute_M(T z, T *M)'):src.index('static void compute_Mp')]
+    ent = {int(i): _re6.sub(r'(\d+)\.0\b', r'\1', e)
+           for i, e in _re6.findall(r'M\[(\d+)\] = T\((.*)\);', body)}
+    if sorted(ent) != list(range(16)):
+        raise ArithmeticError("the genus-2 engine's M(z) could not be read from its source")
+    D = sp.Poly(z * (z - 1) * (z - 2) * (z - 3), z)
+    N = []
+    for i in range(16):
+        num, den = sp.fraction(sp.cancel(sp.sympify(ent[i], locals={'z': z}, rational=True)
+                                         * D.as_expr()))
+        if sp.Poly(den, z).degree() != 0:
+            raise ArithmeticError('the genus-2 M(z) has a pole off z = 0, 1, 2, 3')
+        N.append(sp.Poly(num / den, z))
+    N = [N[4 * i:4 * i + 4] for i in range(4)]
+    zero = sp.Poly(0, z)
+
+    def mul(A, B):
+        return [[sum((A[i][k] * B[k][j] for k in range(4)), zero) for j in range(4)]
+                for i in range(4)]
+    Dp, NN = D.diff(z), mul(N, N)
+    P = [[N[i][j].diff(z) * D - N[i][j] * Dp + NN[i][j] for j in range(4)] for i in range(4)]
+    NP, PN = mul(N, P), mul(P, N)
+    C = [[NP[i][j] - PN[i][j] for j in range(4)] for i in range(4)]
+    CC = mul(C, C)
+    f2num = sum((CC[i][i] for i in range(4)), zero).as_expr()
+    genus2 = []
+    for a in range(4):
+        H = sp.quo(D, sp.Poly(z - a, z)).as_expr()     # D / (z - a)
+        g = f2num / H ** 6                              # (z - a)^6 f2: regular at a
+        genus2.append(sp.Rational(sp.cancel(sp.diff(g, z, 5).subs(z, a) / 120)))
+    out = {'quintic': quintic, 'genus2': genus2}
+    _E6_EXACT.append(out)
+    return out
+
+
+def _e6_residue_ratios():
+    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
+    exact rationals (SymPy); None without SymPy."""
+    res = _e6_exact_residues()
+    if res is None:
+        return None
+    return tuple(r4 / r2 for r2, r4 in res['quintic'].values())
 
 
 def _ob_e6_conjecture7(engines, corrupt=False):
@@ -4921,38 +5589,56 @@ def audit_engine6_cfl(engines):
 # residue theorem (finite residues of f2 sum to zero).  Verified by coqc,
 # which returns a real exit code — unlike the daemon's write-only check.
 
-def gen_engine6_coq_cert(filename=None):
-    """Emit a Coq certificate of Engine 6's EXACT results."""
+def _coq_q(x):
+    """A Coq Q literal for the rational x."""
+    return f'(({x.p}) # {x.q})'
+
+
+def gen_engine6_coq_cert(filename=None, lam_num=-_E6_LAMBDA2[0], residues=None):
+    """A Coq certificate of Engine 6's exact results, stated on the residues
+    this run computed (_e6_exact_residues): Conjecture 7 on the mirror
+    quintic's, Paper 7's Table 1 on the genus-2 engine's, and the residue
+    theorem on those. lambda2 is -lam_num/97; a different lam_num states a
+    false lambda2, which coqc must reject (the certificate's control).
+    (filename, text), or (None, None) without SymPy. Through 2.14.0 the
+    certificate stated integers fixed in this file, and its genus-2 theorem
+    was a + b - b - a = 0."""
+    res = residues or _e6_exact_residues()
+    if res is None:
+        return None, None
     if filename is None:
         filename = os.path.join(_pqv_workdir(), 'pq_engine6_cert.v')
-    lam_num = 884266719222068786621093750  # lambda2 = -lam_num / 97
-    # Conjecture 7 exact residue integers (z=0 and conifold z=1/3125)
-    rf2_0, rf4_0 = (-527286529541015625000,
-                     4806824016156951984157785773277282714843750000)
-    rf2_c, rf4_c = ( 527286529541015625000,
-                    -4806824016156951984157785773277282714843750000)
+    conj7 = []
+    for tag, (r2, r4) in zip(('z0', 'conifold'), res['quintic'].values()):
+        conj7 += [f"Theorem conj7_{tag} :",
+                  f"  97 * (({r4.p}) * {r2.q}) = (-{lam_num}) * (({r2.p}) * {r4.q}).",
+                  "Proof. vm_compute. reflexivity. Qed.", ""]
+    g = [_coq_q(x) for x in res['genus2']]
+    table = ' /\\ '.join(f'{gi} == (({a}) # {b})' for gi, (a, b) in zip(g, _E6_G2_TABLE1))
     lines = [
-        "(* pq-engine6 Coq certificate — Paper 7 exact results *)",
+        "(* pq-engine6 Coq certificate: Paper 7's exact results, on the residues *)",
+        "(* this run computed (SymPy): the mirror quintic's from its Picard-Fuchs  *)",
+        "(* operator, the genus-2 engine's from its own connection matrix M(z).    *)",
         "Require Import ZArith QArith.",
         "Open Scope Z_scope.",
         "",
-        "(* Conjecture 7 (CY3 residue rigidity): Res(f4)/Res(f2) = -lambda2 *)",
-        "(*   <=>  97 * Res(f4) = -lambda2_num * Res(f2)                    *)",
-        f"Theorem conj7_z0 :",
-        f"  (97 * {rf4_0}) = ((-{lam_num}) * ({rf2_0})).",
-        "Proof. vm_compute. reflexivity. Qed.",
-        "",
-        f"Theorem conj7_conifold :",
-        f"  (97 * ({rf4_c})) = ((-{lam_num}) * {rf2_c}).",
-        "Proof. vm_compute. reflexivity. Qed.",
-        "",
-        "(* Genus-2 residue theorem: finite residues of f2 sum to zero *)",
+        "(* Conjecture 7 (CY3 residue rigidity): Res(f4)/Res(f2) = lambda2 = -lam/97 *)",
+        "(* at z = 0 and z = 1/3125, i.e. 97 Res(f4) = -lam Res(f2), cleared of     *)",
+        "(* denominators.                                                           *)",
+    ] + conj7 + [
         "Open Scope Q_scope.",
-        "Theorem genus2_residue_sum_zero :",
-        "  (61495 # 15552) + (45 # 64) + (- (45 # 64)) + (- (61495 # 15552)) == 0.",
-        "Proof. reflexivity. Qed.",
+        "(* Paper 7 Table 1: the genus-2 residues of f2 at z = 0, 1, 2, 3. *)",
+        f"Theorem genus2_table1 : {table}.",
+        "Proof. repeat split; vm_compute; reflexivity. Qed.",
+        "",
+        "(* The residue theorem: f2 vanishes to order 8 at infinity, so its finite *)",
+        "(* residues sum to zero. True of any connection of this shape: a check   *)",
+        "(* of the residues, not of the connection.                               *)",
+        f"Theorem genus2_residue_sum_zero : {' + '.join(g)} == 0.",
+        "Proof. vm_compute. reflexivity. Qed.",
         "Print Assumptions conj7_z0.",
         "Print Assumptions conj7_conifold.",
+        "Print Assumptions genus2_table1.",
         "Print Assumptions genus2_residue_sum_zero.",
     ]
     cert = '\n'.join(lines) + '\n'
@@ -4961,66 +5647,78 @@ def gen_engine6_coq_cert(filename=None):
     return filename, cert
 
 def audit_engine6_coq():
-    """Generate and coqc-verify the Engine 6 Coq certificate.
-    Also exercises the harness persistent CoqDaemon for throughput, if loaded."""
+    """The Engine 6 Coq certificate, stated on this run's exact residues,
+    verified by coqc; coqc shown to reject it with a wrong lambda2; and
+    Conjecture 7 on the same residues through the persistent daemon, which
+    must reject a wrong lambda2 as well. Through 2.14.0 one row only checked
+    that the certificate file had been written, the daemon row passed
+    without reading a verdict, and the certificate stated integers fixed in
+    this file."""
     r = _AuditResult('Engine 6: Coq Certificate')
-    import shutil, subprocess
-    cert_file, _ = gen_engine6_coq_cert()
-    r.add_test('Coq certificate generated',
-               bool(cert_file) and os.path.isfile(cert_file)
-               and os.path.getsize(cert_file) > 0, cert_file)
-    coqc = shutil.which('coqc')
-    if not coqc:
-        r.add_skip('Conjecture 7 + genus-2 residue theorem verified by coqc',
-                   'coqc not in PATH — !apt install coq -y -qq', 'coq')
-        r.add_skip('Conjecture 7 via persistent Coq daemon',
-                   'coqc not in PATH — !apt install coq -y -qq', 'coq')
+    names = ("Conjecture 7 and Paper 7 Table 1 on this run's residues, verified by coqc",
+             'Engine 6 Coq certificate rejects a wrong \u03bb\u2082',
+             'Conjecture 7 via persistent Coq daemon')
+    if not shutil.which('coqc'):
+        for name in names:
+            r.add_skip(name, 'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
         return r
+    residues = _e6_exact_residues()
+    if residues is None:
+        for name in names:
+            r.add_skip(name, "SymPy not available: the certificate states this run's exact "
+                             "residues \u2014 pip install sympy", 'sympy')
+        return r
+    lam_num = -_E6_LAMBDA2[0]
+    cert_file, _ = gen_engine6_coq_cert(residues=residues)
     try:
         t0 = time.perf_counter()
         ok, detail = coq_check(cert_file)
         elapsed = (time.perf_counter() - t0) * 1000
-        r.add_test('Conjecture 7 + genus-2 residue theorem verified by coqc',
-                   ok, ('coqc accepted 3 theorems (2 bignum identities + '
-                        f'1 rational), all closed, {elapsed:.0f}ms' if ok
-                        else detail))
+        r.add_test(names[0], ok,
+                   ('coqc accepted 4 theorems on the residues SymPy computed this run: '
+                    'Conjecture 7 at z = 0 and z = 1/3125, the genus-2 residues equal to '
+                    f'Paper 7 Table 1, and their sum zero; all closed, {elapsed:.0f}ms'
+                    if ok else detail))
         if not ok:
             r.add_finding('CRITICAL', 'Engine 6 Coq certificate rejected by coqc')
+        wrong_file, _ = gen_engine6_coq_cert(
+            os.path.join(_pqv_workdir(), 'pq_engine6_cert_wrong.v'), lam_num + 1, residues)
+        took, why = coq_check(wrong_file)
+        r.add_test(names[1], ok and not took,
+                   f'the same certificate with \u03bb\u2082 = \u2212{lam_num + 1}/97: '
+                   + ('rejected by coqc' if not took else 'ACCEPTED')
+                   + ('' if ok else '; the true certificate was rejected too, so this shows nothing'))
     except subprocess.TimeoutExpired:
-        r.add_skip('Engine 6 Coq certificate verified by coqc',
-                   'coqc timed out (120s)', 'coq')
+        for name in names[:2]:
+            r.add_skip(name, 'coqc timed out (120s)', 'coq')
     # Persistent daemon (throughput) — only when the harness CoqDaemon is loaded
     CoqDaemon = globals().get('CoqDaemon')
     if CoqDaemon is None or not shutil.which('coqtop'):
-        r.add_skip('Conjecture 7 via persistent Coq daemon',
-                   'coqtop not in PATH', 'coq')
-    if CoqDaemon is not None and shutil.which('coqtop'):
-        try:
-            daemon = CoqDaemon()
-            if getattr(daemon, 'proc', None):
-                t0 = time.perf_counter()
-                n_ok = 0
-                # Re-send the exact Conjecture 7 identities through the daemon
-                for tag, stmt in [
-                    ('conj7_z0',
-                     '(97 * 4806824016156951984157785773277282714843750000) '
-                     '= ((-884266719222068786621093750) '
-                     '* (-527286529541015625000))'),
-                    ('conj7_conifold',
-                     '(97 * (-4806824016156951984157785773277282714843750000)) '
-                     '= ((-884266719222068786621093750) '
-                     '* 527286529541015625000)')]:
-                    ok, _ = daemon.check_theorem(f'e6_{tag}', stmt)
-                    if ok:
-                        n_ok += 1
-                elapsed = (time.perf_counter() - t0) * 1000
-                daemon.close()
-                r.add_test('Conjecture 7 via persistent Coq daemon', n_ok == 2,
-                           f'{n_ok}/2 submitted, {elapsed:.0f}ms '
-                           '(daemon = throughput; coqc above = verification)')
-        except Exception as e:
-            r.add_skip('Conjecture 7 via persistent Coq daemon',
-                       f'daemon error: {str(e)[:80]}', 'coq')
+        r.add_skip(names[2], 'coqtop not in PATH', 'coq')
+        return r
+    try:
+        daemon = CoqDaemon()
+        if not getattr(daemon, 'proc', None):
+            r.add_skip(names[2], 'coqtop failed to start', 'coq')
+            return r
+        t0 = time.perf_counter()
+        # Conjecture 7 on this run's residues through the daemon, cleared of
+        # denominators, and once with lambda2 off by one, which it must reject.
+        def stmt(r2, r4, lam):
+            return f'97 * (({r4.p}) * {r2.q}) = (-{lam}) * (({r2.p}) * {r4.q})'
+        pts = list(residues['quintic'].values())
+        true_ok = [daemon.check_theorem(f'e6_{tag}', stmt(r2, r4, lam_num))[0]
+                   for tag, (r2, r4) in zip(('conj7_z0', 'conj7_conifold'), pts)]
+        wrong_ok, why = daemon.check_theorem('e6_conj7_wrong', stmt(*pts[0], lam_num + 1))
+        elapsed = (time.perf_counter() - t0) * 1000
+        daemon.close()
+        n_ok = sum(true_ok)
+        r.add_test(names[2], n_ok == 2 and not wrong_ok,
+                   f"{n_ok}/2 on this run's residues proved by coqtop and closed; "
+                   f'\u03bb\u2082 off by one ' + ('rejected' if not wrong_ok else 'ACCEPTED')
+                   + f', {elapsed:.0f}ms')
+    except Exception as e:
+        r.add_skip(names[2], f'daemon error: {str(e)[:80]}', 'coq')
     return r
 
 # ============================================================
@@ -5031,19 +5729,23 @@ def audit_engine6_coq():
 # tests/test_pqverify.py holds these to the audits' own titles.
 _E6_CHECKS = {
     'rank2':   ('Engine 6a: rank-2 Legendre',
-                ['Theorem 1 entry-wise, rank 2', "Riccati U' = -U^2 - Q",
-                 'Lemma 3 / traceless commutator', "Legendre closed form tr(U[U,Q]U')",
+                ["Theorem 1 identity in the engine's arithmetic, rank 2",
+                 "Riccati inputs: U the Legendre periods' connection, U\u2032 and U\u2033 "
+                 "its derivatives",
+                 "Lemma 3 identity in the engine's arithmetic (rank 2)",
+                 "Legendre closed form tr(U[U,Q]U')",
                  'Residues |Res| = 17/4 at z=0,1 (antisymmetric)']),
     'genus2':  ('Engine 6b: rank-4 genus-2',
-                ['Theorem 1 entry-wise, rank 4',
+                ["Theorem 1 identity in the engine's arithmetic, rank 4",
                  'tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
                  'Paper 7 Table 1: Res f2 at z=0,1,2,3', 'Paper 7 Table 1: Res f4 at z=0']),
     'quintic': ('Engine 6c: rank-4 mirror quintic',
-                ['Theorem 1 entry-wise, rank-4 CY3', 'tr[U,Q]^3 = 0 (Observation 4, CY3)',
+                ["Theorem 1 identity in the engine's arithmetic, rank-4 CY3",
+                 "Observation 4 identity in the engine's arithmetic (CY3, companion form)",
                  'f2(z) matches Paper 7 closed form',
                  'Conjecture 7: CY3 residue rigidity']),
     'genus4':  ('Engine 6d: rank-8 genus-4 (NEW)',
-                ['Theorem 1 entry-wise, rank 8',
+                ["Theorem 1 identity in the engine's arithmetic, rank 8",
                  'Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0',
                  'Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent']),
 }

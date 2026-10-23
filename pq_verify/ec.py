@@ -175,6 +175,68 @@ def factor(n, rng=None):
     return dict(sorted(out.items()))
 
 
+def largest_prime_factor(n, steps=1 << 18, rng=None):
+    """The largest prime factor of n >= 2, or None if Pollard-Brent rho does
+    not split a composite part within `steps` iterations. factor() has no
+    bound, and a group order with two large prime factors would keep it
+    searching: an audit asks this instead and says when it could not tell."""
+    rng = rng or random.Random(n)
+    best = 1
+    for q in _SMALL_PRIMES:
+        while n % q == 0:
+            best, n = q, n // q
+    stack = [n] if n > 1 else []
+    while stack:
+        m = stack.pop()
+        if is_prime(m):
+            best = max(best, m)
+            continue
+        r = math.isqrt(m)
+        if r * r == m:
+            stack.append(r)
+            continue
+        d = _rho_bounded(m, rng, steps)
+        if d is None:
+            return None
+        stack += [d, m // d]
+    return best if best > 1 else None
+
+
+def _rho_bounded(n, rng, steps):
+    """A nontrivial factor of the odd composite n by Pollard-Brent, or None
+    after `steps` iterations of the map."""
+    used = 0
+    while used < steps:
+        y, c, m = rng.randrange(1, n), rng.randrange(1, n), 128
+        g = r = q = 1
+        x = ys = y
+        while g == 1 and used < steps:
+            x = y
+            for _ in range(r):
+                y = (y * y + c) % n
+            used += r
+            k = 0
+            while k < r and g == 1:
+                ys = y
+                for _ in range(min(m, r - k)):
+                    y = (y * y + c) % n
+                    q = q * abs(x - y) % n
+                g = math.gcd(q, n)
+                k += m
+            used += r
+            r *= 2
+        if g == 1:
+            return None
+        if g == n:
+            g = 1
+            while g == 1:
+                ys = (ys * ys + c) % n
+                g = math.gcd(abs(x - ys), n)
+        if g != n:
+            return g
+    return None
+
+
 def sqrt_mod(n, p):
     """A square root of n mod the odd prime p (Tonelli-Shanks), or None."""
     n %= p

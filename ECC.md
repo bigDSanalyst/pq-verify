@@ -108,12 +108,23 @@ them on purpose):
 6. **ECC point validation.** The engine on a point of E, a point off it, an
    unreduced x and an unreduced b.
 7. **Conformity D(t)** and 8. **Conservation law on family**, from the
-   conformity engine (research framework).
+   conformity engine (research framework). D must equal 2u′ + 4u² with
+   u = Δ′/(12Δ) along the family Δ(t) = 4a³ + 27t², computed from Δ itself
+   rather than from the ω derivatives the engine is given.
 
 Its findings are a singular curve (CRITICAL), an anomalous one (#E = p:
-CRITICAL), a near-anomalous one (|t| ≤ 2: HIGH), a supersingular one
-(HIGH), and a near-singular fiber (HIGH). A rejected certificate would be a
-CRITICAL defect in pq-verify.
+CRITICAL), a supersingular one (HIGH), one of trace 2 (#E = p − 1, so its
+embedding degree is 1: HIGH), and a small embedding degree (HIGH). The last
+is SafeCurves'
+transfer criterion: for ℓ the largest prime dividing #E, the least k with
+ℓ | p^k − 1 must exceed (ℓ − 1)/100, or a pairing carries the discrete log
+of the order-ℓ subgroup into F_(p^k). It is checked up to k = 100, and when
+#E cannot be factored within a step limit an INFO finding says so. A rejected
+certificate would be a CRITICAL defect in pq-verify. Through 2.14.0 there was
+also a "near-singular fiber" finding, |4a³ + 27b²|/p < 0.01, which has no
+meaning over F_p: a curve is singular or it is not, and the ratio depends on
+which integers stand for a and b. And a "near-anomalous" finding fired for
+every trace |t| ≤ 2, though traces −1 and −2 carry no transfer attack.
 
 The cubic engine's audit checks Sol₃ for 21 small primes against a direct
 count, and B against the Jacobi sum. At five primes of 41 to 63 bits it
