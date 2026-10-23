@@ -194,6 +194,17 @@ def artifact_unbound(reason):
                        "any artifact.")}
 
 
+SCHEMA_VERSION = "1.2"
+
+
+def tool():
+    """The pq-verify that wrote a report. A result is evidence about the
+    version that produced it; without this a report from an old release and
+    one from the current release read the same."""
+    from . import __version__
+    return {"name": "pq-verify", "version": __version__}
+
+
 def to_json(results, extra=None, artifact=None):
     """Native schema — stable, versioned, safe to parse.
 
@@ -206,7 +217,8 @@ def to_json(results, extra=None, artifact=None):
     findings = sum(len(r.get("findings", [])) for r in results)
     doc = {
         "schema": "pq-verify/scan-result",
-        "schema_version": "1.1",
+        "schema_version": SCHEMA_VERSION,
+        "tool": tool(),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "summary": {
             "targets": len(results),
@@ -238,7 +250,8 @@ def to_json_response(result):
     """Native schema for a prompt/response run (pq_verify.response)."""
     doc = {
         "schema": "pq-verify/response-result",
-        "schema_version": "1.1",
+        "schema_version": SCHEMA_VERSION,
+        "tool": tool(),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "parameter_set": result.get("parameter_set"),
         "status": result.get("status"),
@@ -301,10 +314,12 @@ def _scope(checked, not_applicable=0, not_run=0, na_why=None):
 
 
 def _envelope(schema, artifact, reason="no binary was loaded"):
-    """Common head of every native report: what it is, when, and what it binds to."""
+    """Common head of every native report: what it is, which pq-verify wrote
+    it, when, and what it binds to."""
     return {
         "schema": schema,
-        "schema_version": "1.1",
+        "schema_version": SCHEMA_VERSION,
+        "tool": tool(),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "artifact": artifact if artifact is not None else artifact_unbound(reason),
         "side_channel": side_channel_scope(),

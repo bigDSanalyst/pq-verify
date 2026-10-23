@@ -1,7 +1,11 @@
 {
   "schema": "pq-verify/scan-result",
-  "schema_version": "1.1",
-  "timestamp": "2026-10-19T18:50:12.953345+00:00",
+  "schema_version": "1.2",
+  "tool": {
+    "name": "pq-verify",
+    "version": "2.14.0"
+  },
+  "timestamp": "2026-10-23T12:49:39.885179+00:00",
   "summary": {
     "targets": 1,
     "checks_passed": 3,
@@ -43,29 +47,29 @@
         "sha256": "44fec74c0bfb833697d350465dfb0749b02504e865211e7cc21279389c2da60f"
       },
       {
-        "path": "/tmp/pqv-zgyru1v6/libpqv_conformity.so",
-        "inode": 2263291,
+        "path": "/tmp/pqv-kjhy3sij/libpqv_conformity.so",
+        "inode": 2296009,
         "sha256": "454a8b57d456201dbe521e8e2e9d4291d4a5da6f942a65125b600bb521816582"
       },
       {
-        "path": "/tmp/pqv-zgyru1v6/libpqv_cubic.so",
-        "inode": 2263287,
-        "sha256": "d96dd7ec6770c0e0b027f5495e99bb56c851011d642c5013d12c8f03896b3f2b"
+        "path": "/tmp/pqv-kjhy3sij/libpqv_cubic.so",
+        "inode": 2296007,
+        "sha256": "76aa5b0f486e2c0caa3fcdf9bc278ad2fd8f632a764a948cb5aa16c3e315a139"
       },
       {
-        "path": "/tmp/pqv-zgyru1v6/libpqv_gf2.so",
-        "inode": 2263246,
-        "sha256": "30f8b5e8f0e17d52dbcb024a58e3e37024a65d606e653b92610c10637cd36348"
+        "path": "/tmp/pqv-kjhy3sij/libpqv_gf2.so",
+        "inode": 2296001,
+        "sha256": "98d7c5669ced8a79be1ac7561a6d68a30d7e72474b7ab7f0e97d8f6b12edc3cc"
       },
       {
-        "path": "/tmp/pqv-zgyru1v6/libpqv_zq.so",
-        "inode": 2263248,
-        "sha256": "cda96379b311883c4d41082841649c19e98515ae617c369d54aa866215244774"
+        "path": "/tmp/pqv-kjhy3sij/libpqv_zq.so",
+        "inode": 2296003,
+        "sha256": "bfe5f0fab7c561f79aceafb49c3fd9aa4add5d89dc0ce13efdbfb3c4f6d88cf2"
       },
       {
-        "path": "/tmp/pqv-zgyru1v6/libpqv_zq32.so",
-        "inode": 2263254,
-        "sha256": "1da451a4b2fd6ff15cf729d68418fa10ea491cbd9d947081a0a84641e741d317"
+        "path": "/tmp/pqv-kjhy3sij/libpqv_zq32.so",
+        "inode": 2296005,
+        "sha256": "b1d42dbb61519e845f6d5533fc65c6d38aec0f434ef5760b0bfd40c741ce18bb"
       }
     ]
   },

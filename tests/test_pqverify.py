@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.13.0"
+    assert pq_verify.__version__ == VERSION == "2.14.0"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
@@ -1001,6 +1001,38 @@ def test_unauditable_kem_library_fails_the_gate(tmp_path):
     doc = _json.loads(rpt.read_text())
     assert doc["status"] == "CANNOT VERIFY"
     assert doc["artifact"]["bound"] is True      # the file was still read
+
+
+def test_every_native_report_names_the_pq_verify_that_wrote_it(tmp_path):
+    """SARIF named pq-verify's version (tool.driver.version); the native JSON
+    reports did not, so a report from an old release read the same as one
+    from the current release."""
+    import inspect
+    import json as _json
+    import shutil
+    import subprocess
+    import pq_verify
+    from pq_verify import report
+    want = {"name": "pq-verify", "version": pq_verify.__version__}
+    for doc in (report.to_json([]), report.to_json_response({}),
+                report._envelope("pq-verify/x", None)):
+        assert doc["tool"] == want and doc["schema_version"] == report.SCHEMA_VERSION == "1.2"
+    # Every native writer starts from one of those three heads.
+    assert inspect.getsource(report).count('"schema_version":') == 3
+    runs = []
+    fake = tmp_path / "empty.so"
+    fake.write_bytes(b"\x7fELF")
+    runs.append(("--audit-kem", str(fake), "ML-KEM-768", "--accumulated", "0"))
+    if shutil.which("gcc"):                  # a library that loads, with no NTT in it
+        src = tmp_path / "none.c"
+        src.write_text("int pqv_nothing(void) { return 0; }\n")
+        lib = tmp_path / "libnone.so"
+        subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(lib), str(src)], check=True)
+        runs.append(("--audit-so", str(lib), "ntt"))
+    for argv in runs:
+        rpt = tmp_path / "r.json"
+        code, out = _cli(*argv, "--json", str(rpt))
+        assert code == 1 and _json.loads(rpt.read_text())["tool"] == want, (argv, out)
 
 
 def test_json_flag_reports_when_it_writes_nothing(tmp_path):
