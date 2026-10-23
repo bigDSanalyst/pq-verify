@@ -310,6 +310,9 @@ pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt \
           --sarif results.sarif --json results.json --fail-on-finding
 ```
 
+The native JSON report names its schema and version, the pq-verify version
+that wrote it (`tool`), when it ran, and what it is bound to (`artifact`).
+
 **SARIF 2.1.0** is imported directly by GitHub Code Scanning (the
 [Action](#use-it-in-ci) uploads it) and DefectDojo, so findings land in the
 security tooling a team already runs rather than in a terminal someone has to

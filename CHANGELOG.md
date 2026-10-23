@@ -22,6 +22,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
     were checked on 647 isogenies against Vélu's formulas.
   - Above 2³²⁰, a general curve is CANNOT VERIFY unless its order is
     published.
+- **Every native JSON report names the pq-verify that wrote it**, as `tool`
+  (its name and version) beside the schema, now `schema_version` 1.2. SARIF
+  reports already did, in `tool.driver.version`.
 
 ### Changed
 
