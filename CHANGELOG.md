@@ -5,12 +5,172 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Schoof–Elkies–Atkin point counting** (`pq_verify/sea.py`,
+  [SEA.md](SEA.md)). A general curve (j ≠ 0, 1728) from 2⁶⁴ to 2³²⁰ is now
+  counted, where before it was CANNOT VERIFY. It uses Müller's canonical
+  modular polynomials, computed mod p from q-expansions, and Elkies primes.
+  For each Elkies prime l, the certificate holds a kernel polynomial and
+  Frobenius' eigenvalue on it. `check_count` verifies that the polynomial
+  divides the l-division polynomial and that Frobenius acts on its points as
+  claimed, so t mod l follows from φ² − tφ + p = 0. A point separates the
+  candidates left. The check uses nothing from the search.
+  - Counted in pure Python, P-256 has its published order (58 s to count,
+    14 s to check), and so do secp128r1, brainpoolP160r1, P-192 and P-224.
+  - Elkies' formulas for the canonical polynomial are derived in SEA.md, and
+    were checked on 647 isogenies against Vélu's formulas.
+  - Above 2³²⁰, a general curve is CANNOT VERIFY unless its order is
+    published.
+
 ### Changed
 
 - **v2.13.0 has its own Zenodo deposit**,
   [10.5281/zenodo.23484320](https://doi.org/10.5281/zenodo.23484320).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.12.1's.
+- The linear-algebra engines' pivot order was described as Markowitz. It is a
+  static order by ascending column count, and the code now says so.
+
+### Fixed
+
+- **Elliptic-curve point counts were not always decided, and five curve rows
+  could not fail.** The baby-step giant-step count did not use the quadratic
+  twist, so some curves (j = 0 ones, among them) were left undecided. The
+  curve audit's anomalous-trace rows passed whatever they found. Above
+  p = 10¹⁴, a row passed that said only that SEA would be needed. The
+  j-invariant, stability-margin and "Cubic analysis" rows passed
+  unconditionally. `pq_verify/ec.py` now counts points exactly, each count
+  with a certificate that `check_count` verifies from the curve alone
+  ([ECC.md](ECC.md)):
+  - complex multiplication for j = 0 and 1728 at any size, which counts
+    secp256k1 to its published order in a tenth of a second;
+  - exact point orders on the curve and its twist (Mestre's method) for
+    other curves below 2⁶⁴;
+  - `verify_order` for a published order, P-256's for one.
+
+  Other curves above 2⁶⁴ are counted by Schoof–Elkies–Atkin, up to 2³²⁰
+  (under Added).
+  Each curve's eight rows are now checks: the j-invariant against its
+  definition, the point count and the twist's count, each certified, with
+  #E + #E′ = 2p + 2, and the cubic count against complex multiplication.
+  Point validation runs at every p, where before it ran only for p ≡ 3 mod 4.
+  Anomalous and near-singular curves are findings, as before. The
+  self-suite still has 160 checks.
+- **The cubic engine overflowed and accepted unreduced points.**
+  - `cubic_solution_count` computed Sol₃ = p² + (p − 1)·B(a, b) in 64 bits,
+    wrong past p ≈ 3 × 10⁹. It now computes in 128 bits and returns −2 when
+    the count does not fit.
+  - `find_decomp` searched √(p/3) values for p = a² + 3b²; it is now
+    Cornacchia's algorithm, polylogarithmic, for any prime below 2⁶⁴.
+  - Its integer square root returned wrong roots from (2³² − 1)², and near
+    2⁶⁴ did not return.
+  - `ecc_point_valid` accepted coordinates and coefficients outside [0, p),
+    and an unreduced b gave the wrong right-hand side; it now rejects them.
+
+  Its audit now checks B(a, b) against the Jacobi sum J(χ, χ) at 21 primes,
+  and against complex multiplication at five primes of 41 to 63 bits. It
+  checks kG against `pq_verify.ec` for k = 0 to 40; the old check only
+  required 7G not to be the point at infinity.
+- **The CFL front end checked nothing it named.** Its lexer dropped
+  characters it did not know. Its parser ended a CONTEXT at REQUIRE's closing
+  brace, so a DEFINE after a REQUIRE was lost, and raised IndexError on input
+  that ended early. Its "prenex" step left nested quantifiers in place, so its
+  QBFs were first-order formulas that nothing decided. Its router searched the
+  whole formula for a field's name, and its dispatch solved five fixed systems
+  whatever the specification said. Its six checks counted tokens, contexts
+  and formulas. `pq_verify/cfl.py` now implements the language as
+  [CFL.md](CFL.md) defines it:
+  - a lexer and a recursive-descent parser that report a line and column,
+    and a checker that lists every problem;
+  - each required property's obligation as a first-order formula with a
+    correct prenex form, decided as a QBF by the DQBF stage, its certificate
+    checked, and on the specification's model directly, which must agree;
+  - routing by the parsed field, and dispatch to a check registered for each
+    property, which must pass and must fail on an instance made wrong.
+
+  Engine 6's CFL section runs the same stages, each Paper 7 property
+  dispatched to its own check. The CFL benchmark passed unconditionally; it
+  now checks that a hundred runs agree and that the AST survives a round
+  trip, and the C build it can time (`PQV_CFL_SO`) is reported, not checked.
+  The self-suite still has 160 checks.
+- **The DQBF stage decided neither its clauses nor its quantifiers.** It
+  turned each clause into an XOR equation with fresh variables that nothing
+  else constrained, and solved for one assignment of every variable,
+  universals included, so dependency sets played no part. Its answer of
+  satisfiable said nothing about the formula. It gives that answer for
+  ∀u ∃x(∅). x ⊕ u = 0 and for the four 2-clauses over two variables, both
+  false, and it gave it for the Phase 4b module it checks, which is false
+  too, while all seven of its checks passed. `pq_verify/dqbf.py` now decides
+  a DQBF exactly, to the
+  specification in [DQBF.md](DQBF.md):
+  - an XOR matrix by affine Skolem functions, which are complete there, from
+    a linear system over GF(2) solved on `libpqv_gf2`;
+  - one with clauses by universal expansion, each constraint instantiated
+    over the universals it reads, and a CDCL solver, while the expansion has
+    at most 2¹⁸ variables and clauses; beyond that it is CANNOT VERIFY,
+    unless the XOR constraints alone refute it.
+
+  Every answer carries a certificate that a checker apart from the solver
+  verifies from the formula: Skolem functions checked against every
+  constraint, equations of the Skolem system that sum to 0 = 1, or a RUP
+  proof. An answer whose certificate fails is a CRITICAL finding, not a
+  result. The module parser was a set of regular expressions: it took
+  `parity="2"` (read as 0), skipped elements it did not know, accepted a
+  dependency on an existential and stopped with a KeyError on a misspelled
+  `deps`. It now parses the XML and refuses anything outside the format. The
+  self-suite still has seven DQBF checks: `F2 linearizer`, `GF(2) solve` and
+  `End-to-end pipeline` give way to `Phase 4b module decided`, `False
+  formulas refuted` and `Tampered certificates rejected`, and `1000-var DQBF
+  stress` decides a 1,000-variable formula planted to be true and checks
+  its Skolem functions. The DQBF stage is on the research track, and no
+  verdict on any library used it.
+- **The self-suite's engine checks could pass without checking what their
+  names claim.** None of this reached a verdict on a library:
+  `--audit-so` judges an NTT with the known-answer and Freivalds checks, and
+  the other audits through their own drivers. The self-suite still has 160
+  checks, and all of them pass.
+  - **Input the engines could not hold was dropped, not refused.**
+    `zq_add_sparse` and `zq32_add_sparse` dropped a term whose variable was
+    outside the system and added the rest of the row. No engine's init
+    checked the variable count against what the engine holds, so a larger
+    count wrote past its buffers. No caller read the code any init or add
+    call returned. The engines now refuse both, and every init and add call
+    raises `EngineInputError` on a refusal.
+  - **An unsolvable answer counted as a pass.** The Kyber, Dilithium and
+    twiddle butterfly checks counted a system the solver called
+    unsatisfiable as no mismatch, so a solver that never found a solution
+    passed all three. `10,000 keygen instances` skipped such an instance,
+    though each of its systems has the secret as a solution. All four now
+    fail on it.
+  - **Three more checks could not fail on the case they name.**
+    - `Deterministic output hash` reported the hash of 1,000 engine
+      butterflies and passed whatever it was. It now has to equal the hash of
+      the same butterflies computed in Python.
+    - `B4: Anomalous-trace curves` passed as 0/0 when it found no anomalous
+      curve. Each of its seven primes has one, so finding none now fails.
+    - The cubic count was checked against itself. `cubic_solution_count`
+      returns p² + (p−1)·B(a,b), `audit_cubic` compared it with that same
+      formula, and `audit_curve`'s row passed whatever it was. Both now
+      compare it with a count of x³ + y³ + z³ = 0 over F_p that does not use
+      the formula: directly for small p, and through y² = x³ − 432, the curve
+      the Fermat cubic is isomorphic to, for large p.
+  - **The BSGS point count could be wrong, and its "cannot decide" was
+    reported as a singular curve.** A point whose order was at most the
+    number of baby steps left orders out of the candidates: over F₁₉ it
+    counted 18 points on y² = x³ + 5, which has 27. When it could not decide,
+    the curve audit reported "curve singular", passed, and dropped its Hasse
+    check. `pq_verify/ec.py` replaces that count, with a certificate for
+    every count (the elliptic-curve entry above).
+  - The two "Coq certificate generated" checks passed without looking for
+    the file. They now check that it exists and is not empty.
+  - **The ML-DSA full-NTT check was circular.** It compared 27 butterflies of
+    pq-verify's own Python layer with the same formula, and sent one through
+    the 32-bit engine. It now sends all 1,024 through that engine, 64 at a
+    time since the engine holds 256 variables, as ML-KEM's 896 already go
+    through the 16-bit one. A wrong output anywhere in any layer fails it.
+    Its progress line said 7 layers and 896 butterflies, ML-KEM's numbers;
+    it now says 8 and 1,024.
 
 ## [2.13.0] — 2026-10-19
 

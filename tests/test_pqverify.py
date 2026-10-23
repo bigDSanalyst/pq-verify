@@ -372,6 +372,213 @@ def test_mldsa_freivalds_engine():
 
 
 # ----------------------------------------------------------------------
+# The engines refuse what they cannot hold, and the checks built on them
+# fail when their claim is false
+#
+# zq_add_sparse and zq32_add_sparse dropped a term whose variable was outside
+# the system and added the rest of the row; no init checked the variable
+# count against what its engine holds; and every init and add call returned
+# a code no caller read. The butterfly checks counted a system the solver
+# called unsatisfiable as no mismatch, and the ML-DSA full-NTT check compared
+# 27 butterflies of the Python layer with the same formula.
+# ----------------------------------------------------------------------
+
+def _all_engines():
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng = core.compile_all(); core.bind_all(eng)
+    if not all(eng.get(k) for k in ("gf2", "zq", "zq32")):
+        pytest.skip("an engine is unavailable (no C compiler)")
+    return core, eng
+
+
+def test_engines_refuse_what_they_cannot_hold():
+    import ctypes, re
+    core, eng = _all_engines()
+    systems = {"gf2": core.GF2S, "zq": core.ZqS, "zq32": core.Zq32S}
+
+    def init(name, s, nv):
+        fn = getattr(eng[name], f"{name}_init")
+        return fn(ctypes.byref(s), nv) if name == "gf2" else fn(ctypes.byref(s), nv, 0)
+
+    for name, macro, src in (("gf2", "GF2_MAX_VARS", core.GF2_C),
+                             ("zq", "ZQ_MAX_VARS", core.ZQ_C),
+                             ("zq32", "ZQ32_MAX_VARS", core.ZQ32_C)):
+        cap = int(re.search(rf"#define {macro} (\d+)", src).group(1))
+        s = systems[name]()
+        with pytest.raises(core.EngineInputError) as e:
+            init(name, s, cap + 1)
+        assert e.value.rc == -1, name
+        assert init(name, s, cap) == 0, name
+    for name, ty in (("zq", ctypes.c_uint16), ("zq32", ctypes.c_uint32)):
+        s = systems[name]()
+        init(name, s, 4)
+        add = getattr(eng[name], f"{name}_add_sparse")
+        with pytest.raises(core.EngineInputError) as e:
+            add(ctypes.byref(s), (ctypes.c_int * 2)(1, 4), (ty * 2)(1, 1), 2, 0)
+        assert e.value.rc == -2 and s.num_equations == 0, \
+            f"{name}: a row was added without its out-of-range term"
+        add(ctypes.byref(s), (ctypes.c_int * 2)(1, 3), (ty * 2)(1, 1), 2, 0)
+        assert s.num_equations == 1
+
+
+def test_mldsa_full_ntt_check_puts_every_butterfly_through_the_engine():
+    import random
+    core, eng = _all_engines()
+    z32, zetas, Q = eng["zq32"], core._dilithium_zeta_table(), core.DILI_Q
+    random.seed(20261022)
+    f = [random.randint(0, Q - 1) for _ in range(256)]
+    total = 0
+    for layer in range(8):
+        out = core._ntt_layer_dili(f, layer, zetas)
+        ok, n, _ = core._verify_ntt_layer_dili(z32, f, out, layer, zetas)
+        assert ok and n == 128, layer
+        total += n
+        for pos in (0, 129, 255):          # one wrong output, anywhere in the layer
+            bad = list(out)
+            bad[pos] = (bad[pos] + 1) % Q
+            assert not core._verify_ntt_layer_dili(z32, f, bad, layer, zetas)[0], \
+                (layer, pos)
+        f = out
+    assert total == 1024
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_full_ntt_dilithium(z32)
+    assert r.tests[0]["name"] == "8-layer Dilithium NTT (1024 butterflies)"
+    assert all(t["passed"] for t in r.tests), r.tests
+
+
+class _Unsat:
+    """A real engine, except that every solve says unsatisfiable."""
+    def __init__(self, lib):
+        self._lib = lib
+
+    def __getattr__(self, name):
+        return getattr(self._lib, name)
+
+    def zq_solve(self, s, r):
+        r._obj.satisfiable = 0
+
+    def zq32_solve(self, s, r):
+        r._obj.satisfiable = 0
+
+
+def test_butterfly_checks_fail_when_the_solver_finds_no_solution():
+    core, eng = _all_engines()
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = [core.audit_kyber(_Unsat(eng["zq"]), n_bf=5),
+                   core.audit_dilithium(_Unsat(eng["zq32"]), n_bf=5),
+                   core.audit_twiddle_completeness(_Unsat(eng["zq"])),
+                   core.audit_full_ntt_dilithium(_Unsat(eng["zq32"])),
+                   core.audit_keygen(_Unsat(eng["zq"]), n_inst=5),
+                   core.audit_reproducibility_hash(_Unsat(eng["zq"]))]
+    for r in results:
+        assert not all(t["passed"] for t in r.tests), r.engine
+
+
+def test_reproducibility_hash_is_compared_with_the_python_butterflies():
+    """It reported a hash and passed whatever the hash was."""
+    core, eng = _all_engines()
+
+    class OffByOne(_Unsat):
+        def zq_solve(self, s, r):
+            self._lib.zq_solve(s, r)
+            r._obj.assignment[3] = (r._obj.assignment[3] + 1) % 3329
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        good = core.audit_reproducibility_hash(eng["zq"])
+        bad = core.audit_reproducibility_hash(OffByOne(eng["zq"]))
+    assert good.tests[0]["passed"], good.tests
+    assert not bad.tests[0]["passed"], bad.tests
+
+
+def test_cubic_counts_are_checked_against_a_count_that_does_not_use_the_formula():
+    """cubic_solution_count returns p^2 + (p-1)B(a,b) by definition, so the old
+    comparison with that formula could not fail, and audit_curve's row passed
+    whatever the count was. Sol3 is #{x^3+y^3+z^3 = 0} over F_p: counted
+    directly, and for large p through y^2 = x^3 - 432."""
+    core, eng = _all_engines()
+    c = eng.get("cubic")
+    if c is None:
+        pytest.skip("cubic engine unavailable")
+
+    def cone(p):                         # the definition, by brute force
+        cubes = [pow(x, 3, p) for x in range(p)]
+        return sum(1 for x in cubes for y in cubes for z in cubes
+                   if (x + y + z) % p == 0)
+
+    for p in (5, 7, 13, 19):
+        assert c.cubic_solution_count(p) == core._fermat_cubic_count(p) == cone(p), p
+    for p in (97, 331, 1051):
+        assert c.cubic_solution_count(p) == core._fermat_cubic_count(p), p
+    from pq_verify import ec
+    big = 8380417
+    n = ec.count(ec.Curve(0, (-432) % big, big))
+    assert 1 + (big - 1) * n.n == c.cubic_solution_count(big)
+
+    class WrongB:
+        """B(a,b) off by one, and the count consistent with it."""
+        def __init__(self, lib):
+            self._lib = lib
+
+        def __getattr__(self, name):
+            return getattr(self._lib, name)
+
+        def compute_B(self, a, b):
+            return self._lib.compute_B(a, b) + 1
+
+        def cubic_solution_count(self, p):
+            n = self._lib.cubic_solution_count(p)
+            return n + (p - 1) if p % 3 == 1 else n
+
+    wrong = dict(eng, cubic=WrongB(c))
+    with contextlib.redirect_stdout(io.StringIO()):
+        cubic = core.audit_cubic(WrongB(c))
+        curve = core.audit_curve(wrong, 2, 3, 97)
+        curve_big = core.audit_curve(wrong, 1, 6, 8380417)
+    assert not cubic.tests[0]["passed"], "a wrong B(a,b) passed audit_cubic"
+    for r in (curve, curve_big):
+        row = [t for t in r.tests if t["name"] == "Cubic B(a,b)"]
+        assert row and not row[0]["passed"], r.engine
+    with contextlib.redirect_stdout(io.StringIO()):
+        right = core.audit_curve(eng, 2, 3, 97)
+    assert [t["passed"] for t in right.tests if t["name"] == "Cubic B(a,b)"] == [True]
+
+
+def test_b4_fails_when_no_anomalous_curve_is_found(monkeypatch):
+    """Every prime B4 lists has anomalous curves, so a point count that never
+    finds one must fail it; it passed as 0/0."""
+    core, eng = _all_engines()
+    monkeypatch.setattr(core, "_count_points", lambda a, b, p: 0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_adversarial(eng)
+    row = [t for t in r.tests if t["name"].startswith("B4")]
+    assert row and not row[0]["passed"], row
+
+
+def test_point_counts_are_exact_and_decided_below_2_64():
+    """The baby-step giant-step count it replaces returned 18 points for
+    y^2 = x^3 + 5 over F_19, which has 27, and could not decide some j = 0
+    curves (it did not use the twist). Every count is now exact, decided,
+    and carries a certificate that check_count verifies."""
+    import random
+    from pq_verify import ec
+    import pq_verify.core as core
+    rng = random.Random(11)
+    primes = [p for p in range(5, 400) if ec.is_prime(p)] + [10007, 10093, 10267, 10303, 20011]
+    for p in primes:
+        curves = [(0, b) for b in (1, 2, 7, (-432) % p)] + [(1, 0), (2, 3)]
+        curves += [(rng.randrange(p), rng.randrange(p)) for _ in range(2)]
+        for a, b in curves:
+            if (4 * a ** 3 + 27 * b ** 2) % p == 0:
+                continue
+            E = ec.Curve(a % p, b % p, p)
+            got = ec.count(E)
+            assert got is not None and got.n == core._count_points(a, b, p), (p, a, b, got)
+            assert ec.check_count(E, got)
+    assert ec.count(ec.Curve(0, 5, 19)).n == 27
+
+
+# ----------------------------------------------------------------------
 # Prompt / response verification (pq_verify.response)
 #
 # The route to implementations that cannot be dlopen'd. The invariants that
@@ -3195,7 +3402,7 @@ def test_hasse_bound_accepts_the_most_extreme_legal_curves(a, b, p, t):
     import pq_verify.core as core
     with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
         r = core.audit_curve({}, a, b, p)
-    hasse = next(x for x in r.tests if x["name"].startswith("Hasse bound"))
+    hasse = next(x for x in r.tests if x["name"] == "Point count")
     assert f"t={t}" in hasse["detail"] or f"t={-t}" in hasse["detail"]
     assert hasse["passed"] is True, hasse
     assert not [f for f in r.findings if "Hasse" in f["description"]
@@ -7169,3 +7376,1269 @@ def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
         for m in row.get("ct_mutants", []):
             assert m["set"] in row["sets"] and m["fails"]
             assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}, m["name"]
+
+
+# ----------------------------------------------------------------------
+# DQBF (DQBF.md). Through 2.13.0 the pipeline turned clauses into XOR
+# equations with unconstrained fresh variables and solved for one
+# assignment of every variable, universals included: it decided neither
+# the clauses nor the quantifiers. pq_verify/dqbf.py decides a DQBF
+# exactly, and every answer carries a certificate that a checker separate
+# from the solver verifies.
+# ----------------------------------------------------------------------
+
+import itertools as _it
+import random as _random
+
+
+def _dqbf():
+    from pq_verify import dqbf
+    return dqbf
+
+
+def _skolem_brute(f):
+    """True iff some choice of Skolem functions (truth tables over each
+    existential's dependencies) satisfies every constraint on every
+    assignment of the universals. Written apart from pq_verify.dqbf."""
+    deps = {x: [u for u in f.universals if u in f.existentials[x]] for x in f.order}
+    slots = [(x, t) for x in f.order for t in _it.product((0, 1), repeat=len(deps[x]))]
+    for bits in _it.product((0, 1), repeat=len(slots)):
+        table = dict(zip(slots, bits))
+        ok = True
+        for sig in _it.product((0, 1), repeat=len(f.universals)):
+            val = dict(zip(f.universals, sig))
+            for x in f.order:
+                val[x] = table[(x, tuple(val[u] for u in deps[x]))]
+            if (any(sum(val[v] for v in n) % 2 != p for n, p in f.xors)
+                    or any(not any(val[v] == pos for v, pos in c) for c in f.clauses)):
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
+def _random_dqbf(rng, n, m, nx, nc, kmax=4, pdep=0.5):
+    D = _dqbf()
+    f = D.DQBF()
+    us = [f"u{i}" for i in range(n)]
+    f.forall(*us)
+    xs = [f"x{i}" for i in range(m)]
+    for x in xs:
+        f.exists(x, [u for u in us if rng.random() < pdep])
+    allv = us + xs
+    for _ in range(nx):
+        f.xor(rng.sample(allv, min(rng.randint(1, kmax), len(allv))), rng.randint(0, 1))
+    for _ in range(nc):
+        f.clause([(v, rng.random() < 0.5)
+                  for v in rng.sample(allv, min(rng.randint(1, kmax), len(allv)))])
+    return f
+
+
+def _recheck(f, d):
+    """d's certificate, checked again from the formula."""
+    D = _dqbf()
+    if d.truth is None:
+        return True
+    if d.method == "affine-skolem":
+        return (D.check_affine(f, d.certificate) if d.truth
+                else D.check_refutation(f, d.certificate))
+    return (D.check_tables(f, d.certificate) if d.truth
+            else D.check_expansion_refutation(f, d.certificate))
+
+
+def test_dqbf_decisions_agree_with_every_choice_of_skolem_functions():
+    D = _dqbf()
+    rng = _random.Random(20261022)
+    seen = set()
+    for _ in range(700):
+        f = _random_dqbf(rng, rng.randint(0, 3), rng.randint(1, 3), rng.randint(0, 4),
+                         0 if rng.random() < 0.35 else rng.randint(1, 5))
+        if sum(1 << len(f.existentials[x]) for x in f.order) > 12:
+            continue
+        d = D.decide(f)
+        want = _skolem_brute(f)
+        assert d.truth is want, (f.universals, f.existentials, f.xors, f.clauses, d)
+        assert D.brute_force(f) is want
+        assert _recheck(f, d)
+        seen.add((d.method, d.truth))
+    assert seen == {("affine-skolem", True), ("affine-skolem", False),
+                    ("expansion", True), ("expansion", False)}
+
+
+def test_dqbf_the_formulas_the_old_pipeline_called_satisfiable_are_false():
+    D = _dqbf()
+    from pq_verify.core import _PHASE4B_MODULE
+    a = D.DQBF().forall("u").exists("x", []).xor(["x", "u"], 0)
+    b = D.DQBF().exists("x1").exists("x2")
+    for s1, s2 in _it.product((True, False), repeat=2):
+        b.clause([("x1", s1), ("x2", s2)])
+    _, m = D.parse_module(_PHASE4B_MODULE)
+    for f in (a, b, m):
+        d = D.decide(f)
+        assert d.truth is False and _recheck(f, d) and _skolem_brute(f) is False
+
+
+def test_dqbf_affine_skolem_and_expansion_agree_beyond_enumeration():
+    D = _dqbf()
+    rng = _random.Random(7)
+    truths = set()
+    for _ in range(150):
+        n, m = rng.randint(2, 7), rng.randint(3, 10)
+        f = D.DQBF()
+        us = [f"u{i}" for i in range(n)]
+        f.forall(*us)
+        xs = [f"x{i}" for i in range(m)]
+        for x in xs:
+            f.exists(x, [u for u in us if rng.random() < 0.4])
+        sol = {x: (rng.randint(0, 1), {u for u in f.existentials[x] if rng.random() < 0.5})
+               for x in xs}
+        for _ in range(rng.randint(2, 12)):
+            E = rng.sample(xs, rng.randint(1, min(5, m)))
+            if rng.random() < 0.7:           # planted: holds under sol
+                W = set()
+                for x in E:
+                    W ^= sol[x][1]
+                f.xor(E + sorted(W), sum(sol[x][0] for x in E) % 2)
+            else:
+                f.xor(E + rng.sample(us, rng.randint(0, 2)), rng.randint(0, 1))
+        a = D.decide(f)
+        e = D._decide_expansion(f, D.MAX_CONFLICTS)
+        assert a.method == "affine-skolem" and e.method == "expansion"
+        assert a.truth is e.truth and _recheck(f, a)
+        truths.add(a.truth)
+    assert truths == {True, False}
+
+
+def test_dqbf_skolem_system_on_the_engine_agrees_with_elimination():
+    D = _dqbf()
+    core, eng = _all_engines()
+    rng = _random.Random(5)
+    engines = set()
+    for trial in range(120):
+        f = _random_dqbf(rng, rng.randint(1, 10), rng.randint(2, 30), rng.randint(1, 40), 0,
+                         kmax=5, pdep=0.3)
+        a, b = D.decide(f, eng["gf2"]), D.decide(f)
+        assert a.truth is b.truth and _recheck(f, a)
+        engines.add((a.truth, a.engine))
+    f = core._dqbf_planted(seed=3, nu=50, nx=300, ncons=500)
+    d = D.decide(f, eng["gf2"])
+    assert d.truth is True and d.engine == "libpqv_gf2" and _recheck(f, d)
+    engines.add((d.truth, d.engine))
+    assert {(True, "libpqv_gf2"), (False, "libpqv_gf2 and elimination")} <= engines
+
+
+def test_dqbf_an_engine_answer_that_fails_its_check_is_a_defect(monkeypatch):
+    D = _dqbf()
+    f = D.DQBF().forall("u1", "u2").exists("x", ["u1"]).exists("y", ["u1", "u2"])
+    f.xor(["x", "u1"], 1).xor(["x", "y", "u2"], 0)
+    real = D._engine_solve
+    monkeypatch.setattr(D, "_engine_solve",
+                        lambda g, n, eqs: ("sat", [b ^ (i == 0) for i, b in
+                                                   enumerate(D._eliminate(n, eqs)[1])]))
+    with pytest.raises(D.CertificateError):
+        D.decide(f, object())
+    monkeypatch.setattr(D, "_engine_solve", lambda g, n, eqs: ("unsat", None))
+    with pytest.raises(D.CertificateError):
+        D.decide(f, object())
+    monkeypatch.setattr(D, "_engine_solve", real)
+
+
+def test_dqbf_xor_constraints_alone_refute_a_formula_with_clauses():
+    D = _dqbf()
+    f = D.DQBF().forall(*[f"u{i}" for i in range(25)])
+    for i in range(25):
+        f.exists(f"x{i}", [f"u{i}"])
+    f.xor(["x0", "x1", "u2"], 0)                 # x0+x1 cannot equal u2
+    f.clause([(f"x{i}", True) for i in range(25)])
+    assert D.route(f) == "cannot-verify"
+    d = D.decide(f)
+    assert d.truth is False and d.method == "affine-skolem"
+    assert D.check_refutation(f, d.certificate)
+
+
+def test_dqbf_local_expansion_is_the_full_expansion():
+    D = _dqbf()
+    rng = _random.Random(11)
+    for _ in range(200):
+        f = _random_dqbf(rng, rng.randint(0, 4), rng.randint(1, 4), rng.randint(0, 3),
+                         rng.randint(0, 4), kmax=3)
+        if any(sum(1 for v in n if v in f.existentials) > 3 for n, _ in f.xors):
+            continue                             # no Tseitin variables to rename
+        nv, cnf, copies = D.expand(f)
+        full = set()
+        for sig in _it.product((0, 1), repeat=len(f.universals)):
+            s = dict(zip(f.universals, sig))
+            var = lambda x: copies[(x, tuple(s[u] for u in f.deps(x)))]
+            for names, p in f.xors:
+                vs = [var(x) for x in f.order if x in names]
+                par = p ^ (sum(s[u] for u in names & f.uset) % 2)
+                for bits in _it.product((0, 1), repeat=len(vs)):
+                    if sum(bits) % 2 != par:
+                        full.add(frozenset(-v if b else v for v, b in zip(vs, bits)))
+            for lits in f.clauses:
+                if any(v in f.uset and s[v] == pos for v, pos in lits):
+                    continue
+                c = frozenset(var(v) if pos else -var(v) for v, pos in lits if v not in f.uset)
+                if not any(-l in c for l in c):
+                    full.add(c)
+        assert {frozenset(c) for c in cnf} == full
+        vbound, cbound = D.expansion_size(f)
+        assert nv == vbound and len(cnf) <= cbound
+
+
+def test_cdcl_answers_match_brute_force_and_carry_checked_certificates():
+    D = _dqbf()
+    rng = _random.Random(3)
+    got = set()
+    for _ in range(400):
+        nv = rng.randint(1, 12)
+        cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), min(nv, rng.randint(1, 3)))]
+               for _ in range(int(nv * rng.uniform(1.5, 6)))]
+        sat, out = D._CDCL(nv, cnf).solve()
+        brute = any(all(any(bits[abs(l) - 1] == (l > 0) for l in c) for c in cnf)
+                    for bits in _it.product((False, True), repeat=nv))
+        assert sat is brute
+        if sat:
+            assert all(any(out[abs(l)] == (l > 0) for l in c) for c in cnf)
+        else:
+            assert D.check_rup(nv, cnf, out)
+        got.add(sat)
+    for nv in (60, 90):                          # beyond brute force: certificates only
+        for _ in range(4):
+            cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), 3)]
+                   for _ in range(int(4.26 * nv))]
+            sat, out = D._CDCL(nv, cnf).solve()
+            assert (all(any(out[abs(l)] == (l > 0) for l in c) for c in cnf) if sat
+                    else D.check_rup(nv, cnf, out))
+    assert got == {True, False}
+
+
+def _naive_rup_check(nv, clauses, proof):
+    if not proof or list(proof[-1]):
+        return False
+    db = [list(c) for c in clauses]
+    for lemma in proof:
+        if any(type(l) is not int or l == 0 or abs(l) > nv for l in lemma):
+            return False
+        val, conflict = {}, False
+        for l in lemma:
+            if val.get(abs(l), l < 0) != (l < 0):
+                conflict = True
+            val[abs(l)] = l < 0
+        changed = not conflict
+        while changed and not conflict:
+            changed = False
+            for c in db:
+                if any(abs(x) in val and val[abs(x)] == (x > 0) for x in c):
+                    continue
+                free = [x for x in c if abs(x) not in val]
+                if not free:
+                    conflict = True
+                    break
+                if len(free) == 1:
+                    val[abs(free[0])] = free[0] > 0
+                    changed = True
+        if not conflict:
+            return False
+        db.append(list(lemma))
+    return True
+
+
+def test_rup_checker_agrees_with_a_naive_checker_on_real_and_tampered_proofs():
+    D = _dqbf()
+    rng = _random.Random(9)
+    outcomes = set()
+    for _ in range(600):
+        nv = rng.randint(2, 10)
+        cnf = [[v * rng.choice((1, -1)) for v in rng.sample(range(1, nv + 1), rng.randint(1, min(3, nv)))]
+               for _ in range(int(nv * rng.uniform(2, 7)))]
+        sat, out = D._CDCL(nv, cnf).solve()
+        if sat:
+            proof = [[rng.choice((1, -1)) * rng.randint(1, nv) for _ in range(rng.randint(0, 3))]
+                     for _ in range(rng.randint(0, 5))] + [[]]
+        else:
+            proof = [list(c) for c in out]
+            r = rng.random()
+            if r < 0.25 and len(proof) > 1:
+                del proof[rng.randrange(len(proof) - 1)]
+            elif r < 0.5 and len(proof) > 1:
+                proof[rng.randrange(len(proof) - 1)] = [rng.choice((1, -1)) * rng.randint(1, nv)
+                                                        for _ in range(rng.randint(1, 3))]
+            elif r < 0.75:
+                cnf = cnf[:rng.randrange(len(cnf))]
+        ok = D.check_rup(nv, cnf, proof)
+        assert ok is _naive_rup_check(nv, cnf, proof)
+        if sat:
+            assert not ok, "a refutation of a satisfiable formula was accepted"
+        outcomes.add(ok)
+    assert outcomes == {True, False}
+
+
+def test_rup_checker_rejects_malformed_proofs():
+    D = _dqbf()
+    cnf = [[1, 2], [-1, 2], [1, -2], [-1, -2]]
+    sat, proof = D._CDCL(2, cnf).solve()
+    assert sat is False and D.check_rup(2, cnf, proof)
+    for bad in ([], [[2]], proof[:-1], [[3]] + proof, [[0]] + proof, [[1.0]] + proof,
+                [[True]] + proof, (tuple(proof))):
+        assert not D.check_rup(2, cnf, bad), bad
+    assert not D.check_rup(2, cnf + [[5]], proof)
+    for bad in ([[1], 3, []], [[1], None], [[1], "x"], [{1: 2}, []]):
+        assert not D.check_rup(2, cnf, bad), bad
+
+
+def test_dqbf_checkers_reject_malformed_certificates_without_raising():
+    D = _dqbf()
+    f = D.DQBF().forall("u").exists("x", ["u"]).xor(["x", "u"], 0)
+    good = {"x": (0, frozenset({"u"}))}
+    assert D.check_affine(f, good)
+    for bad in (None, [], {}, {"x": (0,)}, {"x": [0, {"u"}]}, {"x": (2, set())},
+                {"x": (True, {"u"})}, {"x": (0, ["u"])}, {"x": (0, {"w"})},
+                {"x": (0, {"u"}), "y": (0, set())}):
+        assert not D.check_affine(f, bad), bad
+    g = D.DQBF().forall("u").exists("x", []).xor(["x", "u"], 0)
+    assert D.check_refutation(g, [1])
+    for bad in (None, [], [1, 1], [[1]], [1.0], [True], [7], [-1], (1,), [{}]):
+        assert not D.check_refutation(g, bad), bad
+    h = D.DQBF().forall("u").exists("x", ["u"]).clause([("x", True), ("u", True)])
+    assert D.check_tables(h, {"x": {(0,): 1, (1,): 0}})
+    for bad in (None, {}, {"x": None}, {"x": {(0,): 1}}, {"x": {(0,): 1, (1,): 2}},
+                {"x": {(0,): True, (1,): 0}}, {"x": {(0,): 1, (1,): 0, (2,): 0}},
+                {"x": {0: 1, 1: 0}}):
+        assert not D.check_tables(h, bad), bad
+
+
+def test_cdcl_conflict_budget_is_cannot_verify_not_an_answer():
+    D = _dqbf()
+    f = D.DQBF()                                 # 6 pigeons, 5 holes: false
+    p = {(i, j): f"p{i}_{j}" for i in range(6) for j in range(5)}
+    for v in p.values():
+        f.exists(v)
+    for i in range(6):
+        f.clause([(p[(i, j)], True) for j in range(5)])
+    for j in range(5):
+        for a, b in _it.combinations(range(6), 2):
+            f.clause([(p[(a, j)], False), (p[(b, j)], False)])
+    d = D.decide(f, max_conflicts=3)
+    assert d.truth is None and "CANNOT VERIFY" in d.detail
+    d = D.decide(f)
+    assert d.truth is False and _recheck(f, d)
+
+
+def test_dqbf_formulas_are_validated():
+    D = _dqbf()
+    f = D.DQBF().forall("u").exists("x", ["u"])
+    for bad in (lambda: f.exists("y", ["x"]), lambda: f.exists("y", ["w"]),
+                lambda: f.forall("x"), lambda: f.exists("u"), lambda: f.xor(["x", "z"], 1),
+                lambda: f.xor(["x"], 2), lambda: f.xor(["x"], True),
+                lambda: f.clause([("z", True)]), lambda: f.forall("")):
+        with pytest.raises(D.DQBFError):
+            bad()
+
+
+def test_dqbf_module_parser_is_strict():
+    D = _dqbf()
+    from pq_verify.core import _PHASE4B_MODULE as M
+    name, f = D.parse_module(M)
+    assert name == "ntt_verify" and f.universals == ["u1", "u2"]
+    bad = [
+        M.replace('deps="u1" />', 'dep="u1" />', 1),          # misspelled attribute
+        M.replace(' deps="u2"', ''),                           # no deps
+        M.replace('deps="u2"', 'deps="x1"'),                   # depends on an existential
+        M.replace('parity="1"', 'parity="2"'),
+        M.replace('parity="1"', ''),
+        M.replace("x1 x3</or>", "x1 x9</or>"),                 # undeclared
+        M.replace("x1 x3</or>", "x1 !!x3</or>"),
+        M.replace("x1 x3</or>", "</or>"),                      # empty clause
+        M.replace("</constraints>", "<and>x1 x2</and></constraints>"),
+        M.replace("<vars>", "<vars>stray text"),
+        M.replace('<forall vars="u1 u2" />', '<forall vars="u1 u2">u3</forall>'),
+        M.replace('id="c4"', 'id="c3"'),                       # duplicate id
+        M.replace('<module name="ntt_verify">', '<module>'),
+        M.replace("module", "modul"),
+        '<!DOCTYPE m [<!ENTITY e "x1">]>' + M.strip(),
+        M.replace("</module>", ""),                            # not well-formed
+        "<module name='m'><constraints><xor parity='0'>a</xor></constraints><vars/></module>",
+        "<module name='m'><vars><forall vars='u'/></vars><vars/></module>",
+    ]
+    for text in bad:
+        assert text.strip() != M.strip()
+        with pytest.raises(D.DQBFError):
+            D.parse_module(text)
+
+
+def _dqbf_rows(engines):
+    import pq_verify.core as core
+    r = core.audit_dqbf_pipeline(engines)
+    return r, {t["name"]: t for t in r.tests}
+
+
+def test_dqbf_self_suite_rows_pass_and_each_can_fail(monkeypatch):
+    D = _dqbf()
+    core, eng = _all_engines()
+    r, rows = _dqbf_rows(eng)
+    assert len(rows) == 7 and all(t["passed"] for t in rows.values()), \
+        [(n, t["detail"]) for n, t in rows.items() if not t["passed"]]
+    assert not r.findings
+
+    def failing(**patches):
+        with monkeypatch.context() as m:
+            for name, value in patches.items():
+                m.setattr(D, name, value)
+            r, rows = _dqbf_rows(eng)
+        return r, {n for n, t in rows.items() if not t["passed"]}
+
+    real_parse = D.parse_module
+
+    def lenient(text):                          # accepts every variant as the module
+        return real_parse(core._PHASE4B_MODULE)
+    assert "CFL XML parser" in failing(parse_module=lenient)[1]
+
+    def dropped_dependency(text):
+        name, f = real_parse(text)
+        f.existentials["x2"] = frozenset({"u1"})
+        return name, f
+    assert "DQBF conversion" in failing(parse_module=dropped_dependency)[1]
+
+    r, bad = failing(route=lambda f: "affine-skolem")
+    assert "Structural routing" in bad and any(x["severity"] == "CRITICAL" for x in r.findings)
+
+    forged = lambda f, mc: D.Decision(False, "expansion", [[]], "forged", "cdcl")
+    r, bad = failing(_decide_expansion=forged)
+    assert {"Phase 4b module decided", "False formulas refuted"} <= bad
+
+    assert "Tampered certificates rejected" in failing(check_tables=lambda f, t: True)[1]
+    assert "Tampered certificates rejected" in failing(check_rup=lambda nv, c, p: True)[1]
+
+    real_engine = D._engine_solve
+
+    def corrupt(gf2, n, eqs):
+        out = real_engine(gf2, n, eqs)
+        if out and out[0] == "sat" and n > 100:
+            out = ("sat", [b ^ (i == 7) for i, b in enumerate(out[1])])
+        return out
+    r, bad = failing(_engine_solve=corrupt)
+    assert bad == {"1000-var DQBF stress"}
+    assert any(x["severity"] == "CRITICAL" for x in r.findings)
+
+
+def test_dqbf_self_suite_without_the_engine_skips_only_the_engine_row():
+    r, rows = _dqbf_rows({})
+    assert [n for n, t in rows.items() if t.get("skipped")] == ["1000-var DQBF stress"]
+    assert all(t["passed"] for n, t in rows.items() if not t.get("skipped"))
+
+
+# ----------------------------------------------------------------------
+# CFL front end (CFL.md). Through 2.13.0 its lexer dropped characters it
+# did not know, its parser ended a CONTEXT at REQUIRE's closing brace, its
+# "prenex" step stopped at the first nested quantifier, its router searched
+# the whole FOL string for a field's name, and its dispatch solved fixed
+# systems whatever the specification said.
+# ----------------------------------------------------------------------
+
+def _cfl():
+    from pq_verify import cfl
+    return cfl
+
+
+def _random_closed_formula(rng, depth=4):
+    C = _cfl()
+    arity = {"P": 1, "Q": 2, "R": 2}
+
+    def go(d, scope):
+        if d == 0 or rng.random() < 0.25:
+            name = rng.choice("PQR")
+            args = [C.var(rng.choice(scope)) if scope and rng.random() < 0.85
+                    else C.const(rng.choice("ab")) for _ in range(arity[name])]
+            return C.pred(name, *args)
+        op = rng.choice(["not", "and", "or", "implies", "forall", "exists", "forall", "exists"])
+        if op in ("forall", "exists"):
+            v = rng.choice("xyz")                # names reused: shadowing
+            return (op, v, go(d - 1, scope + [v]))
+        if op == "not":
+            return ("not", go(d - 1, scope))
+        return (op, go(d - 1, scope), go(d - 1, scope))
+
+    f = go(depth, [])
+    for v in sorted(C.free_vars(f)):
+        f = (rng.choice(["forall", "exists"]), v, f)
+    return f
+
+
+def _random_model(rng, f):
+    dom = list(range(rng.randint(1, 3)))
+    arity = {"P": 1, "Q": 2, "R": 2}
+    rels = {}
+    for name, k in arity.items():
+        pool = list(_it.product(dom + ["a", "b"], repeat=k))
+        rels[name] = {t for t in pool if rng.random() < 0.5}
+    return dom, rels
+
+
+def test_cfl_prenex_form_is_equivalent_and_prenex():
+    C = _cfl()
+    rng = _random.Random(31)
+    for _ in range(400):
+        f = _random_closed_formula(rng)
+        prefix, matrix = C.prenex(f)
+        g = C.from_prenex(prefix, matrix)
+        assert len({v for _, v in prefix}) == len(prefix), "bound names not apart"
+        assert not C.free_vars(g)
+        stack = [matrix]
+        while stack:
+            h = stack.pop()
+            assert h[0] not in ("forall", "exists", "implies"), C.show(matrix)
+            if h[0] == "not":
+                assert h[1][0] == "pred", "negation not on a predicate"
+            elif h[0] in ("and", "or"):
+                stack.extend(h[1:])
+        for _ in range(8):
+            dom, rels = _random_model(rng, f)
+            assert C.evaluate(f, dom, rels) == C.evaluate(g, dom, rels), (C.show(f), C.show(g))
+
+
+def test_cfl_qbf_encoding_decided_by_the_dqbf_stage_equals_model_checking():
+    C = _cfl()
+    D = _dqbf()
+    rng = _random.Random(32)
+    seen = set()
+    for _ in range(120):
+        f = _random_closed_formula(rng, depth=3)
+        if len(C.prenex(f)[0]) > 3:
+            continue
+        dom, rels = _random_model(rng, f)
+        truth, d = C.decide(f, dom, rels)
+        assert d.truth is truth and truth == C.evaluate(f, dom, rels)
+        assert _recheck(C.to_qbf(f, dom, rels)[0], d)
+        seen.add(truth)
+    assert seen == {True, False}
+
+
+def test_cfl_lexer_reports_positions_and_refuses_what_it_does_not_define():
+    C = _cfl()
+    toks = C.lex('CONTEXT ( K ) {\n  // a comment\n  DEFINE property <N> { type: "linear"; }\n}')
+    assert [t.kind for t in toks][:5] == ["KEYWORD", "(", "IDENT", ")", "{"]
+    d = next(t for t in toks if t.value == "DEFINE")
+    assert (d.line, d.col) == (3, 3)
+    assert toks[-1].kind == "EOF"
+    for text, where in (('CONTEXT ( K ) { @ }', "line 1, column 17"),
+                        ('CONTEXT ( K ) {\n "open', "line 2, column 2"),
+                        ('"a\\b"', "line 1, column 1"),
+                        ('CONTEXT ( Kéy )', "line 1, column 12")):
+        with pytest.raises(C.CFLError) as e:
+            C.lex(text)
+        assert e.value.messages[0].startswith(where), e.value.messages
+
+
+def test_cfl_parser_keeps_what_follows_require_and_reports_positions():
+    C = _cfl()
+    s = C.parse('CONTEXT ( K ) { REQUIRE Full { N } DEFINE property <N> '
+                '{ type: "linear"; field: "GF2"; } }\nCONTEXT ( L ) { }')
+    assert [c.name for c in s.contexts] == ["K", "L"]
+    assert [d.name for d in s.contexts[0].defines] == ["N"]
+    assert s.contexts[0].requires[0].shape() == ("REQUIRE", "Full", ("N",))
+    for text, where in (('CONTEXT ( K ) { DEFINE property <N> { type: "x" } }', "line 1, column 49"),
+                        ('CONTEXT ( K', "line 1, column 12"),
+                        ('CONTEXT ( K ) { REQUIRE Full { A B } }', "line 1, column 34"),
+                        ('DEFINE', "line 1, column 1")):
+        with pytest.raises(C.CFLError) as e:
+            C.parse(text)
+        assert e.value.messages[0].startswith(where), e.value.messages
+
+
+def test_cfl_checker_lists_every_problem():
+    C = _cfl()
+    text = ('CONTEXT ( K ) {\n'
+            '  DEFINE property <N> { type: "cubic"; field: "GF2"; }\n'
+            '  DEFINE property <N> { type: "linear"; field: "Z_7"; colour: "red"; }\n'
+            '  REQUIRE Partial { M }\n'
+            '}\nCONTEXT ( K ) { }')
+    with pytest.raises(C.CFLError) as e:
+        C.check(C.parse(text))
+    msgs = e.value.messages
+    for words in ("decides linear constraints, not \"cubic\"", "K.N is defined again",
+                  "unknown field \"Z_7\"", "unknown attribute colour", "the only level is Full",
+                  "REQUIRE names M", "context K is defined again"):
+        assert any(words in m for m in msgs), (words, msgs)
+    assert all(m.startswith("line ") for m in msgs)
+
+
+def test_cfl_required_properties_follow_require():
+    C = _cfl()
+    props = C.check(C.parse(
+        'CONTEXT ( A ) { DEFINE property <X> { type: "linear"; field: "GF2"; } '
+        'DEFINE property <Y> { type: "linear"; field: "GF2"; } REQUIRE Full { Y } }'
+        'CONTEXT ( B ) { DEFINE property <Z> { type: "cubic"; field: "cubic"; } }'
+        'CONTEXT ( E ) { DEFINE property <W> { type: "linear"; field: "Z_3329"; } REQUIRE Full { } }'))
+    assert {p.key: p.required for p in props} == {"A.X": False, "A.Y": True, "B.Z": True, "E.W": True}
+
+
+def test_cfl_round_trip_on_random_specifications():
+    C = _cfl()
+    rng = _random.Random(33)
+    fields = list(C.FIELDS)
+    for _ in range(200):
+        parts = []
+        for c in range(rng.randint(0, 3)):
+            items = []
+            names = [f"P{i}" for i in range(rng.randint(0, 3))]
+            for n in names:
+                fld = rng.choice(fields)
+                typ = rng.choice(C.TYPES[C.FIELDS[fld]])
+                items.append(f'DEFINE property <{n}> {{ type: "{typ}"; field: "{fld}"; }}')
+            if names and rng.random() < 0.5:
+                items.insert(rng.randrange(len(items) + 1),
+                             f'REQUIRE Full {{ {", ".join(rng.sample(names, rng.randint(0, len(names))))} }}')
+            parts.append(f"CONTEXT ( C{c} ) {{ {' '.join(items)} }}")
+        text = "\n".join(parts)
+        ast = C.parse(text)
+        assert C.parse(C.to_text(ast)).shape() == ast.shape()
+        C.check(ast)
+
+
+def test_cfl_router_reads_the_parsed_field():
+    C = _cfl()
+    props = C.check(C.parse(
+        'CONTEXT ( GF2_cubic ) { DEFINE property <period_Z_3329> { type: "linear"; field: "Z_8380417"; } }'))
+    assert C.route(props[0]) == "Zq32"
+
+
+def test_cfl_obligations_pass_and_reject_their_corruption():
+    core, eng = _all_engines()
+    for (ctx, name), (field, check) in core.CFL_OBLIGATIONS.items():
+        ok, detail = check(eng)
+        assert ok, (ctx, name, detail)
+        bad = check(eng, corrupt=True)
+        assert bad is not None and not bad[0], (ctx, name, "passed when corrupted")
+
+
+def test_cfl_dispatch_reports_what_it_cannot_run_or_find():
+    import pq_verify.core as core
+    C = _cfl()
+    props = C.check(C.parse('CONTEXT ( Kyber ) { DEFINE property <NTTCorrect> '
+                            '{ type: "linear"; field: "Z_3329"; } }'
+                            'CONTEXT ( X ) { DEFINE property <Y> { type: "linear"; field: "GF2"; } }'))
+    out = core.cfl_dispatch(props, {}, core.CFL_OBLIGATIONS)
+    assert out["Kyber.NTTCorrect"][0] is None and "not built" in out["Kyber.NTTCorrect"][1]
+    assert out["X.Y"] == (None, "no obligation is registered for it")
+    wrong = C.check(C.parse('CONTEXT ( Kyber ) { DEFINE property <NTTCorrect> '
+                            '{ type: "linear"; field: "GF2"; } }'))
+    got = core.cfl_dispatch(wrong, {}, core.CFL_OBLIGATIONS)["Kyber.NTTCorrect"]
+    assert got[0] is False and "runs in Z_3329" in got[1]
+
+
+def test_cfl_self_suite_rows_pass_and_each_can_fail(monkeypatch):
+    import pq_verify.core as core
+    C = _cfl()
+    _, eng = _all_engines()
+
+    def rows(*patches):
+        with monkeypatch.context() as m:
+            for mod, name, value in patches:
+                m.setattr(mod, name, value)
+            r = core.audit_cfl_frontend(eng)
+        return r, {t["name"]: t for t in r.tests}
+
+    r, good = rows()
+    assert len(good) == 6 and all(t["passed"] for t in good.values()), \
+        [(n, t["detail"]) for n, t in good.items() if not t["passed"]]
+
+    def failing(*patches):
+        return {n for n, t in rows(*patches)[1].items() if not t["passed"]}
+
+    real_lex = C.lex
+    assert "CFL lexer" in failing((C, "lex", lambda t: real_lex(t.replace("@", ""))))
+    real_parse = C.parse
+    lenient = lambda t: real_parse(t) if "property" in t else C.Spec([])
+    assert "CFL parser" in failing((C, "parse", lenient))
+    shallow = lambda f: ([("forall", "c")], f[2])    # the old string stripper's answer
+    assert "FOL generation" in failing((C, "prenex", shallow))
+    real_to_qbf = C.to_qbf
+
+    def inverted(f, dom, rels):
+        q, bits = real_to_qbf(f, dom, rels)
+        q.clauses[-1] = tuple((n, not pos) for n, pos in q.clauses[-1])
+        return q, bits
+    r, bad = rows((C, "to_qbf", inverted))
+    assert "QBF encoder" in {n for n, t in bad.items() if not t["passed"]}
+    assert any(x["severity"] == "CRITICAL" for x in r.findings)
+    assert "Field router" in failing((C, "route", lambda p: "GF2"))
+    always = dict(core.CFL_OBLIGATIONS)
+    always[("AES", "SboxAffine")] = ("GF2", lambda engines, corrupt=False: (True, "always"))
+    assert "Engine dispatch (6 obligations)" in failing((core, "CFL_OBLIGATIONS", always))
+
+
+def test_engine6_cfl_rows_pass_and_dispatch_can_fail(monkeypatch):
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    if not all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        pytest.skip("an Engine 6 library did not build")
+    pytest.importorskip("sympy")
+    r = core.audit_engine6_cfl(e6)
+    assert [t["passed"] for t in r.tests] == [True] * 6, [(t["name"], t["detail"]) for t in r.tests]
+    always = dict(core.PAPER7_OBLIGATIONS)
+    always[("Paper7", "Conjecture6")] = ("period", lambda engines, corrupt=False: (True, "always"))
+    monkeypatch.setattr(core, "PAPER7_OBLIGATIONS", always)
+    r = core.audit_engine6_cfl(e6)
+    assert [t["name"] for t in r.tests if not t["passed"]] == \
+        ["Engine dispatch via router (4 obligations)"]
+
+
+def test_a_cfl_dispatch_waiting_on_sympy_names_it(monkeypatch):
+    """Without SymPy, Conjecture 7's obligation cannot run. The dispatch row
+    was skipped without naming the library, so CI's base profile, which
+    requires every skip to name its dependency, failed."""
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    if not all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        pytest.skip("an Engine 6 library did not build")
+    monkeypatch.setattr(core, "_e6_residue_ratios", lambda: None)
+    with _isolated_degraded() as degraded:
+        r = core.audit_engine6_cfl(e6)
+        row = [t for t in r.tests if t["name"] == "Engine dispatch via router (4 obligations)"]
+        assert row and row[0]["skipped"] and row[0]["dep"] == "sympy", row
+        assert "Paper7.Conjecture7 (sympy is not installed)" in row[0]["detail"]
+        assert degraded["deps"] == ["sympy"]
+    assert all(t["passed"] for t in r.tests if not t["skipped"]), r.tests
+
+
+def test_a_skip_can_name_more_than_one_dependency():
+    import pq_verify.core as core
+    with _isolated_degraded() as degraded:
+        r = core.AuditResult("x")
+        r.add_skip("a", "needs both", ["sympy", "coq"])
+        r.add_skip("b", "needs one", "sympy")
+        r.add_skip("c", "needs none")
+        assert [t["dep"] for t in r.tests] == ["sympy, coq", "sympy", None]
+        assert degraded["deps"] == ["sympy", "coq", "sympy"]
+
+
+def test_cfl_benchmark_row_fails_when_the_round_trip_does(monkeypatch):
+    import pq_verify.core as core
+    C = _cfl()
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_c_cfl({})
+    assert [t["passed"] for t in r.tests] == [True]
+    monkeypatch.setattr(C, "to_text", lambda spec: "")
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = core.audit_c_cfl({})
+    assert [t["passed"] for t in r.tests] == [False]
+
+
+# ----------------------------------------------------------------------
+# Elliptic curves (ECC.md): exact point counts with certificates. The BSGS
+# count it replaces did not use the twist, so it could not decide some
+# curves; audit_curve passed its anomalous-trace rows whatever they found,
+# called p > 10^14 "SEA needed" and passed; and the cubic engine's Sol3
+# overflowed 64 bits past p ~ 3 x 10^9 and its search for p = a^2 + 3b^2
+# took sqrt(p/3) steps.
+# ----------------------------------------------------------------------
+
+def _ec():
+    from pq_verify import ec
+    return ec
+
+
+_SECP256K1 = (2**256 - 2**32 - 977, 7,
+              0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141)
+_P256 = (2**256 - 2**224 + 2**192 + 2**96 - 1,
+         0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b,
+         0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551)
+
+
+def test_ec_primality_factoring_and_roots_against_definitions():
+    E = _ec()
+    rng = _random.Random(41)
+    sieve = [True] * 20000
+    sieve[0] = sieve[1] = False
+    for i in range(2, 142):
+        if sieve[i]:
+            sieve[i * i::i] = [False] * len(sieve[i * i::i])
+    assert [n for n in range(20000) if E.is_prime(n)] == [n for n in range(20000) if sieve[n]]
+    # strong pseudoprimes to several bases, Carmichael numbers, a product
+    # of two large primes, and large primes
+    for n in (2047, 1373653, 25326001, 3215031751, 2152302898747, 3474749660383,
+              341550071728321, 3825123056546413051, 318665857834031151167461,
+              3317044064679887385961981, 561, 41041, 825265, 321197185, 5394826801,
+              (2**61 - 1) * (2**89 - 1)):
+        assert not E.is_prime(n), n
+    for n in (2**61 - 1, 2**89 - 1, 2**127 - 1, 2**521 - 1, 2**255 - 19,
+              _SECP256K1[0], _SECP256K1[2], _P256[0], _P256[2]):
+        assert E.is_prime(n), n
+    for _ in range(150):
+        n = rng.randrange(1, 2**62)
+        f = E.factor(n)
+        assert _math_prod(q ** e for q, e in f.items()) == n and all(E.is_prime(q) for q in f)
+    for p in (5, 13, 97, 1009, 2**61 - 1, _P256[0]):
+        for _ in range(20):
+            a = rng.randrange(p)
+            r = E.sqrt_mod(a, p)
+            assert (r is None) == (pow(a, (p - 1) // 2, p) == p - 1)
+            assert r is None or r * r % p == a
+    for p in [q for q in range(5, 3000) if E.is_prime(q)] + [2**61 - 1, _SECP256K1[0]]:
+        for d in (1, 3):
+            c = E.cornacchia(d, p)
+            assert (c is not None) == ((p % 4 == 1) if d == 1 else (p % 3 == 1)), (d, p)
+            assert c is None or c[0] ** 2 + d * c[1] ** 2 == p and min(c) > 0
+
+
+def _math_prod(xs):
+    out = 1
+    for x in xs:
+        out *= x
+    return out
+
+
+def _brute_count(a, b, p):
+    sq = {}
+    for y in range(p):
+        sq[y * y % p] = sq.get(y * y % p, 0) + 1
+    return 1 + sum(sq.get((x ** 3 + a * x + b) % p, 0) for x in range(p))
+
+
+def test_ec_counts_by_every_method_equal_a_direct_count():
+    E = _ec()
+    rng = _random.Random(42)
+    seen = set()
+    for trial in range(60):
+        p = E.NAIVE_LIMIT + 1
+        while not E.is_prime(p):
+            p = rng.randrange(E.NAIVE_LIMIT, 2 * E.NAIVE_LIMIT)
+        kind = trial % 3
+        while True:
+            a = 0 if kind == 0 else rng.randrange(p)
+            b = 0 if kind == 1 else rng.randrange(p)
+            if (a, b) != (0, 0) and (4 * a ** 3 + 27 * b * b) % p:
+                break
+        c = E.Curve(a, b, p)
+        got = E.count(c, _random.Random(trial))
+        assert got is not None and got.n == _brute_count(a, b, p), (c, got)
+        assert E.check_count(c, got)
+        seen.add(got.method)
+    assert seen == {"cm", "orders"}
+
+
+def test_ec_twist_orders_and_cm_agree_with_baby_step_giant_step_at_63_bits(monkeypatch):
+    E = _ec()
+    rng = _random.Random(43)
+    for trial in range(4):
+        p = 4
+        while not E.is_prime(p):
+            p = rng.randrange(2**62, 2**63)
+        a, b = (0, rng.randrange(1, p)) if trial % 2 == 0 else (rng.randrange(1, p), 0)
+        c = E.Curve(a, b, p)
+        cm = E.count(c)
+        with monkeypatch.context() as m:
+            m.setattr(E, "_cm_traces", lambda curve: None)
+            bs = E.count(c)
+        assert cm.method == "cm" and bs.method == "orders" and cm.n == bs.n
+        assert E.check_count(c, cm) and E.check_count(c, bs)
+
+
+def test_ec_secp256k1_is_counted_and_p256_order_verified():
+    E = _ec()
+    p, b, n = _SECP256K1
+    c = E.Curve(0, b, p)
+    got = E.count(c)
+    assert got.method == "cm" and got.n == n and E.check_count(c, got)
+    p, b, n = _P256
+    c = E.Curve(p - 3, b, p)
+    v = E.verify_order(c, n)
+    assert v is not None and v.n == n and E.check_count(c, v)
+    assert E.verify_order(c, n + 2) is None
+
+
+def test_ec_check_count_rejects_tampered_certificates():
+    E = _ec()
+    c = E.Curve(0, 5, 10007)                   # small: naive
+    good = E.count(c)
+    assert E.check_count(c, good)
+    assert not E.check_count(c, E.Count(good.n + 1, "naive", {"p": 10007}))
+    p, b, n = _SECP256K1
+    k1 = E.Curve(0, b, p)
+    cm = E.count(k1)
+    for other in sorted(p + 1 - t for t in E._cm_traces(k1)[0]):
+        if other != n:                         # another CM candidate, same evidence
+            assert not E.check_count(k1, E.Count(other, "cm", cm.certificate))
+    assert not E.check_count(k1, E.Count(n, "cm", dict(cm.certificate, points=[])))
+    u, v = cm.certificate["representation"][1:]
+    assert not E.check_count(k1, E.Count(n, "cm", dict(cm.certificate, representation=(3, u + 1, v))))
+    rng = _random.Random(44)
+    q = 4
+    while not E.is_prime(q):
+        q = rng.randrange(2**40, 2**41)
+    g = E.Curve(rng.randrange(q), rng.randrange(q), q)
+    o = E.count(g)
+    assert o.method == "orders" and E.check_count(g, o)
+    assert not E.check_count(g, E.Count(o.n + 2, "orders", o.certificate))
+    P, m, fac = o.certificate["E"][0]
+    lie_fac = dict(fac)
+    lie_fac[2] = lie_fac.get(2, 0) + 1
+    lie = [(P, m * 2, lie_fac)] + o.certificate["E"][1:]
+    assert not E.check_count(g, E.Count(o.n, "orders", dict(o.certificate, E=lie)))
+    assert not E.check_count(g, E.Count(o.n, "orders", dict(o.certificate, E=[], twist=[])))
+    with pytest.raises(E.ECError):
+        E.Curve(0, 0, 10007)                   # singular
+    with pytest.raises(E.ECError):
+        E.Curve(1, 1, 10001)                   # not prime
+
+
+def test_cubic_engine_decomposes_by_cornacchia_up_to_2_64_and_refuses_overflow():
+    E = _ec()
+    core, eng = _all_engines()
+    c = eng.get("cubic")
+    if c is None:
+        pytest.skip("cubic engine unavailable")
+    rng = _random.Random(45)
+    primes = [q for q in range(7, 2000) if E.is_prime(q) and q % 3 == 1]
+    for k in range(14, 64):
+        for _ in range(3):
+            q = 4
+            while not (E.is_prime(q) and q % 3 == 1):
+                q = rng.randrange(2**k, 2**(k + 1))
+            primes.append(q)
+    primes.append(18446744073709551557)        # the largest prime below 2^64
+    for q in primes:
+        if q % 3 != 1:
+            continue
+        d = c.find_decomp(q)
+        assert d.found and (d.a, d.b) == E.cornacchia(3, q), q
+        sol = c.cubic_solution_count(q)
+        exact = q * q + (q - 1) * c.compute_B(d.a, d.b)
+        assert sol == (exact if exact < 2**63 else -2), q
+    assert c.cubic_solution_count(18446744073709551557) == -2
+    for args, want in (((5, 1, 2, 2, 17), True), ((22, 1, 2, 2, 17), False),
+                       ((5, 18, 2, 2, 17), False), ((5, 1, 19, 2, 17), False),
+                       ((5, 1, 2, 19, 17), False)):
+        assert bool(c.ecc_point_valid(*args)) == want, args
+
+
+def test_cubic_jacobi_sum_gives_b():
+    import pq_verify.core as core
+    E = _ec()
+    for p in [q for q in range(7, 1500) if E.is_prime(q) and q % 3 == 1]:
+        c, d = core._cubic_jacobi_sum(p)
+        assert c % 3 == 2 and d % 3 == 0 and c * c - c * d + d * d == p, p
+        u, v = E.cornacchia(3, p)
+        bb = 2 * v * _sigma3(v) - (u - v) * _sigma3(u - v) - (u + v) * _sigma3(u + v)
+        assert 2 * c - d == bb, p
+
+
+def _sigma3(n):
+    r = n % 3
+    return 0 if r == 0 else (1 if r == 1 else -1)
+
+
+def test_curve_audit_rows_are_checks(monkeypatch):
+    import pq_verify.core as core
+    E = _ec()
+    _, eng = _all_engines()
+    names = ["Discriminant Δ ≠ 0", "j-invariant", "Point count",
+             "Twist: #E + #E′ = 2p + 2", "Cubic B(a,b)", "ECC point validation",
+             "Conformity D(t)", "Conservation law on family"]
+    for a, b, p in [(2, 2, 17), (2, 3, 97), (1, 6, 8380417)]:
+        r = core.audit_curve(eng, a, b, p)
+        assert [t["name"] for t in r.tests] == names and all(t["passed"] for t in r.tests), r.tests
+
+    def failing(a, b, p, mod, name, value):
+        with monkeypatch.context() as m:
+            m.setattr(mod, name, value)
+            r = core.audit_curve(eng, a, b, p)
+        return {t["name"] for t in r.tests if not t["passed"] and not t.get("skipped")}
+
+    off = lambda curve, rng=None, max_points=40: E.Count(curve.p + 1, "naive", {"p": curve.p})
+    assert "Point count" in failing(2, 3, 97, E, "count", off)
+    real_count = E.count
+
+    def twist_off(curve, rng=None, max_points=40):
+        got = real_count(curve, rng, max_points)
+        return got if curve.a == 2 else E.Count(got.n + 1, "naive", {"p": curve.p})
+    assert "Twist: #E + #E′ = 2p + 2" in failing(2, 3, 97, E, "count", twist_off)
+    j_off = property(lambda self: 5)
+    assert "j-invariant" in failing(2, 3, 97, E.Curve, "j", j_off)
+    real_valid = eng["cubic"].ecc_point_valid
+
+    class Lenient:
+        def __getattr__(self, n):
+            return getattr(eng["cubic"], n)
+
+        def ecc_point_valid(self, x, y, a, b, p):
+            return real_valid(x % p, y % p, a % p, b % p, p)
+    with monkeypatch.context() as m:
+        r = core.audit_curve(dict(eng, cubic=Lenient()), 2, 3, 97)
+    assert [t["passed"] for t in r.tests if t["name"] == "ECC point validation"] == [False]
+
+
+def test_curve_audit_checks_the_cubic_engine_where_sol3_overflows():
+    """Past p ~ 3 x 10^9, Sol3 = p^2 + (p-1)B does not fit 64 bits and the
+    engine refuses it. The row checked nothing there and was skipped, which
+    marked every self-suite run degraded (the adversarial suite audits
+    p ~ 10^15); it now checks the refusal and B against complex
+    multiplication."""
+    core, eng = _all_engines()
+    with _isolated_degraded():
+        for a, b, p in [(1, 0, 1000000000000091), (0, 7, 2**61 - 1), (1, 1, 2**61 - 1)]:
+            r = core.audit_curve(eng, a, b, p)
+            row = [t for t in r.tests if t["name"] == "Cubic B(a,b)"]
+            assert row and row[0]["passed"] is True and "refused" in row[0]["detail"], row
+            assert not any(t.get("skipped") for t in r.tests), r.tests
+        assert not core.DEGRADED["skipped_checks"]
+
+
+# ---- Schoof-Elkies-Atkin (SEA.md) ----------------------------------------------------
+
+def _sea():
+    from pq_verify import sea
+    return sea
+
+
+def _rand_prime(rng, bits):
+    E = _ec()
+    while True:
+        q = rng.getrandbits(bits) | (1 << (bits - 1)) | 1
+        if E.is_prime(q):
+            return q
+
+
+def _rand_curve(rng, p):
+    E = _ec()
+    while True:
+        a, b = rng.randrange(1, p), rng.randrange(1, p)
+        if (4 * a ** 3 + 27 * b * b) % p:
+            return E.Curve(a, b, p)
+
+
+def _poly_mul(a, b):
+    out = [0] * (len(a) + len(b) - 1)
+    for i, x in enumerate(a):
+        for k, y in enumerate(b):
+            out[i + k] += x * y
+    return out
+
+
+def test_sea_polynomial_products_agree_with_schoolbook():
+    """Kronecker substitution and decimal's number-theoretic transform give
+    schoolbook's products, and Newton reduction schoolbook's remainders."""
+    S = _sea()
+    rng = _random.Random(50)
+    for p in (1000003, 2**127 - 1, 2**255 - 19):
+        for n in (1, 7, 10, 33, 400, 1300):
+            a = [rng.randrange(p) for _ in range(n)]
+            b = [rng.randrange(p) for _ in range(n + 5)]
+            a[-1] = a[-1] or 1
+            b[-1] = b[-1] or 1
+            ref = S._trim([x % p for x in _poly_mul(a, b)])
+            assert S._mul(a, b, p) == ref, (p, n)
+            assert S._mul_ntt(a, b, p, n) == ref, (p, n)
+            assert S._mul(a, a, p) == S._mul(a, list(a), p)
+            K = [rng.randrange(p) for _ in range(n + 3)] + [1]
+            assert S._Mod(K, p).reduce(S._mul(a, b, p)) == S._divmod(ref, K, p)[1], (p, n)
+
+
+def test_sea_canonical_modular_polynomials_are_the_hauptmodul_relations():
+    """For l = 2, 3, 5, 7 and 13, X_0(l) has genus 0 and Mueller's
+    polynomial is Psi_l(F, J) = A(F) - F J, with the published A. The power
+    sums mod p must give exactly that, value and J-derivative, at random J."""
+    S = _sea()
+    cube = lambda a: _poly_mul(a, _poly_mul(a, a))
+    A = {2: cube([16, 1]), 3: _poly_mul([27, 1], cube([3, 1])), 5: cube([5, 10, 1]),
+         7: _poly_mul([49, 13, 1], cube([1, 5, 1])),
+         13: _poly_mul([13, 5, 1], cube([1, 19, 20, 7, 1]))}
+    rng = _random.Random(51)
+    for p in (1000003, 2**127 - 1):
+        for l, poly in A.items():
+            sums = S._power_sums(l, p)
+            for _ in range(3):
+                J0 = rng.randrange(p)
+                value, dJ = S._psi_at(sums, l, J0, 2, p)
+                want = [c % p for c in poly]
+                want[1] = (want[1] - J0) % p
+                assert value == S._trim(want) and dJ == [0, p - 1], (p, l)
+
+
+def _direct_power_sums(l, p):
+    """P_1..P_(l+1) the plain way: every power of E(x)^(2s) in full."""
+    S = _sea()
+    s, v = S._params(l)
+    N = (l + 1) * v + 1
+    P1 = S._pad(S._series_pow(S._euler(N, p), 2 * s, N, p), N)
+    T = v + 1
+    qinv = S._inv_series(P1[:T], T, p)
+    jp = S._j_powers(T, p)
+    out, Pm, qm = [], [1], [1]
+    for m in range(1, l + 2):
+        Pm = S._pad(S._low(Pm, P1, N, p), N)
+        qm = S._pad(S._low(qm, qinv, T, p), T)
+        Tm = m * v // l
+        c = [Pm[m * v - l * t] for t in range(Tm + 1)]
+        pp = [l * sum(c[t + r] * qm[r] for r in range(Tm - t + 1)) % p for t in range(Tm + 1)]
+        poly = [0] * (Tm + 1)
+        for d in range(Tm, -1, -1):
+            poly[d] = pp[d]
+            for t in range(d + 1):
+                pp[t] = (pp[t] - poly[d] * jp[d][t]) % p
+        out.append(S._trim(poly))
+    return out
+
+
+def test_sea_power_sums_equal_the_direct_computation():
+    S = _sea()
+    p = 2**61 - 1
+    for l in (3, 5, 7, 11, 13, 17, 19, 23, 29):
+        assert S._power_sums(l, p) == _direct_power_sums(l, p), l
+
+
+def _velu(a, b, p, K):
+    """(A~, B~, p1) of the normalized isogeny with kernel polynomial K."""
+    d = len(K) - 1
+    e = [1] + [(-1) ** i * K[d - i] % p for i in range(1, d + 1)]
+    s = [0] * 4
+    for m in range(1, 4):
+        acc = (-1) ** (m - 1) * m * (e[m] if m <= d else 0)
+        for i in range(1, m):
+            acc += (-1) ** (i - 1) * (e[i] if i <= d else 0) * s[m - i]
+        s[m] = acc % p
+    t = (6 * s[2] + 2 * a * d) % p
+    w = (10 * s[3] + 6 * a * s[1] + 4 * b * d) % p
+    return (a - 5 * t) % p, (b - 7 * w) % p, 2 * s[1] % p
+
+
+def test_sea_elkies_kernels_are_kernels():
+    """Every isogeny Elkies' formulas give from the canonical polynomial:
+    its kernel polynomial divides the l-division polynomial, and Velu's
+    formulas on it return the same isogenous curve and p1."""
+    S = _sea()
+    rng = _random.Random(52)
+    found = 0
+    for bits in (24, 61, 100):
+        p = _rand_prime(rng, bits)
+        for _ in range(3):
+            C = _rand_curve(rng, p)
+            for l in (3, 5, 7, 11, 13, 17, 19, 23):
+                f = S._elkies_root(l, p, C.j)
+                if f is None:
+                    continue
+                iso = S._isogenous(C.a, C.b, p, l, S._sums(l, p), f, C.j)
+                assert iso is not None, (p, l)
+                K = S._kernel(C.a, C.b, iso[0], iso[1], iso[2], l, p)
+                assert len(K) == (l + 1) // 2 and K[-1] == 1
+                div = S._Division(C.a, C.b, p, S._Mod(K, p))
+                assert div[l] == [] and _velu(C.a, C.b, p, K) == iso, (p, l)
+                found += 1
+    assert found >= 20, found
+
+
+def test_sea_counts_equal_exact_counts_below_2_64():
+    """Allowed few candidates, SEA uses Elkies primes below 2^64 too, where
+    the point-order count is exact: every residue and count agrees, and
+    every certificate checks."""
+    S, E = _sea(), _ec()
+    rng = _random.Random(53)
+    for bits, r_max in ((24, 4), (40, 64), (50, 1 << 10), (63, 1 << 16)):
+        for _ in range(3):
+            C = _rand_curve(rng, _rand_prime(rng, bits))
+            got = S.count(C, r_max=r_max)
+            want = E.count(C)
+            assert got.method == "sea" and got.n == want.n, (C, got, want)
+            assert E.check_count(C, got)
+            t = C.p + 1 - got.n
+            assert got.certificate["residues"]
+            for l, K, mu in got.certificate["residues"]:
+                assert S.check_residue(C.a, C.b, C.p, l, K, mu) == t % l
+    with pytest.raises(E.ECError):
+        S.count(E.Curve(0, 7, 10007))          # j = 0: complex multiplication's
+    with pytest.raises(E.ECError):
+        S.count(E.Curve(5, 0, 10007))          # j = 1728
+
+
+def test_sea_certificate_rejects_tampering():
+    S, E = _sea(), _ec()
+    rng = _random.Random(54)
+    C = _rand_curve(rng, _rand_prime(rng, 48))
+    c = S.count(C, r_max=1 << 8)
+    cert = c.certificate
+    assert E.check_count(C, c) and len(cert["residues"]) >= 3
+
+    def bad(n=None, **changes):
+        return not E.check_count(C, E.Count(c.n if n is None else n, "sea", dict(cert, **changes)))
+    (l, K, mu), (l2, K2, mu2) = cert["residues"][:2]
+    rest = cert["residues"][1:]
+    assert bad(residues=[(l, K, mu + 1 if mu + 1 < l else mu - 1)] + rest)   # another eigenvalue
+    assert bad(residues=[(l, [(K[0] + 1) % C.p] + K[1:], mu)] + rest)        # not a kernel
+    assert bad(residues=[(l, K2, mu)] + rest)                                 # another prime's
+    assert bad(residues=[cert["residues"][0]] + cert["residues"])             # a prime twice
+    assert bad(residues=[(9, K, mu)] + rest)                                  # not a prime
+    M = 2
+    for q, _, _ in cert["residues"]:
+        M *= q
+    lo, hi = C.hasse()
+    others = [x for x in (c.n + M, c.n - M, c.n + 2) if lo <= x <= hi]
+    assert others and all(bad(n=x) for x in others)                           # same residues, wrong point
+    assert bad(point=C.twist().random_point(rng))
+    assert bad(curve="twist")
+    assert bad(p=C.p + 2)
+    assert bad(residues=[([l], K, mu)] + rest)                              # malformed, not a crash
+    assert bad(residues=[(l, K + [0] * l + [1], mu)] + rest)                  # above the kernel's degree
+    assert not E.check_count(C, E.Count(c.n, "sea", "not a dict"))
+    # The residues are checked, never trusted: without them the certificate
+    # is weaker but still proves the count, because the point separates
+    # every candidate the parity alone leaves.
+    assert E.check_count(C, E.Count(c.n, "sea", dict(cert, residues=[])))
+
+
+_SEA_CURVES = {   # p, a, b, the published group order (cofactor 1)
+    "secp128r1": (0xFFFFFFFDFFFFFFFFFFFFFFFFFFFFFFFF, 0xFFFFFFFDFFFFFFFFFFFFFFFFFFFFFFFC,
+                  0xE87579C11079F43DD824993C2CEE5ED3, 0xFFFFFFFE0000000075A30D1B9038A115),
+    "brainpoolP160r1": (0xE95E4A5F737059DC60DFC7AD95B3D8139515620F,
+                        0x340E7BE2A280EB74E2BE61BADA745D97E8F7C300,
+                        0x1E589A8595423412134FAA2DBDEC95C8D8675E58,
+                        0xE95E4A5F737059DC60DF5991D45029409E60FC09),
+}
+
+
+def test_sea_counts_standard_curves_to_their_published_orders():
+    E = _ec()
+    for name, (p, a, b, n) in _SEA_CURVES.items():
+        C = E.Curve(a, b, p)
+        got = E.count(C)
+        assert got.method == "sea" and got.n == n and E.check_count(C, got), name
+        v = E.verify_order(C, n)                # the order certified another way
+        assert v is not None and E.check_count(C, v), name
+
+
+@pytest.mark.slow
+def test_sea_counts_p256_to_its_published_order():
+    E = _ec()
+    p, b, n = _P256
+    C = E.Curve(p - 3, b, p)
+    got = E.count(C)
+    assert got.method == "sea" and got.n == n and E.check_count(C, got)
+
+
+def test_ec_count_uses_sea_from_2_64_to_its_limit():
+    import pq_verify.core as core
+    E = _ec()
+    rng = _random.Random(55)
+    C = _rand_curve(rng, _rand_prime(rng, 70))
+    got = E.count(C)
+    assert got.method == "sea" and E.check_count(C, got)
+    assert all(C.mul(got.n, C.random_point(rng)) is None for _ in range(3))
+    _, eng = _all_engines()
+    with _isolated_degraded():
+        r = core.audit_curve(eng, C.a, C.b, C.p)
+    rows = {t["name"]: t for t in r.tests}
+    assert rows["Point count"]["passed"] is True and "Schoof" in rows["Point count"]["detail"]
+    assert rows["Twist: #E + #E\u2032 = 2p + 2"]["passed"] is True
+    p384 = 2**384 - 2**128 - 2**96 + 2**32 - 1
+    assert E.count(E.Curve(p384 - 3, 5, p384)) is None   # past SEA_BITS: CANNOT VERIFY
+    # A certificate that leaves 2^128 candidates is refused at once, not searched.
+    S = _sea()
+    p256, b256, n256 = _P256
+    big = E.Curve(p256 - 3, b256, p256)
+    assert not E.check_count(big, E.Count(n256, "sea", {"p": p256, "residues": [], "parity": 1,
+                                                        "curve": "E", "point": (0, 0)}))

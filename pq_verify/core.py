@@ -31,7 +31,7 @@ Colab:
 Author: Nicholas Maino (iamweare)
 License: MIT
 """
-import os, sys, ctypes, time, random, json, math, hashlib, struct
+import os, sys, ctypes, time, random, json, math, hashlib, struct, itertools
 import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
@@ -103,7 +103,7 @@ static inline void rcpy(uint64_t*d,const uint64_t*s,int nl){memcpy(d,s,sizeof(ui
 static inline void rswp(uint64_t*a,uint64_t*b,int nl){for(int l=0;l<nl;l++){uint64_t t=a[l];a[l]=b[l];b[l]=t;}}
 static inline int rzero(const uint64_t*r,int nl){for(int l=0;l<nl;l++)if(r[l])return 0;return 1;}
 static inline double dtus(struct timespec*a,struct timespec*b){return(b->tv_sec-a->tv_sec)*1e6+(b->tv_nsec-a->tv_nsec)/1e3;}
-void gf2_init(GF2System*s,int nv){memset(s,0,sizeof(GF2System));s->num_variables=nv;s->num_limbs=(nv+63)/64;}
+int gf2_init(GF2System*s,int nv){memset(s,0,sizeof(GF2System));if(nv<0||nv>GF2_MAX_VARS)return-1;s->num_variables=nv;s->num_limbs=(nv+63)/64;return 0;}
 int gf2_add_xor(GF2System*s,int*v,int nv,int p){if(s->num_equations>=GF2_MAX_EQS)return-1;int r=s->num_equations;memset(s->rows[r],0,sizeof(uint64_t)*GF2_ROW_LIMBS);for(int i=0;i<nv;i++){int var=v[i];if(var<0||var>=s->num_variables)return-2;s->rows[r][var/64]^=(1ULL<<(var%64));}s->parity[r]=p&1;s->num_equations++;return 0;}
 static void solve_direct(GF2System*sys,GF2Result*res){int n=sys->num_variables,m=sys->num_equations,nl=sys->num_limbs;int pr[GF2_MAX_VARS];memset(pr,-1,sizeof(int)*n);int cur=0,piv=0;for(int col=0;col<n&&cur<m;col++){int lb=col/64;uint64_t bt=1ULL<<(col%64);int p=-1;for(int r=cur;r<m;r++)if(sys->rows[r][lb]&bt){p=r;break;}if(p==-1)continue;if(p!=cur){rswp(sys->rows[cur],sys->rows[p],nl);int t=sys->parity[cur];sys->parity[cur]=sys->parity[p];sys->parity[p]=t;}pr[col]=cur;piv++;for(int r=0;r<m;r++){if(r==cur)continue;if(sys->rows[r][lb]&bt){rxor(sys->rows[r],sys->rows[cur],nl);sys->parity[r]^=sys->parity[cur];}}cur++;}res->satisfiable=1;for(int r=0;r<m;r++)if(rzero(sys->rows[r],nl)&&sys->parity[r]){res->satisfiable=0;break;}if(res->satisfiable){memset(res->assignment,0,sizeof(int)*n);for(int c=n-1;c>=0;c--){if(pr[c]==-1)continue;int r=pr[c],val=sys->parity[r];for(int c2=c+1;c2<n;c2++)if(sys->rows[r][c2/64]&(1ULL<<(c2%64)))val^=res->assignment[c2];res->assignment[c]=val&1;}}res->num_pivots=piv;res->num_free_vars=n-piv;memcpy(res->pivot_row,pr,sizeof(int)*n);res->used_m4ri=0;}
 static void solve_m4ri(GF2System*sys,GF2Result*res){int n=sys->num_variables,m=sys->num_equations,nl=sys->num_limbs,k=M4RI_K;int pr[GF2_MAX_VARS];memset(pr,-1,sizeof(int)*n);uint64_t T[64][GF2_ROW_LIMBS];int Tp[64];int cur=0,pivs=0,mblk=0;for(int ci=0;ci<n;ci+=k){int bk=(ci+k<=n)?k:(n-ci),bp=0;int bpr[8],bpc[8];for(int j=0;j<bk&&cur<m;j++){int col=ci+j,lb=col/64;uint64_t bt=1ULL<<(col%64);int p=-1;for(int r=cur;r<m;r++)if(sys->rows[r][lb]&bt){p=r;break;}if(p==-1)continue;if(p!=cur){rswp(sys->rows[cur],sys->rows[p],nl);int t=sys->parity[cur];sys->parity[cur]=sys->parity[p];sys->parity[p]=t;}for(int r=cur+1;r<m;r++)if(sys->rows[r][lb]&bt){rxor(sys->rows[r],sys->rows[cur],nl);sys->parity[r]^=sys->parity[cur];}pr[col]=cur;bpc[bp]=col;bpr[bp]=cur;bp++;pivs++;cur++;}if(bp==0)continue;for(int p=bp-1;p>=1;p--){int col=bpc[p],lb=col/64;uint64_t bt=1ULL<<(col%64);for(int p2=0;p2<p;p2++)if(sys->rows[bpr[p2]][lb]&bt){rxor(sys->rows[bpr[p2]],sys->rows[bpr[p]],nl);sys->parity[bpr[p2]]^=sys->parity[bpr[p]];}}mblk++;memset(T[0],0,sizeof(uint64_t)*GF2_ROW_LIMBS);Tp[0]=0;for(int mask=1;mask<(1<<bp);mask++){int hi=0;for(int b=bp-1;b>=0;b--)if(mask&(1<<b)){hi=b;break;}int prev=mask^(1<<hi);rcpy(T[mask],T[prev],nl);rxor(T[mask],sys->rows[bpr[hi]],nl);Tp[mask]=Tp[prev]^sys->parity[bpr[hi]];}int bs=bpr[0];for(int r=0;r<bs;r++){int idx=0;for(int p=0;p<bp;p++){int c=bpc[p];if(sys->rows[r][c/64]&(1ULL<<(c%64)))idx|=(1<<p);}if(idx==0)continue;rxor(sys->rows[r],T[idx],nl);sys->parity[r]^=Tp[idx];}}res->satisfiable=1;for(int r=0;r<m;r++)if(rzero(sys->rows[r],nl)&&sys->parity[r]){res->satisfiable=0;break;}if(res->satisfiable){memset(res->assignment,0,sizeof(int)*n);for(int c=n-1;c>=0;c--){if(pr[c]==-1)continue;int r=pr[c],val=sys->parity[r];for(int c2=c+1;c2<n;c2++)if(sys->rows[r][c2/64]&(1ULL<<(c2%64)))val^=res->assignment[c2];res->assignment[c]=val&1;}}res->num_pivots=pivs;res->num_free_vars=n-pivs;memcpy(res->pivot_row,pr,sizeof(int)*n);res->used_m4ri=1;res->m4ri_blocks=mblk;}
@@ -162,7 +162,7 @@ typedef struct {
     int num_pivots, num_free_vars;
     int pivot_columns[ZQ_MAX_VARS];
     double solve_time_us;
-    int used_markowitz;
+    int used_colcount_order;
 } ZqResult;
 static inline uint16_t zq_sub(uint16_t a,uint16_t b,uint16_t q){return(uint16_t)(a>=b?a-b:q-b+a);}
 static inline uint16_t zq_mul(uint16_t a,uint16_t b,uint16_t q){return(uint16_t)(((uint32_t)a*(uint32_t)b)%q);}
@@ -181,9 +181,9 @@ t>>=16;return t>=q?t-q:t;}
 static inline uint16_t _mmul(uint16_t a,uint16_t b,uint16_t q){return _mred((uint32_t)a*(uint32_t)b,q);}
 static inline uint16_t _mto(uint16_t a,uint16_t q){return _mred((uint32_t)a*_mq_r2,q);}
 static inline uint16_t _mfr(uint16_t a,uint16_t q){return _mred(a,q);}
-void zq_init(ZqSystem*s,int nv,uint16_t q){memset(s,0,sizeof(ZqSystem));s->num_variables=nv;s->q=(q==0)?3329:q;}
+int zq_init(ZqSystem*s,int nv,uint16_t q){memset(s,0,sizeof(ZqSystem));s->q=(q==0)?3329:q;if(nv<0||nv>ZQ_MAX_VARS)return-1;s->num_variables=nv;return 0;}
 int zq_add_equation(ZqSystem*s,const uint16_t*c,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;int i=s->num_equations;for(int j=0;j<s->num_variables;j++)s->coefficients[i][j]=c[j]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
-int zq_add_sparse(ZqSystem*s,const int*vi,const uint16_t*vc,int nt,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint16_t)*s->num_variables);for(int t=0;t<nt;t++){int v=vi[t];if(v>=0&&v<s->num_variables)s->coefficients[i][v]=vc[t]%s->q;}s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
+int zq_add_sparse(ZqSystem*s,const int*vi,const uint16_t*vc,int nt,uint16_t rhs){if(s->num_equations>=ZQ_MAX_EQUATIONS)return-1;for(int t=0;t<nt;t++)if(vi[t]<0||vi[t]>=s->num_variables)return-2;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint16_t)*s->num_variables);for(int t=0;t<nt;t++)s->coefficients[i][vi[t]]=vc[t]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
 int zq_add_ntt_butterfly(ZqSystem*s,int vie,int vio,int voe,int voo,uint16_t w){uint16_t q=s->q;int v[4];uint16_t c[4];v[0]=voe;c[0]=1;v[1]=vie;c[1]=zq_neg(1,q);v[2]=vio;c[2]=zq_neg(w,q);if(zq_add_sparse(s,v,c,3,0)<0)return-1;v[0]=voo;c[0]=1;v[1]=vie;c[1]=zq_neg(1,q);v[2]=vio;c[2]=w;if(zq_add_sparse(s,v,c,3,0)<0)return-1;return 0;}
 void zq_solve(ZqSystem*sys,ZqResult*r){
 struct timespec t0,t1;clock_gettime(CLOCK_MONOTONIC,&t0);
@@ -194,7 +194,8 @@ static uint16_t rhs[ZQ_MAX_EQUATIONS];
 /* Convert to Montgomery domain */
 for(int i=0;i<m;i++){for(int j=0;j<n;j++)mat[i][j]=_mto(sys->coefficients[i][j],q);
 rhs[i]=_mto(sys->rhs[i],q);}
-/* Markowitz: column NNZ counts, sort ascending (zeros last) */
+/* Column order: ascending nonzero count, counted once before elimination
+   (empty columns last). A static order, not Markowitz pivoting. */
 int cnnz[ZQ_MAX_VARS],cord[ZQ_MAX_VARS];
 memset(cnnz,0,sizeof(int)*n);
 for(int i=0;i<m;i++)for(int j=0;j<n;j++)if(mat[i][j])cnnz[j]++;
@@ -202,7 +203,7 @@ for(int i=0;i<n;i++)cord[i]=i;
 for(int i=1;i<n;i++){int tmp=cord[i],tv=cnnz[tmp]?cnnz[tmp]:ZQ_MAX_EQUATIONS+1;
 int j=i-1;while(j>=0){int cv=cnnz[cord[j]]?cnnz[cord[j]]:ZQ_MAX_EQUATIONS+1;
 if(cv<=tv)break;cord[j+1]=cord[j];j--;}cord[j+1]=tmp;}
-/* Gaussian elimination: Markowitz order, Montgomery mul, zero-skip */
+/* Gaussian elimination in that column order, Montgomery mul, zero-skip */
 int pr=0,rank=0,pc[ZQ_MAX_VARS];memset(pc,-1,sizeof(int)*n);
 for(int ci=0;ci<n&&pr<m;ci++){
 int col=cord[ci];if(cnnz[col]==0)break;/* early term: remaining cols empty */
@@ -226,7 +227,7 @@ pc[rank]=col;r->pivot_columns[rank]=col;pr++;rank++;}
 /* SAT check (0 in Montgomery ↔ 0 in regular domain) */
 r->satisfiable=1;
 for(int row=pr;row<m;row++){if(rhs[row]!=0){r->satisfiable=0;break;}}
-r->num_pivots=rank;r->num_free_vars=n-rank;r->used_markowitz=1;
+r->num_pivots=rank;r->num_free_vars=n-rank;r->used_colcount_order=1;
 /* Back-substitute: RREF means pivot cols are unit vectors → assignment = from_mont(rhs) */
 if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_mfr(rhs[i],q);}
@@ -325,7 +326,7 @@ typedef struct {
 typedef struct {
     int satisfiable;uint32_t assignment[ZQ32_MAX_VARS];
     int num_pivots;int num_free_vars;int pivot_columns[ZQ32_MAX_VARS];double solve_time_us;
-    int used_markowitz;
+    int used_colcount_order;
 } Zq32Result;
 static inline uint32_t zq32_sub(uint32_t a,uint32_t b,uint32_t q){return a>=b?a-b:q-b+a;}
 static inline uint32_t zq32_mul(uint32_t a,uint32_t b,uint32_t q){return(uint32_t)(((uint64_t)a*(uint64_t)b)%q);}
@@ -344,9 +345,9 @@ t>>=32;return(uint32_t)(t>=q?t-q:t);}
 static inline uint32_t _m32mul(uint32_t a,uint32_t b,uint32_t q){return _m32red((uint64_t)a*(uint64_t)b,q);}
 static inline uint32_t _m32to(uint32_t a,uint32_t q){return _m32red((uint64_t)a*_m32_r2,q);}
 static inline uint32_t _m32fr(uint32_t a,uint32_t q){return _m32red(a,q);}
-void zq32_init(Zq32System*s,int nv,uint32_t q){memset(s,0,sizeof(Zq32System));s->num_variables=nv;s->q=(q==0)?ZQ32_DEFAULT_Q:q;}
+int zq32_init(Zq32System*s,int nv,uint32_t q){memset(s,0,sizeof(Zq32System));s->q=(q==0)?ZQ32_DEFAULT_Q:q;if(nv<0||nv>ZQ32_MAX_VARS)return-1;s->num_variables=nv;return 0;}
 int zq32_add_equation(Zq32System*s,const uint32_t*c,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;int i=s->num_equations;for(int j=0;j<s->num_variables;j++)s->coefficients[i][j]=c[j]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
-int zq32_add_sparse(Zq32System*s,const int*vi,const uint32_t*vc,int nt,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint32_t)*s->num_variables);for(int t=0;t<nt;t++){int v=vi[t];if(v>=0&&v<s->num_variables)s->coefficients[i][v]=vc[t]%s->q;}s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
+int zq32_add_sparse(Zq32System*s,const int*vi,const uint32_t*vc,int nt,uint32_t rhs){if(s->num_equations>=ZQ32_MAX_EQUATIONS)return-1;for(int t=0;t<nt;t++)if(vi[t]<0||vi[t]>=s->num_variables)return-2;int i=s->num_equations;memset(s->coefficients[i],0,sizeof(uint32_t)*s->num_variables);for(int t=0;t<nt;t++)s->coefficients[i][vi[t]]=vc[t]%s->q;s->rhs[i]=rhs%s->q;s->num_equations++;return i;}
 int zq32_add_ntt_butterfly(Zq32System*s,int vie,int vio,int voe,int voo,uint32_t w){uint32_t q=s->q;int v[3];uint32_t c[3];v[0]=voe;c[0]=1;v[1]=vie;c[1]=zq32_neg(1,q);v[2]=vio;c[2]=zq32_neg(w,q);if(zq32_add_sparse(s,v,c,3,0)<0)return-1;v[0]=voo;c[0]=1;v[1]=vie;c[1]=zq32_neg(1,q);v[2]=vio;c[2]=w;if(zq32_add_sparse(s,v,c,3,0)<0)return-1;return 0;}
 void zq32_solve(Zq32System*sys,Zq32Result*r){
 struct timespec t0,t1;clock_gettime(CLOCK_MONOTONIC,&t0);
@@ -383,7 +384,7 @@ mat[row][col]=0;}
 pc[rank]=col;r->pivot_columns[rank]=col;pr++;rank++;}
 r->satisfiable=1;
 for(int row=pr;row<m;row++){if(rhs[row]!=0){r->satisfiable=0;break;}}
-r->num_pivots=rank;r->num_free_vars=n-rank;r->used_markowitz=1;
+r->num_pivots=rank;r->num_free_vars=n-rank;r->used_colcount_order=1;
 if(r->satisfiable){memset(r->assignment,0,sizeof(r->assignment));
 for(int i=0;i<rank;i++)r->assignment[pc[i]]=_m32fr(rhs[i],q);}
 clock_gettime(CLOCK_MONOTONIC,&t1);r->solve_time_us=(t1.tv_sec-t0.tv_sec)*1e6+(t1.tv_nsec-t0.tv_nsec)/1e3;}
@@ -473,22 +474,56 @@ static inline uint64_t mod_mul(uint64_t a,uint64_t b,uint64_t p){return(uint64_t
 static inline uint64_t mod_add(uint64_t a,uint64_t b,uint64_t p){uint64_t r=a+b;return(r>=p||r<a)?r-p:r;}
 static inline uint64_t mod_sub(uint64_t a,uint64_t b,uint64_t p){return a>=b?a-b:p-b+a;}
 static uint64_t mod_pow(uint64_t base,uint64_t exp,uint64_t p){uint64_t r=1;base%=p;while(exp>0){if(exp&1)r=mod_mul(r,base,p);base=mod_mul(base,base,p);exp>>=1;}return r;}
-static uint64_t isqrt(uint64_t n){if(n<2)return n;uint64_t x=(uint64_t)sqrt((double)n);while(x*x>n)x--;while((x+1)*(x+1)<=n)x++;return x;}
+/* floor(sqrt(n)) for every 64-bit n: the squares are compared in 128 bits. */
+static uint64_t isqrt(uint64_t n){if(n<2)return n;uint64_t x=(uint64_t)sqrtl((long double)n);if(x>0xFFFFFFFFull)x=0xFFFFFFFFull;while((unsigned __int128)x*x>n)x--;while((unsigned __int128)(x+1)*(x+1)<=n)x++;return x;}
 static inline int sigma(int64_t n){int r=((n%3)+3)%3;return r==0?0:(r==1?1:-1);}
 typedef struct{int64_t a;int64_t b;bool found;}Decomp;
+/* A square root of n mod the odd prime p (Tonelli-Shanks), or UINT64_MAX. */
+static uint64_t sqrt_mod(uint64_t n,uint64_t p){
+    n%=p;if(n==0)return 0;
+    if(mod_pow(n,(p-1)/2,p)!=1)return UINT64_MAX;
+    uint64_t q=p-1;int s=0;while(!(q&1)){q>>=1;s++;}
+    uint64_t z=2;while(mod_pow(z,(p-1)/2,p)!=p-1)z++;
+    int m=s;uint64_t c=mod_pow(z,q,p),t=mod_pow(n,q,p),r=mod_pow(n,(q+1)/2,p);
+    while(t!=1){int i=0;uint64_t t2=t;while(t2!=1){t2=mod_mul(t2,t2,p);i++;}
+        uint64_t b=c;for(int k=0;k<m-i-1;k++)b=mod_mul(b,b,p);
+        m=i;c=mod_mul(b,b,p);t=mod_mul(t,c,p);r=mod_mul(r,b,p);}
+    return r;
+}
+/* p = a^2 + 3 b^2 with a, b > 0 for a prime p = 1 mod 3, by Cornacchia's
+   algorithm: polylogarithmic, where the search it replaced took sqrt(p/3)
+   steps. */
 Decomp find_decomp(uint64_t p){
     if(p%3!=1)return(Decomp){0,0,false};
-    int64_t lim=(int64_t)sqrt((double)p/3)+1;
-    for(int64_t b=1;b<=lim;b++){uint64_t rem=p-3*b*b;uint64_t a=isqrt(rem);if(a>0&&a*a==rem)return(Decomp){(int64_t)a,b,true};}
-    return(Decomp){0,0,false};
+    uint64_t r=sqrt_mod(p-3,p);
+    if(r==UINT64_MAX)return(Decomp){0,0,false};
+    if(r<p-r)r=p-r;
+    uint64_t x=p,y=r,lim=isqrt(p);
+    while(y>lim){uint64_t t=x%y;x=y;y=t;}
+    uint64_t rest=p-y*y;
+    if(rest%3)return(Decomp){0,0,false};
+    uint64_t v=isqrt(rest/3);
+    if(v*v!=rest/3||v==0||y==0)return(Decomp){0,0,false};
+    return(Decomp){(int64_t)y,(int64_t)v,true};
 }
 int64_t compute_B(int64_t a,int64_t b){return 2*b*sigma(b)-(a-b)*sigma(a-b)-(a+b)*sigma(a+b);}
+/* Sol3 = #{x^3+y^3+z^3 = 0 in F_p^3}, computed in 128 bits: -1 when p
+   has no decomposition, -2 when Sol3 does not fit in 64 bits. */
 int64_t cubic_solution_count(uint64_t p){
-    if(p==3)return 9;if(p%3!=1)return(int64_t)(p*p);
-    Decomp d=find_decomp(p);if(!d.found)return-1;
-    int64_t B=compute_B(d.a,d.b);return(int64_t)(p*p)+((int64_t)p-1)*B;
+    if(p>((uint64_t)1<<62))return-2;
+    if(p==3)return 9;
+    __int128 sol;
+    if(p%3!=1)sol=(__int128)p*p;
+    else{Decomp d=find_decomp(p);if(!d.found)return-1;
+        sol=(__int128)p*p+(__int128)((int64_t)p-1)*compute_B(d.a,d.b);}
+    if(sol>(__int128)INT64_MAX)return-2;
+    return(int64_t)sol;
 }
+/* (x, y) on y^2 = x^3 + ax + b over F_p, with every value in [0, p): an
+   unreduced coordinate is not a field element, and an unreduced b made the
+   right-hand side wrong. */
 bool ecc_point_valid(uint64_t x,uint64_t y,uint64_t a,uint64_t b,uint64_t p){
+    if(p<2||x>=p||y>=p||a>=p||b>=p)return false;
     uint64_t lhs=mod_mul(y,y,p);uint64_t x3=mod_mul(mod_mul(x,x,p),x,p);
     uint64_t rhs=mod_add(mod_add(x3,mod_mul(a,x,p),p),b,p);return lhs==rhs;
 }
@@ -740,7 +775,7 @@ class ZqR(ctypes.Structure):
     _fields_ = [("satisfiable",ctypes.c_int),("assignment",ctypes.c_uint16*2048),
                 ("num_pivots",ctypes.c_int),("num_free_vars",ctypes.c_int),
                 ("pivot_columns",ctypes.c_int*2048),("solve_time_us",ctypes.c_double),
-                ("used_markowitz",ctypes.c_int)]
+                ("used_colcount_order",ctypes.c_int)]
 
 class Zq32S(ctypes.Structure):
     _fields_ = [("coefficients",(ctypes.c_uint32*256)*512),("rhs",ctypes.c_uint32*512),
@@ -749,7 +784,7 @@ class Zq32R(ctypes.Structure):
     _fields_ = [("satisfiable",ctypes.c_int),("assignment",ctypes.c_uint32*256),
                 ("num_pivots",ctypes.c_int),("num_free_vars",ctypes.c_int),
                 ("pivot_columns",ctypes.c_int*256),("solve_time_us",ctypes.c_double),
-                ("used_markowitz",ctypes.c_int)]
+                ("used_colcount_order",ctypes.c_int)]
 
 class Decomp(ctypes.Structure):
     _fields_ = [("a",ctypes.c_int64),("b",ctypes.c_int64),("found",ctypes.c_bool)]
@@ -769,6 +804,30 @@ class ConformityCheck(ctypes.Structure):
                 ("cv_residual",ctypes.c_double),("ah_residual",ctypes.c_double),
                 ("ac_residual",ctypes.c_double),("all_pass",ctypes.c_int)]
 
+class EngineInputError(RuntimeError):
+    """An engine refused its input: a variable outside the system, a system
+    larger than the engine holds, or one equation too many. The refused row
+    is not in the system, so a solve that went on would answer for a smaller
+    system than the caller built: a check that passes on equations it never
+    had. bind_all makes every init and add call raise this, where before
+    they returned a code that no caller read."""
+    def __init__(self, fn, rc):
+        super().__init__(f"{fn} refused its input (returned {rc})")
+        self.rc = rc
+
+
+def _engine_rc(result, func, args):
+    if result < 0:
+        raise EngineInputError(getattr(func, "__name__", "engine call"), result)
+    return result
+
+
+def _checked(*fns):
+    for fn in fns:
+        fn.restype = ctypes.c_int
+        fn.errcheck = _engine_rc
+
+
 def bind_all(engines):
     if engines.get('gf2'):
         g = engines['gf2']
@@ -781,6 +840,7 @@ def bind_all(engines):
         g.gf2_enumerate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
                                      ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int]
         g.gf2_enumerate.restype = ctypes.c_int
+        _checked(g.gf2_init, g.gf2_add_xor)
 
     if engines.get('zq'):
         z = engines['zq']
@@ -802,6 +862,7 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint16), ctypes.c_int,
             ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint32]
         z.zq_freivalds_ntt.restype = ctypes.c_int
+        _checked(z.zq_init, z.zq_add_equation, z.zq_add_sparse, z.zq_add_ntt_butterfly)
 
     if engines.get('zq32'):
         z32 = engines['zq32']
@@ -816,6 +877,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
             ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
         z32.zq32_freivalds_ntt.restype = ctypes.c_int
+        _checked(z32.zq32_init, z32.zq32_add_equation, z32.zq32_add_sparse,
+                 z32.zq32_add_ntt_butterfly)
 
     if engines.get('cubic'):
         c = engines['cubic']
@@ -861,10 +924,10 @@ class AuditResult:
         verified-and-failed -- applied to pq-verify's own suite, which had it
         for everyone else's code and not its own.
         """
+        deps = [dep] if isinstance(dep, str) else list(dep or ())
         self.tests.append({'name': name, 'passed': None, 'detail': reason,
-                           'time_us': 0, 'skipped': True, 'dep': dep})
-        if dep:
-            DEGRADED['deps'].append(dep)
+                           'time_us': 0, 'skipped': True, 'dep': ', '.join(deps) or None})
+        DEGRADED['deps'].extend(deps)
         DEGRADED['skipped_checks'].append(name)
     def add_finding(self, severity, description, evidence=""):
         self.findings.append({'severity': severity, 'description': description, 'evidence': evidence})
@@ -1039,7 +1102,7 @@ def audit_kyber(lib, n_bf=1000):
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
         t_total += res.solve_time_us
-        if res.satisfiable and (res.assignment[2] != exp_a or res.assignment[3] != exp_b):
+        if not res.satisfiable or res.assignment[2] != exp_a or res.assignment[3] != exp_b:
             mismatches += 1
     r.add_test(f'Kyber NTT butterfly ({n_bf})', mismatches == 0,
                f'{mismatches} mismatches, {t_total:.0f}\u03bcs total', t_total)
@@ -1067,40 +1130,115 @@ def audit_dilithium(lib, n_bf=100):
         lib.zq32_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq32_solve(ctypes.byref(s), ctypes.byref(res))
         t_total += res.solve_time_us
-        if res.satisfiable and (res.assignment[2] != exp_a or res.assignment[3] != exp_b):
+        if not res.satisfiable or res.assignment[2] != exp_a or res.assignment[3] != exp_b:
             mismatches += 1
     r.add_test(f'Dilithium NTT butterfly ({n_bf})', mismatches == 0,
                f'{mismatches} mismatches, {t_total:.0f}\u03bcs total', t_total)
     return r
 
+def _fermat_cubic_count(p):
+    """#{(x, y, z) in F_p^3 : x^3 + y^3 + z^3 = 0}, counted directly from how
+    many cube roots each value has: about (p/3)^2 steps. It is what
+    cubic_solution_count states as p^2 + (p-1) B(a, b), by a route that does
+    not use the decomposition."""
+    roots = {}
+    for x in range(p):
+        c = pow(x, 3, p)
+        roots[c] = roots.get(c, 0) + 1
+    return sum(nu * nv * roots.get((-u - v) % p, 0)
+               for u, nu in roots.items() for v, nv in roots.items())
+
+
+def _cubic_jacobi_sum(p):
+    """J(chi, chi) = sum over x in F_p of chi(x) chi(1 - x), chi a cubic
+    character (p = 1 mod 3), as (c, d) for c + d*omega, by the character sum
+    itself: about p steps. J is primary (c = 2, d = 0 mod 3), its norm
+    c^2 - cd + d^2 is p, and the Fermat cubic has p + 1 + 2 Re J projective
+    points (Ireland and Rosen, ch. 8), so B(a, b) = 2 Re J = 2c - d."""
+    from . import ec as EC
+    q = p - 1
+    g = next(g for g in range(2, p) if all(pow(g, q // f, p) != 1 for f in EC.factor(q)))
+    ind, x = [0] * p, 1
+    for k in range(q):
+        ind[x] = k
+        x = x * g % p
+    counts = [0, 0, 0]
+    for x in range(2, p):
+        counts[(ind[x] + ind[(1 - x) % p]) % 3] += 1
+    return counts[0] - counts[2], counts[1] - counts[2]
+
+
 def audit_cubic(lib, primes=None):
+    """The cubic engine (ECC.md): its count of x^3+y^3+z^3 = 0 against a
+    direct count and, through the Jacobi sum J(chi, chi), its B(a, b);
+    against complex multiplication for large primes; its point validation;
+    and its scalar multiplication against pq_verify.ec."""
+    from . import ec as EC
     r = AuditResult('Cubic B(a,b) + ECC')
     if primes is None:
         primes = [7, 13, 19, 37, 61, 97, 151, 199, 271, 331, 397, 463, 541, 601, 661, 751, 823, 907, 991, 1021, 1051]
     ok = 0
     for p in primes:
+        sol = lib.cubic_solution_count(p)
+        direct = _fermat_cubic_count(p)
+        if p % 3 != 1:
+            # No cubic structure: Sol3 = p^2.
+            ok += sol == p * p == direct
+            continue
         d = lib.find_decomp(p)
-        if d.found:
-            B = lib.compute_B(d.a, d.b)
-            sol = lib.cubic_solution_count(p)
-            expected = p*p + (p-1)*B
-            if sol == expected: ok += 1
-            else: r.add_finding('CRITICAL', f'B(a,b) mismatch at p={p}')
-        elif p % 3 != 1:
-            ok += 1  # Not decomposable, expected
-    r.add_test(f'Cubic B(a,b) ({len(primes)} primes)', ok == len(primes),
-               f'{ok}/{len(primes)} verified')
+        B = lib.compute_B(d.a, d.b) if d.found else None
+        c, e = _cubic_jacobi_sum(p)
+        jacobi = (c % 3 == 2 and e % 3 == 0 and c * c - c * e + e * e == p
+                  and B == 2 * c - e)
+        if d.found and d.a * d.a + 3 * d.b * d.b == p and \
+                sol == p * p + (p - 1) * B == direct and jacobi:
+            ok += 1
+        else:
+            r.add_finding('CRITICAL', f'B(a,b) mismatch at p={p}')
+    # Large primes, past a direct count, and past 64 bits for Sol3 ~ p^2,
+    # which the engine must refuse: its B(a, b) against complex
+    # multiplication on y^2 = x^3 - 432, whose count is p + 1 + B.
+    large = [1099511628401, 281474976710677, 72057594037928017,
+             2305843009213693951, 4611686018427388039]
+    big_ok = 0
+    for p in large:
+        E = EC.Curve(0, (-432) % p, p)
+        n = EC.count(E)
+        if n is None or not EC.check_count(E, n) or lib.cubic_solution_count(p) != -2:
+            continue
+        d = lib.find_decomp(p)
+        if p % 3 == 1:
+            big_ok += (d.found and d.a * d.a + 3 * d.b * d.b == p
+                       and lib.compute_B(d.a, d.b) == n.n - p - 1)
+        else:
+            big_ok += not d.found and n.n == p + 1
+    r.add_test(f'Cubic B(a,b) ({len(primes)} primes)',
+               ok == len(primes) and big_ok == len(large),
+               f'{ok}/{len(primes)} equal to a direct count of x\u00b3+y\u00b3+z\u00b3=0, '
+               f'with B = 2\u00b7Re J(\u03c7,\u03c7) from the character sum; at '
+               f'{big_ok}/{len(large)} primes of 41 to 63 bits, B = #E(y\u00b2=x\u00b3\u2212432) '
+               f'\u2212 p \u2212 1 by complex multiplication, and Sol\u2083, past 64 bits, refused')
 
-    # ECC point validation
-    ecc_ok = 0
-    for x, y, exp in [(5,1,True),(6,3,True),(10,6,True),(0,0,False)]:
-        v = bool(lib.ecc_point_valid(x, y, 2, 2, 17))
-        if v == exp: ecc_ok += 1
-    r.add_test('ECC point validation (y\u00b2=x\u00b3+2x+2 mod 17)', ecc_ok == 4, f'{ecc_ok}/4')
+    # ECC point validation, including values outside [0, p)
+    cases = [((5, 1, 2, 2, 17), True), ((6, 3, 2, 2, 17), True), ((10, 6, 2, 2, 17), True),
+             ((0, 0, 2, 2, 17), False), ((5 + 17, 1, 2, 2, 17), False),
+             ((5, 1 + 17, 2, 2, 17), False), ((5, 1, 2 + 17, 2, 17), False),
+             ((5, 1, 2, 2 + 17, 17), False)]
+    ecc_ok = sum(bool(lib.ecc_point_valid(*args)) == want for args, want in cases)
+    r.add_test('ECC point validation (y\u00b2=x\u00b3+2x+2 mod 17)', ecc_ok == len(cases),
+               f'{ecc_ok}/{len(cases)}, three with a value outside [0, p)')
 
-    # Scalar multiply
-    R = lib.ec_mul(ECPoint(5, 1, 0), 7, 2, 17)
-    r.add_test('ECC scalar multiply 7*G', not R.inf, f'({R.x},{R.y})')
+    # Scalar multiplication against pq_verify.ec: kG for k = 0..40 on a group
+    # of order 19.
+    E = EC.Curve(2, 2, 17)
+    G = (5, 1)
+    mul_ok = 0
+    for k in range(41):
+        R = lib.ec_mul(ECPoint(5, 1, 0), k, 2, 17)
+        want = E.mul(k, G)
+        mul_ok += (R.inf == 1 and want is None) or (not R.inf and (R.x, R.y) == want)
+    r.add_test('ECC scalar multiply 7*G', mul_ok == 41,
+               f'kG for k = 0..40 equal to pq_verify.ec in {mul_ok}/41, 19G = O')
     return r
 
 def audit_conformity(lib):
@@ -1185,7 +1323,13 @@ def audit_conformity(lib):
 # ================================================================
 
 def audit_curve(engines, a, b, p):
-    """Full curve audit per the integration plan."""
+    """A curve y^2 = x^3 + ax + b over F_p (ECC.md): nonsingular; its
+    j-invariant; its point count, and its twist's, each with a certificate
+    checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
+    its point validation; and the conformity gradient on its discriminant
+    family. Findings: singular, supersingular, anomalous and near-anomalous,
+    near-singular."""
+    from . import ec as EC
     r = AuditResult(f'Curve y\u00b2=x\u00b3+{a}x+{b} mod {p}')
     lib_c = engines.get('cubic')
     lib_cf = engines.get('conformity')
@@ -1198,125 +1342,115 @@ def audit_curve(engines, a, b, p):
     if not non_singular:
         r.add_finding('CRITICAL', 'Singular curve')
         return r
+    try:
+        E = EC.Curve(a % p, b % p, p)
+    except EC.ECError as e:
+        r.add_test('Prime field', False, str(e))
+        r.add_finding('CRITICAL', f'Not a curve over a prime field above 3: {e}')
+        return r
 
-    # j-invariant
-    j_inv = (-1728 * pow(4*a, 3, p) * pow(disc, p-2, p)) % p if p > 2 else 0
-    r.add_test('j-invariant', True, f'j={j_inv}')
-    # Supersingular (embedding degree <= 2, so MOV/Frey-Ruck applies). The
-    # j-invariant alone decides nothing: for p > 3, j = 0 is supersingular
-    # iff p = 2 mod 3 and j = 1728 iff p = 3 mod 4 (Deuring); any other j is
-    # decided below from the exact point count (trace = 0).
-    supersingular = p > 3 and ((j_inv == 0 and p % 3 == 2)
-                               or (j_inv == 1728 % p and p % 4 == 3))
-    count_trace = None
+    # j-invariant: it satisfies its definition j (4a^3 + 27b^2) = 6912 a^3,
+    # checked without the inverse that computes it; it is unchanged under
+    # (a, b) -> (u^4 a, u^6 b); and it is 0 or 1728 exactly when a or b is 0.
+    j_inv = E.j
+    defined = j_inv * (4 * E.a ** 3 + 27 * E.b ** 2) % p == 6912 * E.a ** 3 % p
+    iso = all(EC.Curve(pow(u, 4, p) * E.a % p, pow(u, 6, p) * E.b % p, p).j == j_inv
+              for u in (2, 3, 5) if u % p)
+    special = (j_inv == 0) == (E.a == 0) and (j_inv == 1728 % p) == (E.b == 0)
+    r.add_test('j-invariant', defined and iso and special,
+               f'j={j_inv}: j(4a\u00b3+27b\u00b2) = 6912a\u00b3, unchanged under '
+               f'isomorphism, 0 iff a = 0, 1728 iff b = 0'
+               + ('' if defined and iso and special else ' \u2014 NOT'))
+    # Supersingular (embedding degree <= 2, so MOV/Frey-Ruck applies). For
+    # p > 3, j = 0 is supersingular iff p = 2 mod 3 and j = 1728 iff
+    # p = 3 mod 4 (Deuring); any other j is decided by the count (trace 0).
+    supersingular = (j_inv == 0 and p % 3 == 2) or (j_inv == 1728 % p and p % 4 == 3)
 
-    # CUBIC (if p \u2261 1 mod 3)
-    if lib_c and p % 3 == 1:
-        d = lib_c.find_decomp(p)
-        if d.found:
-            B = lib_c.compute_B(d.a, d.b)
-            sol = lib_c.cubic_solution_count(p)
-            r.add_test('Cubic B(a,b)', True, f'B={B}, Sol\u2083={sol}')
-
-            if a % p == 0 and b % p != 0:  # j=0 family
-                a_dec, b_dec = d.a, d.b
-                possible_traces = {2*a_dec, -2*a_dec,
-                                   a_dec + 3*b_dec, -(a_dec + 3*b_dec),
-                                   a_dec - 3*b_dec, -(a_dec - 3*b_dec)}
-                if 1 in possible_traces or -1 in possible_traces:
-                    sample_count = 1
-                    for x in range(min(p, 200)):
-                        rhs = (pow(x, 3, p) + b) % p
-                        if rhs == 0:
-                            sample_count += 1
-                        elif pow(rhs, (p-1)//2, p) == 1:
-                            sample_count += 2
-                    if p <= 200:
-                        actual_count = sample_count
-                        actual_trace = p + 1 - actual_count
-                        if actual_trace == 1:
-                            r.add_finding('CRITICAL',
-                                f'Anomalous curve: #E=p={p}, t=1 (Smart attack vulnerable)')
-                            r.add_test('Anomalous-trace check', True,
-                                       f'#E={actual_count}, t=1 \u2014 ANOMALOUS')
-                        else:
-                            r.add_test('Anomalous-trace check', True,
-                                       f'#E={actual_count}, t={actual_trace} (safe twist)')
-                    else:
-                        r.add_test('Anomalous trace set', True,
-                                   f'possible t \u2208 {sorted(possible_traces)}, includes \u00b11 \u2014 verify twist')
-                        r.add_finding('MEDIUM',
-                            f'j=0 curve with p admitting anomalous twist (t=\u00b11 in trace set) \u2014 verify which twist')
-                else:
-                    r.add_test('Anomalous-trace check', True,
-                               f'possible t \u2208 {sorted(possible_traces)}, no t=\u00b11 \u2192 not anomalous')
-    elif p % 3 != 1:
-        r.add_test('Cubic analysis', True, f'p\u2261{p%3} mod 3, no cubic structure')
-
-    # ANOMALOUS-TRACE DETECTION (general curves, naive counting for small p)
-    if p < 10000:
-        n = 1  # point at infinity
-        for x in range(p):
-            rhs = (pow(x, 3, p) + a*x + b) % p
-            if rhs == 0:
-                n += 1
-            elif pow(rhs, (p-1)//2, p) == 1:
-                n += 2
-        trace = p + 1 - n
-        count_trace = trace
-        if trace == 1 or n == p:
+    # POINT COUNT, certified, and the twist's
+    how = {'naive': 'direct count', 'cm': 'complex multiplication',
+           'orders': 'point orders on E and its twist',
+           'sea': 'Schoof\u2013Elkies\u2013Atkin (SEA.md)'}
+    count = EC.count(E)
+    trace = None
+    if count is None:
+        why = (f'a general curve above 2^{EC.SEA_BITS}' if p.bit_length() > EC.SEA_BITS
+               else 'Schoof\u2013Elkies\u2013Atkin left more than one candidate')
+        r.add_skip('Point count', f'{why}: CANNOT VERIFY without a published order (SEA.md)')
+    else:
+        ok = EC.check_count(E, count)
+        trace = count.trace
+        r.add_test('Point count', ok,
+                   f'#E={count.n}, t={trace} by {how[count.method]}, certificate checked'
+                   if ok else f'#E={count.n}: its certificate is REJECTED')
+        if not ok:
+            r.add_finding('CRITICAL', f'pq-verify point count certificate rejected: #E={count.n}')
+        elif trace == 1:
             r.add_finding('CRITICAL',
-                f'Anomalous curve: #E={n}=p, trace=1 (Smart attack vulnerable)')
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t=1 \u2014 ANOMALOUS')
+                f'Anomalous curve: #E={count.n}=p, trace=1 (Smart attack vulnerable)')
         elif abs(trace) <= 2:
             r.add_finding('HIGH',
-                f'Near-anomalous curve: #E={n}, |t|={abs(trace)} (transfer attacks possible)')
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t={trace} \u2014 near-anomalous')
-        else:
-            r.add_test('Anomalous-trace check (general)', True,
-                       f'#E={n}, t={trace} \u2014 safe')
-    elif p < 10**14:
-        _n = _ec_count_bsgs(a % p, b % p, p)
-        if _n is None:
-            r.add_test('Anomalous-trace check (BSGS)', True,
-                       'curve singular \u2014 trace count not applicable')
-        else:
-            _t = p + 1 - _n
-            count_trace = _t
-            if _t == 1 or _n == p:
-                r.add_finding('CRITICAL',
-                    f'Anomalous curve: #E={_n}=p, trace=1 (Smart attack vulnerable)')
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t=1 \u2014 ANOMALOUS')
-            elif abs(_t) <= 2:
-                r.add_finding('HIGH',
-                    f'Near-anomalous curve: #E={_n}, |t|={abs(_t)} (transfer attacks possible)')
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t={_t} \u2014 near-anomalous')
-            else:
-                r.add_test('Anomalous-trace check (BSGS)', True,
-                           f'#E={_n}, t={_t} \u2014 safe (Mestre BSGS, exact)')
+                f'Near-anomalous curve: #E={count.n}, |t|={abs(trace)} (transfer attacks possible)')
+    twist = E.twist()
+    tcount = EC.count(twist)
+    if count is None or tcount is None:
+        r.add_skip('Twist: #E + #E\u2032 = 2p + 2', 'a count could not be made')
     else:
-        r.add_test('Anomalous-trace check', True,
-                   'p > 10\u00b9\u2074: SEA algorithm needed for crypto-size primes')
-
-    if supersingular or (p > 3 and count_trace == 0):
+        ok = EC.check_count(twist, tcount) and count.n + tcount.n == 2 * p + 2
+        r.add_test('Twist: #E + #E\u2032 = 2p + 2', ok,
+                   f'#E\u2032={tcount.n} by {how[tcount.method]}, certificate checked; '
+                   f'#E + #E\u2032 = {count.n + tcount.n}'
+                   + ('' if ok else f', not {2 * p + 2}'))
+    if supersingular or trace == 0:
         why = (f'p\u2261{p % 3} mod 3' if j_inv == 0 and supersingular else
                f'p\u2261{p % 4} mod 4' if supersingular else 'trace 0')
         r.add_finding('HIGH', f'Supersingular: j={j_inv}, {why} (MOV/Frey-R\u00fcck transfer)')
 
-    # ECC POINT VALIDATION
-    if lib_c:
-        for x in range(min(p, 1000)):
-            rhs = (pow(x, 3, p) + a * x + b) % p
-            if p % 4 == 3 and pow(rhs, (p-1)//2, p) == 1:
-                y = pow(rhs, (p+1)//4, p)
-                if (y*y) % p == rhs:
-                    valid = bool(lib_c.ecc_point_valid(x, y, a%p, b%p, p))
-                    r.add_test('ECC point on curve', valid, f'({x},{y})')
-                    break
+    # CUBIC: the engine's Sol3 = #{x^3+y^3+z^3 = 0} against 1 + (p-1) #E for
+    # y^2 = x^3 - 432, the curve the Fermat cubic is isomorphic to, counted
+    # with its certificate (complex multiplication: j = 0, at any size).
+    # Where Sol3 does not fit the engine's 64 bits, the engine must refuse
+    # it, and its B(a, b) is checked instead: #E = p + 1 + B.
+    if lib_c and p >= 2**64:
+        r.add_skip('Cubic B(a,b)', 'p is past the cubic engine\'s 64 bits')
+    elif lib_c:
+        fermat = EC.Curve(0, (-432) % p, p)
+        fc = EC.count(fermat)
+        if fc is None or not EC.check_count(fermat, fc):
+            r.add_test('Cubic B(a,b)', False, 'no certified count of y\u00b2=x\u00b3\u2212432')
+        else:
+            want = 1 + (p - 1) * fc.n
+            sol = lib_c.cubic_solution_count(p)
+            d = lib_c.find_decomp(p)
+            B = lib_c.compute_B(d.a, d.b) if d.found else 0
+            decomp = (d.found and d.a * d.a + 3 * d.b * d.b == p) if p % 3 == 1 else not d.found
+            shown = f'p={d.a}\u00b2+3\u00b7{d.b}\u00b2, ' if d.found else ''
+            if sol == -2:
+                refused = p > 2**62 or want > 2**63 - 1
+                ok = refused and decomp and B == fc.n - p - 1
+                r.add_test('Cubic B(a,b)', ok,
+                           f'{shown}B={B}; Sol\u2083={want} past 64 bits, '
+                           f'{"refused" if refused else "refused WRONGLY"}; '
+                           f'#E(y\u00b2=x\u00b3\u2212432) = {fc.n} = p+1+B'
+                           + ('' if ok else ' \u2014 NOT'))
+            else:
+                ok = decomp and sol == want
+                r.add_test('Cubic B(a,b)', ok,
+                           f'{shown}B={B}, Sol\u2083={sol}, '
+                           f'1+(p\u22121)\u00b7#E(y\u00b2=x\u00b3\u2212432) = {want}')
+
+    # ECC POINT VALIDATION: the engine on a point of E, a point off it, an
+    # unreduced coordinate and an unreduced coefficient.
+    if lib_c and p < 2**63:
+        P = E.random_point(random.Random(p))
+        off = (P[0], (P[1] + 1) % p)
+        cases = [((P[0], P[1], E.a, E.b, p), True),
+                 ((off[0], off[1], E.a, E.b, p), E.is_on(off)),
+                 ((P[0] + p, P[1], E.a, E.b, p), False),
+                 ((P[0], P[1], E.a, E.b + p, p), False)]
+        got = [bool(lib_c.ecc_point_valid(*args)) == want for args, want in cases]
+        r.add_test('ECC point validation', all(got),
+                   f'{sum(got)}/{len(got)}: a point of E, a point off it, an unreduced '
+                   f'x and an unreduced b')
 
     # CONFORMITY: stability via discriminant family
     if lib_cf and disc_raw != 0:
@@ -1339,41 +1473,14 @@ def audit_curve(engines, a, b, p):
         if len(points) == 3:
             res = lib_cf.conformity_compute(ctypes.byref(points[1]))
             stability = abs(disc_raw) / float(p)
-            r.add_test('Conformity D(t)', res.valid == 1, f'D={res.D:.6f}')
-            warn = ' \u2014 NEAR SINGULAR' if stability < 0.01 else ''
-            r.add_test('Stability margin', True, f'|\u0394|/p={stability:.4f}{warn}')
+            r.add_test('Conformity D(t)', res.valid == 1,
+                       f'D={res.D:.6f}; stability margin |\u0394|/p={stability:.4f}')
             if stability < 0.01:
                 r.add_finding('HIGH', f'Near singular fiber: margin={stability:.6f}')
             chk = lib_cf.conformity_verify(ctypes.byref(points[0]),
                     ctypes.byref(points[1]), ctypes.byref(points[2]), ctypes.c_double(dt))
             r.add_test('Conservation law on family', chk.cv_residual < 0.01,
                        f'residual={chk.cv_residual:.2e}')
-
-    # HASSE BOUND CHECK: |t| \u2264 2\u221ap (Hasse 1933)
-    n_pts = None
-    if p < 10000:
-        n_pts = 1
-        for x in range(p):
-            rhs = (pow(x, 3, p) + a*x + b) % p
-            if rhs == 0: n_pts += 1
-            elif pow(rhs, (p-1)//2, p) == 1: n_pts += 2
-    elif p < 10**14:
-        n_pts = _ec_count_bsgs(a % p, b % p, p)
-    if n_pts is not None:
-        trace = p + 1 - n_pts
-        # floor(2*sqrt(p)) is isqrt(4p). The old 2*isqrt(p) rounds before
-        # doubling and is one short for p = 7, 13, ... -- it called
-        # y^2 = x^3 + 3 over F_7 (t = 5) a violation.
-        hasse_bound = math.isqrt(4 * p)
-        hasse_ok = abs(trace) <= hasse_bound
-        # Hasse's theorem holds for every curve, so a violation is a defect in
-        # pq-verify's point count, never a property of the curve.
-        r.add_test('Hasse bound |t| \u2264 2\u221ap', hasse_ok,
-                   f't={trace}, bound=\u00b1{hasse_bound}, #E={n_pts}'
-                   + ('' if hasse_ok else ' \u2014 point count is wrong'))
-        if not hasse_ok:
-            r.add_finding('CRITICAL', f'pq-verify point count is wrong: |t|={abs(trace)} '
-                          f'> 2\u221ap={hasse_bound} is impossible (Hasse 1933)')
 
     return r
 
@@ -1747,13 +1854,13 @@ def audit_keygen(lib, n_inst=10000):
             lib.zq_add_equation(ctypes.byref(s), ca, rhs % Q)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
         total_us += res.solve_time_us
-        if res.satisfiable != 1:
-            pass
-        elif any(res.assignment[j] != sv[j][0] for j in range(k)):
+        # The system holds by construction (rhs = A.s), so an answer of
+        # unsatisfiable is a wrong answer, not one to skip.
+        if res.satisfiable != 1 or any(res.assignment[j] != sv[j][0] for j in range(k)):
             fails += 1
     elapsed = time.perf_counter() - t0
     r.add_test(f'{n_inst:,} keygen instances', fails == 0,
-               f'{fails} wrong solutions, {elapsed:.1f}s, {total_us:.0f}\u03bcs engine', total_us)
+               f'{fails} wrong or missing solutions, {elapsed:.1f}s, {total_us:.0f}\u03bcs engine', total_us)
     return r
 
 def audit_fips203_params():
@@ -1854,7 +1961,7 @@ def audit_twiddle_completeness(lib):
         lib.zq_add_sparse(ctypes.byref(s), vi, vc, 1, b_in)
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, z)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable and res.assignment[2] != exp_a: tw_fails += 1
+        if not res.satisfiable or res.assignment[2] != exp_a: tw_fails += 1
         z = (z * Z) % Q
     r.add_test('128 twiddle butterfly tests', tw_fails == 0, f'{tw_fails} failures')
     return r
@@ -1930,11 +2037,14 @@ def audit_unsat(lib):
     return r
 
 def audit_reproducibility_hash(lib):
-    """Deterministic SHA-256 hash over 1000 butterfly outputs."""
+    """SHA-256 over 1000 butterfly outputs of the engine, which must equal the
+    hash of the same butterflies computed in Python. Until 2.13.0 the hash
+    was reported and the check passed whatever it was."""
     r = AuditResult('Reproducibility Hash')
     random.seed(12345)
     Q = KYBER_Q
-    h = hashlib.sha256()
+    h = hashlib.sha256(); want = hashlib.sha256()
+    unsat = 0
     s = ZqS(); res = ZqR()
     for _ in range(1000):
         a_in = random.randint(0, Q-1)
@@ -1947,10 +2057,17 @@ def audit_reproducibility_hash(lib):
         lib.zq_add_sparse(ctypes.byref(s), vi, vc, 1, b_in)
         lib.zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, w)
         lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
+        unsat += not res.satisfiable
         h.update(res.assignment[2].to_bytes(2, 'big'))
         h.update(res.assignment[3].to_bytes(2, 'big'))
+        want.update(((a_in + w * b_in) % Q).to_bytes(2, 'big'))
+        want.update(((a_in - w * b_in) % Q).to_bytes(2, 'big'))
     digest = h.hexdigest()
-    r.add_test('Deterministic output hash', True, f'sha256={digest[:32]}...')
+    ok = unsat == 0 and digest == want.hexdigest()
+    r.add_test('Deterministic output hash', ok,
+               f'sha256={digest[:32]}..., ' + (
+                   'equal to the hash of the same butterflies in Python' if ok else
+                   f'differs from the Python butterflies ({unsat} unsatisfiable)'))
     return r
 
 # ================================================================
@@ -2004,7 +2121,8 @@ def audit_adversarial(engines):
     r.add_test(f'B3: Near-singular curves', c3 == t3, f'{c3}/{t3} HIGH+ flagged')
 
     c4 = 0; t4 = 0
-    for p in [17, 23, 29, 37, 41, 43, 53]:
+    primes4 = [17, 23, 29, 37, 41, 43, 53]
+    for p in primes4:
         for a in range(p):
             for b in range(p):
                 if (4*a**3 + 27*b**2) % p == 0: continue
@@ -2016,7 +2134,12 @@ def audit_adversarial(engines):
                     break
             else: continue
             break
-    r.add_test(f'B4: Anomalous-trace curves', c4 == t4, f'{c4}/{t4} CRITICAL flagged')
+    # Each of these primes has anomalous curves (trace 1 is inside the Hasse
+    # interval, and Deuring gives a curve for every trace there), so finding
+    # none is a failure, not a vacuous 0/0.
+    r.add_test(f'B4: Anomalous-trace curves', t4 == len(primes4) and c4 == t4,
+               f'{c4}/{t4} CRITICAL flagged; a curve found for {t4} of '
+               f'{len(primes4)} primes')
 
     if lib_zq:
         random.seed(1337)
@@ -2380,93 +2503,10 @@ def audit_freivalds_ntt(lib):
 
 
 # ================================================================
-# CFL FRONT-END + FIELD ROUTER
-# Paper 2 (DOI: 10.5281/zenodo.19302050)
-# CFL \u2192 AST \u2192 FOL \u2192 field router \u2192 engines \u2192 Coq
+# CFL FRONT-END (CFL.md; Paper 2, DOI: 10.5281/zenodo.19302050)
+# CFL text -> tokens -> AST -> checked properties -> FOL obligations
+#   -> QBF, decided by the DQBF stage -> field router -> engine checks
 # ================================================================
-
-class Token:
-    def __init__(s,t,v): s.typ=t; s.val=v
-
-def cfl_lex(text):
-    tokens=[]; kw={'CONTEXT','DEFINE','REQUIRE','property'}; i=0
-    while i<len(text):
-        if text[i:i+2]=='//':
-            while i<len(text) and text[i]!='\n': i+=1
-            continue
-        if text[i].isspace(): i+=1; continue
-        if text[i] in '{}();<>:':
-            tokens.append(Token({'(':'LP',')':'RP','{':'LB','}':'RB',';':'S','<':'LA','>':'RA',':':'C'}[text[i]],text[i])); i+=1; continue
-        if text[i]=='"':
-            j=text.index('"',i+1); tokens.append(Token('STR',text[i+1:j])); i=j+1; continue
-        if text[i].isalnum() or text[i]=='_':
-            j=i
-            while j<len(text) and (text[j].isalnum() or text[j]=='_'): j+=1
-            w=text[i:j]; tokens.append(Token('KW' if w in kw else 'ID',w)); i=j; continue
-        i+=1
-    return tokens
-
-def cfl_parse(tokens):
-    ast={'type':'PROG','ctx':[]}; i=0
-    while i<len(tokens):
-        if tokens[i].typ=='KW' and tokens[i].val=='CONTEXT':
-            i+=1
-            while i<len(tokens) and tokens[i].typ!='ID': i+=1
-            cn=tokens[i].val; i+=1; ctx={'name':cn,'defs':[],'reqs':[]}
-            while i<len(tokens) and not(tokens[i].typ=='RB' and tokens[i].val=='}'):
-                if tokens[i].typ=='KW' and tokens[i].val=='DEFINE':
-                    i+=1
-                    while i<len(tokens) and tokens[i].typ!='LA': i+=1
-                    i+=1; pn=tokens[i].val; i+=1; ps={}
-                    while i<len(tokens) and not(tokens[i].typ=='RB'):
-                        if tokens[i].typ=='ID':
-                            k=tokens[i].val; i+=2; ps[k]=tokens[i].val; i+=1
-                        else: i+=1
-                    ctx['defs'].append({'name':pn,'props':ps})
-                elif tokens[i].typ=='KW' and tokens[i].val=='REQUIRE':
-                    i+=1; ctx['reqs'].append(tokens[i].val)
-                i+=1
-            ast['ctx'].append(ctx)
-        i+=1
-    return ast
-
-def cfl_to_fol(ast):
-    fols=[]
-    for c in ast['ctx']:
-        for d in c['defs']:
-            f=d['props'].get('field','')
-            fols.append(f"forall c (InCtx(c,\"{c['name']}\") => exists p (HasProp(p,\"{d['name']}\") & Field(p,\"{f}\")))")
-    return fols
-
-def field_route(f):
-    if 'Z_3329' in f: return 'Zq'
-    if 'Z_8380417' in f: return 'Zq32'
-    if 'GF2' in f: return 'GF2'
-    if 'cubic' in f: return 'cubic'
-    if 'conformity' in f: return 'conformity'
-    if 'period' in f: return 'period'
-    return 'general'
-
-def fol_to_qbf(fols):
-    """FOL \u2192 QBF encoder. Paper 2 \u00a73.4: prenex normal form with field annotations."""
-    qbfs = []
-    for f in fols:
-        prefix_parts = []
-        body = f
-        while body.startswith('forall') or body.startswith('exists'):
-            q_type = '\u2200' if body.startswith('forall') else '\u2203'
-            space = body.index(' ', 0)
-            rest = body[space+1:]
-            paren = rest.index('(')
-            var = rest[:paren].strip()
-            prefix_parts.append(f'{q_type}{var}')
-            body = rest[paren+1:]
-            if body.endswith(')'): body = body[:-1]
-        prefix = ' '.join(prefix_parts) if prefix_parts else '\u2200x'
-        matrix = body.replace('=>', '\u2192').replace('&', '\u2227').replace('|', '\u2228')
-        qbfs.append({'prefix': prefix, 'matrix': matrix, 'fol': f,
-                     'field': field_route(f)})
-    return qbfs
 
 CFL_SPEC = '''
 CONTEXT ( Kyber ) {
@@ -2486,88 +2526,449 @@ CONTEXT ( Curves ) {
 }
 '''
 
+# An obligation's check takes the engines and returns (passed, detail), or
+# None when an engine it needs is missing. With corrupt=True it runs on an
+# instance made wrong on purpose, which it must reject.
+
+def _ob_mlkem_ntt(engines, corrupt=False):
+    lib = engines.get('zq')
+    if not lib:
+        return None
+    rng = random.Random(203)
+    f = [rng.randrange(KYBER_Q) for _ in range(256)]
+    zetas = _kyber_zeta_table()
+    cur, n_bf = f, 0
+    for layer in range(7):
+        nxt = _ntt_layer(cur, layer, zetas)
+        if corrupt and layer == 3:
+            nxt[17] = (nxt[17] + 1) % KYBER_Q
+        ok, nb, _ = _verify_ntt_layer(lib, cur, nxt, layer, zetas)
+        n_bf += nb
+        if not ok:
+            return False, f'layer {layer + 1} has no solution with its outputs'
+        cur = nxt
+    if cur != _reference_ntt(f):
+        return False, 'the layers do not compose to FIPS 203 Algorithm 9'
+    return True, (f'7 layers, {n_bf} butterflies on the Zq engine, composing to '
+                  f'FIPS 203 Algorithm 9')
+_ob_mlkem_ntt.corruption = 'an output of layer 4 off by one'
+
+
+def _ob_mlkem_keygen(engines, corrupt=False):
+    lib = engines.get('zq')
+    if not lib:
+        return None
+    rng = random.Random(2031)
+    Q, k, n = KYBER_Q, 3, 50
+    s, res = ZqS(), ZqR()
+    for trial in range(n):
+        while True:
+            A = [[rng.randrange(Q) for _ in range(k)] for _ in range(k)]
+            det = (A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+                   - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+                   + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0])) % Q
+            if det:
+                break
+        sec = [rng.randrange(Q) for _ in range(k)]
+        rhs = [sum(A[i][j] * sec[j] for j in range(k)) % Q for i in range(k)]
+        if corrupt and trial == n // 2:
+            rhs[0] = (rhs[0] + 1) % Q
+        lib.zq_init(ctypes.byref(s), k, Q)
+        for i in range(k):
+            lib.zq_add_equation(ctypes.byref(s), (ctypes.c_uint16 * k)(*A[i]), rhs[i])
+        lib.zq_solve(ctypes.byref(s), ctypes.byref(res))
+        if res.satisfiable != 1 or [res.assignment[j] for j in range(k)] != sec:
+            return False, f'instance {trial + 1}: the engine did not return the secret'
+    return True, f'{n} invertible systems A·s = t − e: the Zq engine returns each secret'
+_ob_mlkem_keygen.corruption = 'one right-hand side off by one'
+
+
+def _ob_mldsa_ntt(engines, corrupt=False):
+    lib = engines.get('zq32')
+    if not lib:
+        return None
+    rng = random.Random(204)
+    f = [rng.randrange(DILI_Q) for _ in range(256)]
+    zetas = _dilithium_zeta_table()
+    cur, n_bf = f, 0
+    for layer in range(8):
+        nxt = _ntt_layer_dili(cur, layer, zetas)
+        if corrupt and layer == 5:
+            nxt[200] = (nxt[200] + 1) % DILI_Q
+        ok, nb, _ = _verify_ntt_layer_dili(lib, cur, nxt, layer, zetas)
+        n_bf += nb
+        if not ok:
+            return False, f'layer {layer + 1} has no solution with its outputs'
+        cur = nxt
+    if cur != _reference_ntt_dili(f):
+        return False, 'the layers do not compose to FIPS 204 Algorithm 41'
+    return True, (f'8 layers, {n_bf} butterflies on the Zq32 engine, composing to '
+                  f'FIPS 204 Algorithm 41')
+_ob_mldsa_ntt.corruption = 'an output of layer 6 off by one'
+
+
+_AES_AFFINE = [[1, 0, 0, 0, 1, 1, 1, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 1, 1, 0, 0, 0, 1, 1],
+               [1, 1, 1, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 0, 0, 0], [0, 1, 1, 1, 1, 1, 0, 0],
+               [0, 0, 1, 1, 1, 1, 1, 0], [0, 0, 0, 1, 1, 1, 1, 1]]
+_AES_C = [1, 1, 0, 0, 0, 1, 1, 0]          # 0x63, least significant bit first
+# FIPS 197, Table 4 (the S-box), at six inputs.
+_AES_SBOX_AT = {0x00: 0x63, 0x01: 0x7c, 0x02: 0x77, 0x03: 0x7b, 0x53: 0xed, 0xff: 0x16}
+
+
+def _gf256_inv(a):
+    """a^-1 in GF(2^8) mod x^8+x^4+x^3+x+1, with 0 to 0 (FIPS 197 5.1.1)."""
+    def mul(x, y):
+        p = 0
+        while y:
+            if y & 1:
+                p ^= x
+            x <<= 1
+            if x & 0x100:
+                x ^= 0x11b
+            y >>= 1
+        return p
+    r, e = 1, 254
+    while e:
+        if e & 1:
+            r = mul(r, a)
+        a, e = mul(a, a), e >> 1
+    return r
+
+
+def _ob_aes_sbox(engines, corrupt=False):
+    lib = engines.get('gf2')
+    if not lib:
+        return None
+    M = [row[:] for row in _AES_AFFINE]
+    if corrupt:
+        M[2][5] ^= 1
+    s, res = GF2S(), GF2R()
+    sbox = []
+    for x in range(256):
+        y = _gf256_inv(x)
+        lib.gf2_init(ctypes.byref(s), 16)
+        for i in range(8):
+            lib.gf2_add_xor(ctypes.byref(s), (ctypes.c_int * 1)(i), 1, (y >> i) & 1)
+        for i in range(8):
+            vs = [8 + i] + [j for j in range(8) if M[i][j]]
+            lib.gf2_add_xor(ctypes.byref(s), (ctypes.c_int * len(vs))(*vs), len(vs), _AES_C[i])
+        lib.gf2_solve(ctypes.byref(s), ctypes.byref(res))
+        if not res.satisfiable:
+            return False, f'no solution at input {x:#04x}'
+        sbox.append(sum((res.assignment[8 + i] & 1) << i for i in range(8)))
+    for x, want in _AES_SBOX_AT.items():
+        if sbox[x] != want:
+            return False, f'S({x:#04x}) = {sbox[x]:#04x}; FIPS 197 has {want:#04x}'
+    if sorted(sbox) != list(range(256)):
+        return False, 'not a permutation'
+    if any(sbox[x] in (x, x ^ 0xff) for x in range(256)):
+        return False, 'a fixed or opposite fixed point'
+    return True, ('S(x) = A·x⁻¹ + c solved on the GF(2) engine for all 256 '
+                  'inputs: a permutation with no fixed or opposite fixed point, equal '
+                  'to FIPS 197 at 0x00-0x03, 0x53, 0xff')
+_ob_aes_sbox.corruption = 'one bit of the affine matrix flipped'
+
+
+def _ob_j0_count(engines, corrupt=False):
+    lib = engines.get('cubic')
+    if not lib:
+        return None
+    primes = [7, 13, 19, 31, 37, 43, 61, 67]
+    for p in primes:
+        got = lib.cubic_solution_count(p)
+        want = _fermat_cubic_count(p) + (1 if corrupt and p == 37 else 0)
+        if got != want:
+            return False, f'p = {p}: the engine counts {got}, a direct count {want}'
+    return True, (f'x³+y³+z³ = 0 over F_p for {len(primes)} primes p ≡ 1 '
+                  f'mod 3: the engine\'s p²+(p−1)·B(a,b) equals a direct count')
+_ob_j0_count.corruption = 'one expected count off by one'
+
+
+def _ob_conformity(engines, corrupt=False):
+    lib = engines.get('conformity')
+    if not lib:
+        return None
+    worst = 0.0
+    for t in (0.5, 1.0, 1.5, 2.0):
+        w = math.exp(-t * t / 2)
+        pd = PeriodData(w, -t * w, (t * t - 1) * w, (-t ** 3 + 3 * t) * w, t)
+        res = lib.conformity_compute(ctypes.byref(pd))
+        u_want, d_want = -t, -2.0 + 4 * t * t
+        if corrupt and t == 1.5:
+            d_want += 1e-6
+        err = max(abs(res.u - u_want), abs(res.D - d_want) / max(1.0, abs(d_want)))
+        worst = max(worst, err)
+        if not res.valid or err > 1e-9:
+            return False, f't = {t}: u = {res.u:.12g}, D = {res.D:.12g}; closed forms {u_want}, {d_want}'
+    return True, (f'ω = exp(−t²/2) at 4 points: u = −t and '
+                  f'D = 2u′ + 4u² to {worst:.1e}')
+_ob_conformity.corruption = 'one closed form off by 1e-6'
+
+
+#: (context, property) -> (field, check)
+CFL_OBLIGATIONS = {
+    ('Kyber', 'NTTCorrect'): ('Z_3329', _ob_mlkem_ntt),
+    ('Kyber', 'KeygenValid'): ('Z_3329', _ob_mlkem_keygen),
+    ('Dilithium', 'NTTCorrect'): ('Z_8380417', _ob_mldsa_ntt),
+    ('AES', 'SboxAffine'): ('GF2', _ob_aes_sbox),
+    ('Curves', 'J0Count'): ('cubic', _ob_j0_count),
+    ('Curves', 'Conformity'): ('conformity', _ob_conformity),
+}
+
+
+def cfl_dispatch(props, engines, registry):
+    """Each property's registered check, run on its engine, and run on a
+    corrupted instance: {key: (status, detail)}, status True (passed and
+    rejected the corruption), False, or None (no obligation is registered,
+    or an engine or library it needs is missing; a check's `requires`
+    attribute names the library)."""
+    out = {}
+    for p in props:
+        entry = registry.get((p.context, p.name))
+        if entry is None:
+            out[p.key] = (None, 'no obligation is registered for it')
+            continue
+        field, check = entry
+        if field != p.field:
+            out[p.key] = (False, f'declared in {p.field}; its obligation runs in {field}')
+            continue
+        got = check(engines)
+        if got is None:
+            needs = getattr(check, 'requires', None)
+            out[p.key] = (None, f'{needs} is not installed' if needs
+                          else 'an engine it needs is not built')
+            continue
+        ok, detail = got
+        if ok:
+            what = getattr(check, 'corruption', 'a corrupted instance')
+            bad = check(engines, corrupt=True)
+            if bad is None or bad[0]:
+                ok, detail = False, f'{detail}; but it passed with {what}'
+            else:
+                detail += f'; fails with {what}'
+        out[p.key] = (ok, detail)
+    return out
+
+
+_CFL_BAD_TEXT = {
+    'an unknown character': 'CONTEXT ( Kyber ) { DEFINE property <N> { type: "linear"; field: "Z_3329"; } @ }',
+    'an unterminated string': 'CONTEXT ( Kyber ) { DEFINE property <N> { type: "linear; } }',
+    'a backslash in a string': 'CONTEXT ( K ) { DEFINE property <N> { type: "a\\b"; } }',
+}
+_CFL_BAD_SYNTAX = {
+    'a missing semicolon': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear" field: "GF2"; } }',
+    'a missing closing brace': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; }',
+    'a DEFINE outside a context': 'DEFINE property <N> { type: "linear"; field: "GF2"; }',
+    'input that ends early': 'CONTEXT ( K',
+    'a keyword as a name': 'CONTEXT ( property ) { }',
+}
+_CFL_BAD_MEANING = {
+    'a context defined twice': 'CONTEXT ( K ) { } CONTEXT ( K ) { }',
+    'a property defined twice': ('CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; } '
+                                 'DEFINE property <N> { type: "linear"; field: "GF2"; } }'),
+    'an unknown field': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "Z_7"; } }',
+    'a type the field\'s engine does not decide': 'CONTEXT ( K ) { DEFINE property <N> { type: "cubic"; field: "GF2"; } }',
+    'an unknown attribute': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; level: "x"; } }',
+    'a missing field': 'CONTEXT ( K ) { DEFINE property <N> { type: "linear"; } }',
+    'REQUIRE naming an undefined property': 'CONTEXT ( K ) { REQUIRE Full { M } }',
+    'an unknown REQUIRE level': ('CONTEXT ( K ) { DEFINE property <N> { type: "linear"; field: "GF2"; } '
+                                 'REQUIRE Partial { } }'),
+}
+
+
+def _cfl_stages(r, spec, engines, registry, names, expected, routes, lib_gf2=None):
+    """The six CFL checks on spec (CFL.md): names maps each stage to its row
+    name; expected is the spec's shape; routes maps property keys to engines."""
+    from . import cfl as C
+    from . import dqbf as D
+
+    def row(name, run):
+        t0 = time.perf_counter()
+        try:
+            ok, detail = run()
+        except D.CertificateError as e:
+            r.add_test(name, False, f'CRITICAL: {e}')
+            r.add_finding('CRITICAL', f'CFL {name}: an answer failed its check', str(e))
+            return
+        except Exception as e:           # a defect in the check itself
+            ok, detail = False, f'error: {type(e).__name__}: {e}'
+        r.add_test(name, ok, detail, (time.perf_counter() - t0) * 1e6)
+
+    def rejects(texts, stage):
+        """The cases of texts that stage accepted."""
+        missed = []
+        for what, text in texts.items():
+            try:
+                stage(text)
+                missed.append(what)
+            except C.CFLError as e:
+                if not all(m.startswith('line ') for m in e.messages):
+                    missed.append(f'{what} (no position)')
+        return missed
+
+    def lexer():
+        toks = C.lex(spec)
+        missed = rejects(_CFL_BAD_TEXT, C.lex)
+        return not missed and toks[-1].kind == 'EOF', (
+            f'{len(toks) - 1} tokens; {len(_CFL_BAD_TEXT) - len(missed)}/{len(_CFL_BAD_TEXT)} '
+            f'malformed inputs rejected with a position'
+            + (f' — accepted: {", ".join(missed)}' if missed else ''))
+    row(names['lexer'], lexer)
+
+    def parser():
+        ast = C.parse(spec)
+        round_trip = C.parse(C.to_text(ast)).shape() == ast.shape()
+        # REQUIRE before DEFINE: the DEFINE after it must survive.
+        late = C.parse('CONTEXT ( K ) { REQUIRE Full { } '
+                       'DEFINE property <N> { type: "linear"; field: "GF2"; } }')
+        kept = [d.name for d in late.contexts[0].defines] == ['N']
+        missed = rejects(_CFL_BAD_SYNTAX, C.parse) + rejects(
+            _CFL_BAD_MEANING, lambda t: C.check(C.parse(t)))
+        n_bad = len(_CFL_BAD_SYNTAX) + len(_CFL_BAD_MEANING)
+        ok = ast.shape() == expected and round_trip and kept and not missed
+        n_props = sum(len(c.defines) for c in ast.contexts)
+        return ok, (f'{len(ast.contexts)} context(s), {n_props} properties'
+                    f'{", round trip" if round_trip else ", round trip FAILED"}; '
+                    f'a DEFINE after REQUIRE {"kept" if kept else "LOST"}; '
+                    f'{n_bad - len(missed)}/{n_bad} malformed specifications rejected'
+                    + (f' — accepted: {", ".join(missed)}' if missed else '')
+                    + ('' if ast.shape() == expected else ' — not the expected AST'))
+    row(names['parser'], parser)
+
+    props = C.check(C.parse(spec))
+    required = [p for p in props if p.required]
+
+    def fol():
+        import random as _r
+        rng = _r.Random(1)
+        obligations = [C.obligation(p) for p in required]
+        closed = all(not C.free_vars(f) for f in obligations)
+        # Prenex form against the original on random models; the second
+        # formula reuses a bound name, so it needs renaming apart.
+        x, y = C.var('x'), C.var('y')
+        tricky = ('or', ('forall', 'x', C.pred('P', x)),
+                  ('exists', 'x', ('and', C.pred('Q', x),
+                                   ('not', ('forall', 'y', C.pred('R', x, y))))))
+        disagree = 0
+        for f in obligations + [tricky]:
+            pre, m = C.prenex(f)
+            g = C.from_prenex(pre, m)
+            if not all(q in ('forall', 'exists') for q, _ in pre) or _quantified(m):
+                disagree += 1
+                continue
+            for _ in range(60):
+                n = rng.randint(1, 3)
+                dom = list(range(n))
+                consts = sorted({t[1] for a in _atoms(f) for t in a[2] if t[0] == 'const'})
+                rels = {}
+                for a in _atoms(f):
+                    arity = len(a[2])
+                    pool = [tuple(v) for v in itertools.product(dom + consts, repeat=arity)]
+                    rels[a[1]] = {t for t in pool if rng.random() < 0.5}
+                if C.evaluate(f, dom, rels) != C.evaluate(g, dom, rels):
+                    disagree += 1
+                    break
+        ok = closed and disagree == 0 and len(obligations) == len(required)
+        shown = C.show(C.from_prenex(*C.prenex(obligations[0]))) if obligations else ''
+        return ok, (f'{len(obligations)} closed obligations; prenex forms equal the '
+                    f'originals on random models ({disagree} disagree), e.g. {shown}')
+    row(names['fol'], fol)
+
+    t_dispatch = time.perf_counter()
+    dispatched = cfl_dispatch(props, engines, registry)
+    dispatch_us = (time.perf_counter() - t_dispatch) * 1e6
+    verified = {k for k, (ok, _) in dispatched.items() if ok}
+
+    def qbf():
+        dom, rels = C.model(props, verified)
+        agree, details = 0, []
+        for p in required:
+            truth, d = C.decide(C.obligation(p), dom, rels, lib_gf2)
+            agree += d.truth is truth and truth == (p.key in verified)
+            details.append(d)
+        # Made false: one property unverified, and one in the wrong field.
+        p0 = required[0]
+        dom2, rels2 = C.model(props, verified - {p0.key})
+        t_unv, d_unv = C.decide(C.obligation(p0), dom2, rels2, lib_gf2)
+        wrong = C.Property(p0.context, p0.name, p0.type,
+                           next(f for f in C.FIELDS if f != p0.field),
+                           None, True, p0.line, p0.col)
+        t_wrong, d_wrong = C.decide(C.obligation(wrong), dom, rels, lib_gf2)
+        falsified = (t_unv, d_unv.truth, t_wrong, d_wrong.truth) == (False,) * 4
+        ok = agree == len(required) and falsified
+        sizes = sorted({d.detail.split('expansion ')[-1] for d in details})
+        return ok, (f'{agree}/{len(required)} decided by the DQBF stage, certificates '
+                    f'checked, equal to the model; an unverified property and a wrong '
+                    f'field decided false{"" if falsified else " — NOT"}; '
+                    f'expansion {", ".join(sizes)}')
+    row(names['qbf'], qbf)
+
+    def router():
+        got = {p.key: C.route(p) for p in props}
+        # A name that contains another field's name routes by its field.
+        decoy = C.check(C.parse('CONTEXT ( GF2_cubic ) { DEFINE property <period_Z_8380417> '
+                                '{ type: "linear"; field: "Z_3329"; } }'))
+        by_field = C.route(decoy[0]) == 'Zq'
+        ok = got == routes and by_field
+        return ok, (f'routes: {sorted(set(got.values()))}; names containing other '
+                    f'fields route by their field{"" if by_field else " — NOT"}')
+    row(names['router'], router)
+
+    def dispatch():
+        missing = [p for p in props if dispatched[p.key][0] is None]
+        if missing:
+            # A skip names the library it waits on, when every check that
+            # could not run names one: a missing engine or obligation is not
+            # a dependency, and is left unnamed for the integrity report.
+            needs = [getattr(registry.get((p.context, p.name), (None, None))[1], 'requires', None)
+                     for p in missing]
+            deps = sorted(set(needs)) if all(needs) else None
+            return None, 'could not run: ' + '; '.join(
+                f'{p.key} ({dispatched[p.key][1]})' for p in missing), deps
+        failed = [k for k, (ok, _) in dispatched.items() if not ok]
+        return not failed, ('; '.join(f'{k}: {d}' for k, (_, d) in dispatched.items())), None
+    ok, detail, deps = dispatch()
+    if ok is None:
+        r.add_skip(names['dispatch'], detail, deps)
+    else:
+        r.add_test(names['dispatch'], ok, detail, dispatch_us)
+
+
+def _atoms(f):
+    if f[0] == 'pred':
+        return [f]
+    if f[0] in ('forall', 'exists'):
+        return _atoms(f[2])
+    return [a for g in f[1:] for a in _atoms(g)]
+
+
+def _quantified(f):
+    if f[0] in ('forall', 'exists'):
+        return True
+    if f[0] == 'pred':
+        return False
+    return any(_quantified(g) for g in f[1:])
+
+
 def audit_cfl_frontend(engines):
-    """CFL \u2192 AST \u2192 FOL \u2192 field router \u2192 engine dispatch \u2192 verify."""
+    """CFL -> AST -> FOL -> QBF -> field router -> engine dispatch (CFL.md)."""
     r = AuditResult('CFL Front-End')
-    t0 = time.perf_counter()
-
-    toks = cfl_lex(CFL_SPEC)
-    r.add_test('CFL lexer', len(toks) > 0, f'{len(toks)} tokens')
-
-    ast = cfl_parse(toks)
-    n_ctx = len(ast['ctx'])
-    r.add_test('CFL parser', n_ctx == 4, f'{n_ctx} contexts (Kyber, Dilithium, AES, Curves)')
-
-    fols = cfl_to_fol(ast)
-    r.add_test('FOL generation', len(fols) == 6, f'{len(fols)} FOL formulas')
-
-    qbfs = fol_to_qbf(fols)
-    qbf_ok = all(q['prefix'] and q['matrix'] and q['field'] for q in qbfs)
-    r.add_test('QBF encoder', qbf_ok and len(qbfs) == 6,
-               f'{len(qbfs)} QBF formulas, fields: {sorted(set(q["field"] for q in qbfs))}')
-
-    routes = [(f, field_route(f)) for f in fols]
-    route_map = {}
-    for f, rt in routes:
-        route_map.setdefault(rt, []).append(f)
-    expected_routes = {'Zq', 'Zq32', 'GF2', 'cubic', 'conformity'}
-    actual_routes = set(route_map.keys())
-    r.add_test('Field router', expected_routes == actual_routes,
-               f'routes: {sorted(actual_routes)}')
-
-    dispatch_ok = 0
-    dispatch_total = 0
-
-    if engines.get('gf2'):
-        dispatch_total += 1
-        s = GF2S(); res = GF2R()
-        engines['gf2'].gf2_init(ctypes.byref(s), 8)
-        vs = (ctypes.c_int*3)(0, 1, 2)
-        engines['gf2'].gf2_add_xor(ctypes.byref(s), vs, 3, 1)
-        engines['gf2'].gf2_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable: dispatch_ok += 1
-
-    if engines.get('zq'):
-        dispatch_total += 1
-        s = ZqS(); res = ZqR()
-        engines['zq'].zq_init(ctypes.byref(s), 4, KYBER_Q)
-        engines['zq'].zq_add_ntt_butterfly(ctypes.byref(s), 0, 1, 2, 3, KYBER_ZETA)
-        vi = (ctypes.c_int*1)(0); vc = (ctypes.c_uint16*1)(1)
-        engines['zq'].zq_add_sparse(ctypes.byref(s), vi, vc, 1, 100)
-        vi = (ctypes.c_int*1)(1); vc = (ctypes.c_uint16*1)(1)
-        engines['zq'].zq_add_sparse(ctypes.byref(s), vi, vc, 1, 200)
-        engines['zq'].zq_solve(ctypes.byref(s), ctypes.byref(res))
-        if res.satisfiable: dispatch_ok += 1
-
-    if engines.get('zq32'):
-        dispatch_total += 1
-        s32 = Zq32S(); r32 = Zq32R()
-        engines['zq32'].zq32_init(ctypes.byref(s32), 4, DILI_Q)
-        engines['zq32'].zq32_add_ntt_butterfly(ctypes.byref(s32), 0, 1, 2, 3, DILI_ZETA)
-        vi = (ctypes.c_int*1)(0); vc = (ctypes.c_uint32*1)(1)
-        engines['zq32'].zq32_add_sparse(ctypes.byref(s32), vi, vc, 1, 100)
-        vi = (ctypes.c_int*1)(1); vc = (ctypes.c_uint32*1)(1)
-        engines['zq32'].zq32_add_sparse(ctypes.byref(s32), vi, vc, 1, 200)
-        engines['zq32'].zq32_solve(ctypes.byref(s32), ctypes.byref(r32))
-        if r32.satisfiable: dispatch_ok += 1
-
-    if engines.get('cubic'):
-        dispatch_total += 1
-        d = engines['cubic'].find_decomp(13)
-        if d.found: dispatch_ok += 1
-
-    if engines.get('conformity'):
-        dispatch_total += 1
-        t_val = 1.0
-        w = math.exp(-t_val**2/2)
-        pd = PeriodData(w, -t_val*w, (t_val**2-1)*w, (-t_val**3+3*t_val)*w, t_val)
-        cr = engines['conformity'].conformity_compute(ctypes.byref(pd))
-        if cr.valid: dispatch_ok += 1
-
-    elapsed = time.perf_counter() - t0
-    r.add_test(f'Engine dispatch ({dispatch_total} engines)', dispatch_ok == dispatch_total,
-               f'{dispatch_ok}/{dispatch_total} dispatched and verified, {elapsed*1e6:.0f}\u03bcs total')
-
+    _cfl_stages(r, CFL_SPEC, engines, CFL_OBLIGATIONS,
+                names={'lexer': 'CFL lexer', 'parser': 'CFL parser',
+                       'fol': 'FOL generation', 'qbf': 'QBF encoder',
+                       'router': 'Field router',
+                       'dispatch': f'Engine dispatch ({len(CFL_OBLIGATIONS)} obligations)'},
+                expected=(('Kyber', (('DEFINE', 'NTTCorrect', (('type', 'linear'), ('field', 'Z_3329'))),
+                                     ('DEFINE', 'KeygenValid', (('type', 'linear'), ('field', 'Z_3329'))),
+                                     ('REQUIRE', 'Full', ()))),
+                          ('Dilithium', (('DEFINE', 'NTTCorrect', (('type', 'linear'), ('field', 'Z_8380417'))),)),
+                          ('AES', (('DEFINE', 'SboxAffine', (('type', 'linear'), ('field', 'GF2'))),)),
+                          ('Curves', (('DEFINE', 'J0Count', (('type', 'cubic'), ('field', 'cubic'))),
+                                      ('DEFINE', 'Conformity', (('type', 'dynamical'), ('field', 'conformity')))))),
+                routes={'Kyber.NTTCorrect': 'Zq', 'Kyber.KeygenValid': 'Zq',
+                        'Dilithium.NTTCorrect': 'Zq32', 'AES.SboxAffine': 'GF2',
+                        'Curves.J0Count': 'cubic', 'Curves.Conformity': 'conformity'},
+                lib_gf2=engines.get('gf2'))
     return r
 
 # ================================================================
@@ -2815,8 +3216,47 @@ def _ntt_layer_dili(f_in, layer_idx, zetas):
         start += 2 * length
     return f
 
+def _verify_ntt_layer_dili(lib, f_in, f_out, layer_idx, zetas):
+    """Verify one ML-DSA NTT layer with libzq32, every butterfly.
+
+    ML-KEM's layer check fixes all 256 inputs and outputs in one system of
+    512 variables; libzq32 holds 256. A layer's 128 butterflies are
+    independent, so they are checked 64 at a time: each group's inputs and
+    outputs are fixed to f_in and f_out and its butterflies added, and the
+    group is satisfiable exactly when its outputs are its butterflies of its
+    inputs."""
+    Q = DILI_Q
+    lengths = [128, 64, 32, 16, 8, 4, 2, 1]
+    length = lengths[layer_idx]
+    z_idx = sum(256 // (2 * lengths[l]) for l in range(layer_idx)) + 1
+    flies, start = [], 0
+    while start < 256:
+        z = zetas[z_idx]; z_idx += 1
+        flies += [(j, j + length, z) for j in range(start, start + length)]
+        start += 2 * length
+    s = Zq32S(); res = Zq32R()
+    sat, us = True, 0.0
+    for g in range(0, len(flies), 64):
+        group = flies[g:g + 64]
+        pos = [p for a, b, _ in group for p in (a, b)]
+        at = {p: i for i, p in enumerate(pos)}
+        n = len(pos)
+        lib.zq32_init(ctypes.byref(s), 2 * n, Q)
+        for p in pos:
+            for var, val in ((at[p], f_in[p]), (n + at[p], f_out[p])):
+                vi = (ctypes.c_int*1)(var); vc = (ctypes.c_uint32*1)(1)
+                lib.zq32_add_sparse(ctypes.byref(s), vi, vc, 1, val % Q)
+        for a, b, z in group:
+            lib.zq32_add_ntt_butterfly(ctypes.byref(s), at[a], at[b],
+                                       n + at[a], n + at[b], z)
+        lib.zq32_solve(ctypes.byref(s), ctypes.byref(res))
+        sat = sat and res.satisfiable == 1
+        us += res.solve_time_us
+    return sat, len(flies), us
+
 def audit_full_ntt_dilithium(lib):
-    """Complete Dilithium NTT \u2014 8 layers (FIPS 204 complete transform)."""
+    """Complete Dilithium NTT \u2014 8 layers, 1024 butterflies (FIPS 204's
+    complete transform), each through libzq32."""
     r = AuditResult('Dilithium Full NTT')
     Q = DILI_Q
     zetas = _dilithium_zeta_table()
@@ -2825,26 +3265,27 @@ def audit_full_ntt_dilithium(lib):
     f_input = [random.randint(0, Q-1) for _ in range(256)]
     f_ntt = _reference_ntt_dili(f_input)
 
+    # Every butterfly of every layer goes through libzq32, as ML-KEM's go
+    # through libzq. Through 2.13.0 this compared 27 butterflies of the
+    # Python layer with the same formula, and one went through the engine.
     f_layer = list(f_input)
-    total_bf = 0; all_pass = True
+    total_bf = 0; total_us = 0.0; all_pass = True
+    lengths = [128, 64, 32, 16, 8, 4, 2, 1]
     for layer in range(8):
         f_next = _ntt_layer_dili(f_layer, layer, zetas)
-        lengths = [128, 64, 32, 16, 8, 4, 2, 1]
-        length = lengths[layer]
-        z_idx = sum(256 // (2 * lengths[l]) for l in range(layer)) + 1
-        z = zetas[z_idx]
-        n_bf = min(4, length)
-        for j in range(n_bf):
-            exp_a = (f_layer[j] + z * f_layer[j+length]) % Q
-            exp_b = (f_layer[j] + (Q - z) * f_layer[j+length]) % Q
-            if f_next[j] != exp_a or f_next[j+length] != exp_b:
-                all_pass = False
+        sat, n_bf, us = _verify_ntt_layer_dili(lib, f_layer, f_next, layer, zetas)
         total_bf += n_bf
+        total_us += us
+        if not sat:
+            all_pass = False
+            r.add_test(f'Dilithium NTT layer {layer} (len={lengths[layer]})', False,
+                       f'{n_bf} butterflies \u2014 FAILED')
         f_layer = f_next
 
     ntt_match = (f_layer == f_ntt)
-    r.add_test(f'8-layer Dilithium NTT ({total_bf} sample butterflies)', all_pass,
-               'all layers verified')
+    r.add_test(f'8-layer Dilithium NTT ({total_bf} butterflies)', all_pass,
+               f"{'all layers SAT' if all_pass else 'a layer is UNSAT'}, "
+               f'{total_us:.0f}\u03bcs total')
     r.add_test('Dilithium NTT matches FIPS 204 reference', ntt_match,
                '256 coefficients, layer-by-layer == direct')
 
@@ -2858,7 +3299,8 @@ def audit_full_ntt_dilithium(lib):
     lib.zq32_add_ntt_butterfly(ctypes.byref(s32), 0, 1, 2, 3, z)
     lib.zq32_solve(ctypes.byref(s32), ctypes.byref(r32))
     exp_a = (a_in + z * b_in) % Q
-    engine_ok = r32.satisfiable and r32.assignment[2] == exp_a
+    engine_ok = (r32.satisfiable and r32.assignment[2] == exp_a
+                 and r32.assignment[3] == (a_in + (Q - z) * b_in) % Q)
     r.add_test('libzq32 engine butterfly verified', engine_ok,
                f'z={z}, {r32.solve_time_us:.1f}\u03bcs')
     return r
@@ -2952,7 +3394,11 @@ def audit_coq_daemon():
 # ================================================================
 
 def audit_c_cfl(engines):
-    """Benchmark C-compiled CFL pipeline vs Python CFL."""
+    """The CFL front end run 100 times: the same AST, properties and
+    obligations each time, and the AST printed back as CFL parses to itself.
+    A C build of the pipeline can be loaded by opt-in (PQV_CFL_SO) to time
+    against it; its answer is reported, not checked."""
+    from . import cfl as C
     r = AuditResult('C CFL Pipeline')
     # This benchmark used to load ./libgf2_cfl.so and /tmp/libgf2_cfl.so if they
     # happened to exist. Both are attacker-controllable -- the first by anyone
@@ -2978,16 +3424,23 @@ def audit_c_cfl(engines):
                 c_cfl = ctypes.CDLL(_cfl_so)
             except Exception as _e:
                 print(f"  {_BAD} PQV_CFL_SO failed to load: {_e}")
+    t0 = time.perf_counter()
+    first, same, trips = None, True, True
+    for _ in range(100):
+        ast = C.parse(CFL_SPEC)
+        props = C.check(ast)
+        text = C.to_text(ast)
+        trips = trips and C.parse(text).shape() == ast.shape()
+        out = (ast.shape(), tuple(repr(p) for p in props), text,
+               tuple(C.show(C.from_prenex(*C.prenex(C.obligation(p)))) for p in props))
+        first = first or out
+        same = same and out == first
+    elapsed = (time.perf_counter() - t0) / 100
+    r.add_test('Python CFL pipeline \u00d7100', same and trips,
+               f'{elapsed*1e6:.0f}\u03bcs/iter; the same AST, properties and obligations '
+               f'every time{"" if same else " — NOT"}; the printed AST parses to '
+               f'itself{"" if trips else " — NOT"}')
     if c_cfl is None:
-        t0 = time.perf_counter()
-        for _ in range(100):
-            toks = cfl_lex(CFL_SPEC)
-            ast = cfl_parse(toks)
-            fols = cfl_to_fol(ast)
-            qbfs = fol_to_qbf(fols)
-        elapsed = (time.perf_counter() - t0) / 100
-        r.add_test('Python CFL pipeline \u00d7100', True,
-                   f'{elapsed*1e6:.0f}\u03bcs/iter \u2014 C version (sub-100\u03bcs) needs libgf2_cfl.so')
         return r
     class PR(ctypes.Structure):
         _fields_ = [("satisfiable", ctypes.c_int), ("num_variables", ctypes.c_int),
@@ -3000,9 +3453,10 @@ def audit_c_cfl(engines):
         pr = PR()
         spec = b'CONTEXT(Kyber){DEFINE property<NTT>{type:"linear";field:"GF2";}}'
         c_cfl.cfl_verify_api(spec, ctypes.byref(pr))
-        r.add_test('C CFL pipeline', True,
-                   f'total={pr.total_us:.1f}\u03bcs (lex={pr.lex_us:.1f} parse={pr.parse_us:.1f} '
-                   f'solve={pr.solve_time_us:.1f})')
+        r.add_skip('C CFL pipeline',
+                   f'timed, not checked: an external library whose answer pq-verify '
+                   f'cannot verify; total={pr.total_us:.1f}\u03bcs (lex={pr.lex_us:.1f} '
+                   f'parse={pr.parse_us:.1f} solve={pr.solve_time_us:.1f})')
     except Exception as e:
         r.add_test('C CFL pipeline', False, f'API error: {e}')
     return r
@@ -3013,231 +3467,261 @@ def audit_c_cfl(engines):
 
 
 # ================================================================
-# ENGINE 7: CFL→DQBF→GF(2)→Null-Space Pipeline (Phase 4b)
-# XML CFL parser, DQBF quantifier-aware decomposition,
-# F₂ linearizer with Tseitin splitting, α_eff feedback.
+# ENGINE 7: the DQBF stage (Phase 4b), decided exactly (DQBF.md)
+# The module format parsed strictly; an XOR matrix decided by affine
+# Skolem functions on the GF(2) engine, one with clauses by universal
+# expansion and CDCL; every answer's certificate checked by a checker
+# that does not use the solver (pq_verify/dqbf.py).
 # ================================================================
 
-from itertools import combinations as _combinations
+# The Phase 4b module. It is false: c1 and c2 force x2 = k constant,
+# x1 = 1+k+u1 and x3 = k+u2 (x1 sees only u1 and x3 only u2), and then
+# c3 fails at u1=1, u2=0 for k=0 and at u1=0, u2=1 for k=1. Through
+# 2.13.0 the pipeline called it satisfiable (DQBF.md).
+_PHASE4B_MODULE = """
+<module name="ntt_verify">
+  <vars>
+    <forall vars="u1 u2" />
+    <exists vars="x1" deps="u1" />
+    <exists vars="x2" deps="u1 u2" />
+    <exists vars="x3" deps="u2" />
+  </vars>
+  <constraints>
+    <xor id="c1" parity="1">x1 x2 u1</xor>
+    <xor id="c2" parity="0">x2 x3 u2</xor>
+    <or id="c3">x1 x3</or>
+    <or id="c4">!x1 x2 !x3</or>
+  </constraints>
+</module>
+"""
 
-class _CModule:
-    """Parsed CFL module."""
-    def __init__(self, name):
-        self.name = name
-        self.foralls = []
-        self.existentials = []  # list of (name, deps_set)
-        self.xor_constraints = []  # (var_names, parity)
-        self.or_constraints = []   # list of (var_name, is_positive) lists
 
-class _CFLXMLParser:
-    """Single-pass XML CFL parser for <module> syntax."""
-    @staticmethod
-    def parse(text):
-        import re
-        m = re.search(r'<module\s+name="([^"]+)"', text)
-        mod = _CModule(m.group(1) if m else 'unnamed')
-        for fm in re.finditer(r'<forall\s+vars="([^"]+)"', text):
-            mod.foralls.extend(fm.group(1).split())
-        for em in re.finditer(r'<exists\s+vars="([^"]+)"\s+deps="([^"]*)"', text):
-            vs = em.group(1).split()
-            ds = set(em.group(2).split()) if em.group(2).strip() else set()
-            for v in vs:
-                mod.existentials.append((v, ds))
-        for xm in re.finditer(r'<xor[^>]*parity="(\d)"[^>]*>([^<]+)</xor>', text):
-            par = int(xm.group(1))
-            vs = xm.group(2).strip().split()
-            mod.xor_constraints.append((vs, par))
-        for om in re.finditer(r'<or[^>]*>([^<]+)</or>', text):
-            lits = []
-            for tok in om.group(1).strip().split():
-                if tok.startswith('!'):
-                    lits.append((tok[1:], False))
-                else:
-                    lits.append((tok, True))
-            mod.or_constraints.append(lits)
-        return mod
-
-class _DQBFFormula:
-    """Dependency QBF with explicit existential dependency sets."""
-    def __init__(self):
-        self.universals = set()
-        self.existentials = set()
-        self.dependencies = {}
-        self.clauses = []
-        self.xor_constraints = []
-        self.var_to_id = {}
-        self.id_to_var = {}
-    def add_var(self, name, qtype, deps=None):
-        if name not in self.var_to_id:
-            vid = len(self.var_to_id) + 1
-            self.var_to_id[name] = vid
-            self.id_to_var[vid] = name
-        if qtype == 'A': self.universals.add(name)
-        elif qtype == 'E':
-            self.existentials.add(name)
-            self.dependencies[name] = deps or set()
-    def add_xor(self, names, parity):
-        self.xor_constraints.append(([self.var_to_id[n] for n in names], parity))
-    def add_clause(self, lits):
-        c = []
-        for name, pos in lits:
-            vid = self.var_to_id[name]
-            c.append(vid if pos else -vid)
-        self.clauses.append(c)
-    @property
-    def num_vars(self): return len(self.var_to_id)
-    @property
-    def num_clauses(self): return len(self.clauses)
-
-class _F2Linearizer:
-    """Converts DQBF to GF(2) XOR equations via ANF + Tseitin."""
-    def __init__(self):
-        self.next_aux = 0
-    def linearize(self, formula):
-        self.next_aux = formula.num_vars
-        xor_eqs = list(formula.xor_constraints)
-        tags = {}
-        for name, vid in formula.var_to_id.items():
-            tags[vid] = 'A' if name in formula.universals else 'E'
-        for clause in formula.clauses:
-            xor_eqs.extend(self._clause_to_gf2(clause))
-        n_total = self.next_aux
-        for aux_id in range(formula.num_vars + 1, n_total + 1):
-            tags[aux_id] = 'aux'
-        return {'xor_equations': xor_eqs, 'num_original_vars': formula.num_vars,
-                'num_total_vars': n_total, 'quantifier_tags': tags}
-    def _clause_to_gf2(self, clause):
-        lits = [(abs(l), l < 0) for l in clause]
-        k = len(lits)
-        if k == 0: return []
-        if k == 1:
-            v, n = lits[0]
-            return [([v], 0 if n else 1)]
-        if k == 2:
-            (v1,n1),(v2,n2) = lits
-            aux = self._aux()
-            if not n1 and not n2: return [([v1,v2,aux], 1)]
-            elif n1 and not n2: return [([v1,aux], 0)]
-            elif not n1 and n2: return [([v2,aux], 0)]
-            else: return [([aux], 0)]
-        if k <= 3:
-            evars = [v for v,_ in lits]
-            auxs = [self._aux() for _ in range(4)]
-            nn = sum(1 for _,n in lits if n)
-            p = 1 if nn == 0 else (0 if nn % 2 == 1 else 1)
-            return [(evars + auxs, p)]
-        return self._split(lits)
-    def _split(self, lits):
-        if len(lits) <= 3: return self._clause_to_gf2([v if not n else -v for v,n in lits])
-        mid = len(lits)//2
-        aux = self._aux()
-        return (self._split(lits[:mid] + [(aux, False)]) +
-                self._split([(aux, True)] + lits[mid:]))
-    def _aux(self):
-        self.next_aux += 1
-        return self.next_aux
-
-def _module_to_dqbf(mod):
-    """Convert parsed CFL module to DQBF formula."""
-    f = _DQBFFormula()
-    for u in mod.foralls: f.add_var(u, 'A')
-    for name, deps in mod.existentials: f.add_var(name, 'E', deps)
-    for vs, p in mod.xor_constraints: f.add_xor(vs, p)
-    for lits in mod.or_constraints: f.add_clause(lits)
+def _dqbf_planted(seed=42, nu=200, nx=800, ncons=1500):
+    """A true XOR DQBF of nu + nx variables: x_i depends on u_(i mod nu),
+    and each constraint sums 2 to 4 existentials and exactly the
+    universals that make it hold under chosen affine Skolem functions."""
+    import random as _rng
+    from . import dqbf as D
+    rng = _rng.Random(seed)
+    f = D.DQBF()
+    us = [f'u{i}' for i in range(nu)]
+    f.forall(*us)
+    xs = [f'x{i}' for i in range(nx)]
+    for i, x in enumerate(xs):
+        f.exists(x, [us[i % nu]])
+    c = {x: rng.randint(0, 1) for x in xs}
+    a = {x: rng.randint(0, 1) for x in xs}
+    for _ in range(ncons):
+        E = rng.sample(xs, rng.randint(2, 4))
+        W = set()
+        for x in E:
+            if a[x]:
+                W ^= f.existentials[x]
+        f.xor(E + sorted(W), sum(c[x] for x in E) % 2)
     return f
 
+
 def audit_dqbf_pipeline(engines):
-    """Phase 4b: CFL→DQBF→GF(2)→null-space end-to-end test."""
+    """The DQBF stage (DQBF.md): the Phase 4b module parsed strictly and
+    decided exactly, every answer's certificate checked, and the checkers
+    shown to reject tampered certificates."""
+    import time as _time
+    from . import dqbf as D
     r = AuditResult('DQBF Pipeline (Phase 4b)')
     lib_gf2 = engines.get('gf2')
+
+    def row(name, run):
+        """run() -> (passed, detail). A rejected certificate is CRITICAL."""
+        t0 = _time.perf_counter()
+        try:
+            ok, detail = run()
+        except D.CertificateError as e:
+            r.add_test(name, False, f'CRITICAL: {e}')
+            r.add_finding('CRITICAL', f'DQBF {name}: an answer failed its '
+                          f'certificate check', str(e))
+            return
+        except Exception as e:           # a defect in the check itself
+            ok, detail = False, f'error: {type(e).__name__}: {e}'
+        r.add_test(name, ok, detail, (_time.perf_counter() - t0) * 1e6)
+
+    def module():
+        return D.parse_module(_PHASE4B_MODULE)
+
+    # 1. The strict parser: the module parses, and each malformed variant
+    # is an error, not a silent misreading.
+    def parser():
+        name, _ = module()
+        bad = {
+            'deps misspelled': _PHASE4B_MODULE.replace('deps="u1" />', 'dep="u1" />', 1),
+            'a dependency on an existential': _PHASE4B_MODULE.replace('deps="u2"', 'deps="x1"'),
+            'parity 2': _PHASE4B_MODULE.replace('parity="1"', 'parity="2"'),
+            'an undeclared variable': _PHASE4B_MODULE.replace('x1 x3</or>', 'x1 x9</or>'),
+            'an unknown element': _PHASE4B_MODULE.replace('</constraints>', '<and>x1 x2</and></constraints>'),
+            'an <exists> without deps': _PHASE4B_MODULE.replace(' deps="u2"', ''),
+        }
+        accepted = []
+        for what, text in bad.items():
+            if text == _PHASE4B_MODULE:
+                accepted.append(f'{what} (variant not built)')
+                continue
+            try:
+                D.parse_module(text)
+                accepted.append(what)
+            except D.DQBFError:
+                pass
+        ok = name == 'ntt_verify' and not accepted
+        return ok, (f'module {name} parsed; {len(bad) - len(accepted)}/{len(bad)} '
+                    f'malformed variants rejected'
+                    + (f' — accepted: {", ".join(accepted)}' if accepted else ''))
+    row('CFL XML parser', parser)
+
+    # 2. The formula is the module's.
+    def conversion():
+        _, f = module()
+        want_x = {'x1': {'u1'}, 'x2': {'u1', 'u2'}, 'x3': {'u2'}}
+        want_xor = [({'x1', 'x2', 'u1'}, 1), ({'x2', 'x3', 'u2'}, 0)]
+        want_cl = [(('x1', True), ('x3', True)), (('x1', False), ('x2', True), ('x3', False))]
+        ok = (f.universals == ['u1', 'u2']
+              and {x: set(d) for x, d in f.existentials.items()} == want_x
+              and [(set(n), p) for n, p in f.xors] == want_xor
+              and f.clauses == want_cl)
+        return ok, (f'{len(f.universals)} universals, {len(f.order)} existentials '
+                    f'with dependency sets, {len(f.xors)} XOR, {len(f.clauses)} clauses'
+                    + ('' if ok else ' — not the module'))
+    row('DQBF conversion', conversion)
+
+    # 3. Routing on the formula's structure.
+    def routing():
+        _, f = module()
+        xor_only = D.DQBF().forall('u').exists('x', ['u']).xor(['x', 'u'], 0)
+        big = D.DQBF()
+        big.forall(*[f'u{i}' for i in range(20)])
+        for i in range(20):
+            big.exists(f'x{i}', [f'u{i}'])
+        big.clause([(f'x{i}', True) for i in range(20)])
+        big.clause([(f'x{i}', False) for i in range(20)])
+        got = (D.route(f), D.route(xor_only), D.route(big))
+        d = D.decide(big)
+        ok = got == ('expansion', 'affine-skolem', 'cannot-verify') and d.truth is None
+        return ok, (f'module (clauses) → {got[0]}; XOR-only → {got[1]}; '
+                    f'clauses over 20 universals → {got[2]}, '
+                    f'{"CANNOT VERIFY" if d.truth is None else d.truth}')
+    row('Structural routing', routing)
+
+    # 4. The module decided, and the answer checked twice: its certificate,
+    # and an enumeration of every choice of Skolem functions.
+    def phase4b():
+        _, f = module()
+        d = D.decide(f, lib_gf2)
+        checked = d.truth is False and D.check_expansion_refutation(f, d.certificate)
+        brute = D.brute_force(f)
+        ok = checked and brute is False and d.method == 'expansion'
+        return ok, (f'{"FALSE" if d.truth is False else d.truth} by {d.method}: '
+                    f'{d.detail}; every Skolem choice enumerated: '
+                    f'{"none works" if brute is False else "one works"}')
+    row('Phase 4b module decided', phase4b)
+
+    # 5. False formulas refuted, one by each procedure.
+    def refuted():
+        a = D.DQBF().forall('u').exists('x', []).xor(['x', 'u'], 0)
+        b = D.DQBF().exists('x1').exists('x2')
+        for s1 in (True, False):
+            for s2 in (True, False):
+                b.clause([('x1', s1), ('x2', s2)])
+        da, db_ = D.decide(a, lib_gf2), D.decide(b, lib_gf2)
+        ok = (da.truth is False and da.method == 'affine-skolem'
+              and D.check_refutation(a, da.certificate)
+              and db_.truth is False and db_.method == 'expansion'
+              and D.check_expansion_refutation(b, db_.certificate)
+              and D.brute_force(a) is False and D.brute_force(b) is False)
+        return ok, (f'∀u ∃x(∅). x⊕u=0: {da.truth}, {da.detail}; '
+                    f'the four 2-clauses: {db_.truth}, {db_.detail}')
+    row('False formulas refuted', refuted)
+
+    # 6. The checkers reject tampered certificates, each made from a valid
+    # certificate known by hand; the procedures must find the valid ones.
+    def tampered():
+        right, total = 0, 0
+
+        def expect(accepted, want):
+            nonlocal right, total
+            total += 1
+            right += accepted == want
+        # Skolem tables: y = u1 AND u2 is the only Skolem function, so every
+        # flipped entry must be rejected.
+        g = D.DQBF().forall('u1', 'u2').exists('y', ['u1', 'u2'])
+        g.clause([('y', False), ('u1', True)]).clause([('y', False), ('u2', True)])
+        g.clause([('y', True), ('u1', False), ('u2', False)])
+        and_table = {'y': {(0, 0): 0, (0, 1): 0, (1, 0): 0, (1, 1): 1}}
+        dg = D.decide(g)
+        expect(dg.truth is True and dg.certificate == and_table, True)
+        expect(D.check_tables(g, and_table), True)
+        for tau in and_table['y']:
+            t = {'y': dict(and_table['y'])}
+            t['y'][tau] ^= 1
+            expect(D.check_tables(g, t), False)
+        # Functions that satisfy the constraint by reading a universal outside
+        # the dependency set: x = u for forall u exists x(). x+u = 0.
+        a = D.DQBF().forall('u').exists('x', []).xor(['x', 'u'], 0)
+        expect(D.check_affine(a, {'x': (0, frozenset({'u'}))}), False)
+        expect(D.check_tables(a, {'x': {(0,): 0, (1,): 1}}), False)
+        # Affine functions: x = 1+u1 and y = 1+u1+u2 are the only ones; a
+        # flipped constant must be rejected.
+        h = D.DQBF().forall('u1', 'u2').exists('x', ['u1']).exists('y', ['u1', 'u2'])
+        h.xor(['x', 'u1'], 1).xor(['x', 'y', 'u2'], 0)
+        affine = {'x': (1, frozenset({'u1'})), 'y': (1, frozenset({'u1', 'u2'}))}
+        dh = D.decide(h, lib_gf2)
+        expect(dh.truth is True and dh.certificate == affine, True)
+        expect(D.check_affine(h, affine), True)
+        expect(D.check_affine(h, dict(affine, x=(0, frozenset({'u1'})))), False)
+        # A refutation that needs all three of its equations: the
+        # coefficients of u in x1 = u, x1 = x2 and x2 = y, with y blind to u.
+        k = D.DQBF().forall('u').exists('x1', ['u']).exists('x2', ['u']).exists('y', [])
+        k.xor(['x1', 'u'], 0).xor(['x1', 'x2'], 0).xor(['x2', 'y'], 0)
+        unknowns, eqs = D.skolem_system(k)
+        rows3 = [i for i, (lhs, _) in enumerate(eqs)
+                 if lhs and all(unknowns[j][1] == 'u' for j in lhs)]
+        dk = D.decide(k, lib_gf2)
+        expect(dk.truth is False and D.check_refutation(k, dk.certificate), True)
+        expect(len(rows3) == 3 and D.check_refutation(k, rows3), True)
+        for i in range(3):
+            expect(D.check_refutation(k, rows3[:i] + rows3[i + 1:]), False)
+        # A RUP proof of the four 2-clauses, checked against each satisfiable
+        # three of them, and with its learned clauses removed.
+        b = D.DQBF().exists('x1').exists('x2')
+        for s1 in (True, False):
+            for s2 in (True, False):
+                b.clause([('x1', s1), ('x2', s2)])
+        nv, cnf, _ = D.expand(b)
+        db_ = D.decide(b)
+        expect(db_.truth is False and D.check_rup(nv, cnf, db_.certificate), True)
+        proof = [[1], []]                    # x1 by propagation, then the conflict
+        expect(D.check_rup(nv, cnf, proof), True)
+        for i in range(len(cnf)):
+            expect(D.check_rup(nv, cnf[:i] + cnf[i + 1:], proof), False)
+        expect(D.check_rup(nv, cnf, [[]]), False)
+        return right == total, (f'{right}/{total} as expected: valid certificates '
+                                f'found and accepted; flipped Skolem table entries, '
+                                f'functions reading a universal outside their '
+                                f'dependency set, a flipped affine constant, a '
+                                f'refutation with an equation dropped and a RUP proof '
+                                f'against satisfiable clauses rejected')
+    row('Tampered certificates rejected', tampered)
+
+    # 7. A 1000-variable XOR DQBF on the GF(2) engine.
     if not lib_gf2:
-        r.add_skip('DQBF pipeline', 'GF(2) engine not available (gcc?)')
+        r.add_skip('1000-var DQBF stress', 'GF(2) engine not available (gcc?)')
         return r
-    import time as _time
-    t0 = _time.perf_counter()
-    cfl_text = """
-    <module name="ntt_verify">
-      <vars>
-        <forall vars="u1 u2" />
-        <exists vars="x1" deps="u1" />
-        <exists vars="x2" deps="u1 u2" />
-        <exists vars="x3" deps="u2" />
-      </vars>
-      <constraints>
-        <xor id="c1" parity="1">x1 x2 u1</xor>
-        <xor id="c2" parity="0">x2 x3 u2</xor>
-        <or id="c3">x1 x3</or>
-        <or id="c4">!x1 x2 !x3</or>
-      </constraints>
-    </module>
-    """
-    mod = _CFLXMLParser.parse(cfl_text)
-    r.add_test('CFL XML parser', mod.name == 'ntt_verify',
-               f'module={mod.name}, {len(mod.foralls)}A + {len(mod.existentials)}E vars, '
-               f'{len(mod.xor_constraints)} XOR + {len(mod.or_constraints)} OR')
-    formula = _module_to_dqbf(mod)
-    r.add_test('DQBF conversion', formula.num_vars == 5 and len(formula.xor_constraints) == 2,
-               f'{formula.num_vars} vars, {len(formula.xor_constraints)} XOR, '
-               f'{formula.num_clauses} OR, deps={len(formula.dependencies)}')
-    lin = _F2Linearizer()
-    gf2 = lin.linearize(formula)
-    n = gf2['num_total_vars']
-    n_eqs = len(gf2['xor_equations'])
-    r.add_test('F2 linearizer', n > 0 and n_eqs > 0,
-               f'{n} vars ({gf2["num_original_vars"]} original + '
-               f'{n - gf2["num_original_vars"]} aux), {n_eqs} XOR eqs')
-    # Route check
-    num_xor = len(formula.xor_constraints)
-    xor_ratio = num_xor / max(formula.num_clauses + num_xor, 1)
-    route = 'LINEARIZE_GF2' if xor_ratio <= 0.8 else 'DIRECT_GF2'
-    r.add_test('Structural routing', True, f'xor_ratio={xor_ratio:.2f}, route={route}')
-    # Solve with pqverify GF(2) engine
-    s = GF2S(); res = GF2R()
-    lib_gf2.gf2_init(ctypes.byref(s), n)
-    for var_ids, parity in gf2['xor_equations']:
-        zi = [v - 1 for v in var_ids]
-        arr = (ctypes.c_int * len(zi))(*zi)
-        lib_gf2.gf2_add_xor(ctypes.byref(s), arr, len(zi), parity)
-    lib_gf2.gf2_solve(ctypes.byref(s), ctypes.byref(res))
-    sat = res.satisfiable
-    t_us = res.solve_time_us
-    nf = res.num_free_vars
-    # Compute rho and alpha_eff
-    tags = gf2['quantifier_tags']
-    rho = nf / n if n > 0 else 1.0
-    alpha_eff = 20.0 * (1 + rho)
-    total_us = (_time.perf_counter() - t0) * 1e6
-    r.add_test('GF(2) solve', sat == 1,
-               f'SAT={sat}, {t_us:.1f}us, free={nf}, rho={rho:.3f}, alpha_eff={alpha_eff:.2f}')
-    r.add_test(f'End-to-end pipeline', True,
-               f'{total_us:.0f}us total (parse+convert+linearize+solve)')
-    # 1000-var stress test
-    import random as _rng
-    _rng.seed(42)
-    stress_n = 1000
-    sf = _DQBFFormula()
-    for i in range(200): sf.add_var(f'u{i}', 'A')
-    for i in range(800): sf.add_var(f'x{i}', 'E', {f'u{i%200}'})
-    all_names = [f'u{i}' for i in range(200)] + [f'x{i}' for i in range(800)]
-    known_sol = {name: _rng.randint(0, 1) for name in all_names}
-    for _ in range(1500):
-        vs = _rng.sample(all_names, _rng.randint(2, 4))
-        par = 0
-        for v in vs: par ^= known_sol[v]
-        sf.add_xor(vs, par)
-    slin = _F2Linearizer()
-    sgf2 = slin.linearize(sf)
-    sn = sgf2['num_total_vars']
-    ss = GF2S(); sr = GF2R()
-    lib_gf2.gf2_init(ctypes.byref(ss), sn)
-    for var_ids, parity in sgf2['xor_equations']:
-        zi = [v-1 for v in var_ids]
-        arr = (ctypes.c_int * len(zi))(*zi)
-        lib_gf2.gf2_add_xor(ctypes.byref(ss), arr, len(zi), parity)
-    lib_gf2.gf2_solve(ctypes.byref(ss), ctypes.byref(sr))
-    r.add_test(f'1000-var DQBF stress', sr.satisfiable == 1,
-               f'{sn} vars, {len(sgf2["xor_equations"])} eqs, '
-               f'{sr.solve_time_us:.0f}us, free={sr.num_free_vars}')
+
+    def stress():
+        f = _dqbf_planted()
+        d = D.decide(f, lib_gf2)
+        ok = (d.truth is True and d.engine == 'libpqv_gf2'
+              and D.check_affine(f, d.certificate))
+        return ok, (f'{f.num_vars} variables ({len(f.universals)} universal), '
+                    f'{len(f.xors)} constraints: {d.truth} on {d.engine}, {d.detail}, '
+                    f'Skolem functions checked')
+    row('1000-var DQBF stress', stress)
     return r
 
 
@@ -3473,7 +3957,7 @@ def main(quick=False):
         print("  Running FULL Kyber NTT verification (7 layers, 896 butterflies)...")
         results.append(audit_full_ntt(engines['zq'])); gc.collect()
     if engines.get('zq32'):
-        print("  Running FULL Dilithium NTT verification (7 layers, 896 butterflies)...")
+        print("  Running FULL Dilithium NTT verification (8 layers, 1024 butterflies)...")
         results.append(audit_full_ntt_dilithium(engines['zq32'])); gc.collect()
 
     if engines.get('zq'):
@@ -3520,7 +4004,9 @@ def main(quick=False):
     print("  Generating batch Coq certificate...")
     coq_file = gen_coq_cert(results)
     cert_r = AuditResult('Coq Certificate')
-    cert_r.add_test('Coq certificate generation', True, coq_file)
+    cert_r.add_test('Coq certificate generation',
+                    bool(coq_file) and os.path.isfile(coq_file)
+                    and os.path.getsize(coq_file) > 0, coq_file)
     import subprocess
     try:
         ok, detail = coq_check(coq_file)
@@ -4190,29 +4676,16 @@ def audit_engine6_quintic(lib):
             n_f2 += 1
     r.add_test('f2(z) matches Paper 7 closed form', n_f2 == 5, f'{n_f2}/5')
     # Conjecture 7: lambda_2 = -884266719222068786621093750/97  (exact, via SymPy)
-    try:
+    ratios = _e6_residue_ratios()
+    if ratios is None:
+        r.add_skip('Conjecture 7: CY3 residue rigidity',
+                   'SymPy not available — pip install sympy', 'sympy')
+    else:
         import sympy as sp
-        z = sp.Symbol('z')
-        a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
-        a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
-        U = sp.Matrix([[0,1,0,0],[0,0,1,0],[0,0,0,1],[-a0,-a1,-a2,-a3]])
-        Q = sp.simplify(-(U.diff(z) + U@U))
-        cQ = sp.simplify(U@Q - Q@U)
-        cQ2 = cQ@cQ
-        f2s = sp.cancel(sp.together(cQ2.trace()))
-        f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
-        lam2 = -sp.Rational(884266719222068786621093750, 97)
-        ok_c7 = True
-        for pt in (sp.Integer(0), sp.Rational(1, 3125)):
-            ratio = sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
-            if ratio != lam2:
-                ok_c7 = False
+        ok_c7 = all(q == sp.Rational(*_E6_LAMBDA2) for q in ratios)
         r.add_test('Conjecture 7: CY3 residue rigidity (lambda_2, exact)', ok_c7,
                    'Res(f4)/Res(f2) = -884266719222068786621093750/97 '
                    'at z=0 and z=1/3125')
-    except ImportError:
-        r.add_skip('Conjecture 7: CY3 residue rigidity',
-                   'SymPy not available — pip install sympy', 'sympy')
     return r
 
 # ============================================================
@@ -4227,7 +4700,7 @@ def audit_engine6_genus4(lib):
     rank; see ARCHITECTURE.md, "Engines and where they are heading"."""
     r = _AuditResult('Engine 6d: rank-8 genus-4 (NEW)')
     # Samples >= 2 from any singularity z = 0..7 (rank-8 double-precision floor)
-    samples = [-1.5, -2.5, -5.0, 9.5, 10.0, 12.0, 15.0]
+    samples = list(_E6_G4_SAMPLES)
     n = len(samples)
     nt = n_obs4 = 0
     worst_thm1 = worst_odd = 0.0
@@ -4254,37 +4727,17 @@ def audit_engine6_genus4(lib):
     if nt != n:
         r.add_finding('CRITICAL', f'genus-4 Theorem 1 failed on {n-nt} samples')
     # Conjecture 6 lower bound at g=4: rank of (f2,f4,f6,f8) sample matrix == 4
-    # Gaussian-elimination rank over the sample rows (no numpy dependency).
-    rows = [row[:] for row in fvecs]
-    rank = 0
-    for col in range(4):
-        piv = -1
-        for i in range(rank, len(rows)):
-            if abs(rows[i][col]) > 1e-300:
-                piv = i; break
-        if piv < 0:
-            continue
-        rows[rank], rows[piv] = rows[piv], rows[rank]
-        pv = rows[rank][col]
-        for i in range(len(rows)):
-            if i != rank and abs(rows[i][col]) > 0:
-                f = rows[i][col] / pv
-                for j in range(4):
-                    rows[i][j] -= f * rows[rank][j]
-        rank += 1
+    rank = _sample_rank(fvecs)
     r.add_test('Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent',
                rank == 4, f'sample-matrix rank = {rank}/4')
     return r
 
 # ============================================================
-# STACK INTEGRATION 1 — CFL -> FOL -> QBF -> AST front-end
+# STACK INTEGRATION 1 — the CFL front end (CFL.md)
 # ============================================================
-# Engine 6's properties must be reachable through the SAME pipeline as the
-# other five engines: CFL spec -> lex -> parse (AST) -> FOL -> QBF -> field
-# router -> engine dispatch.  This is what makes Engine 6 a stack peer rather
-# than an island.  The CFL pipeline functions (cfl_lex/cfl_parse/cfl_to_fol/
-# fol_to_qbf) live in the harness; this audit reuses them — so the CFL test
-# genuinely requires pq-verify to be loaded first.
+# Engine 6's properties go through the same pipeline as the other engines:
+# CFL spec -> lex -> parse (AST) -> FOL -> QBF -> field router -> engine
+# dispatch, each property to the Engine 6 check that discharges it.
 
 # Paper 7 CFL context — a sixth context alongside Kyber/Dilithium/AES/Curves.
 PAPER7_CFL_SPEC = '''
@@ -4296,83 +4749,166 @@ CONTEXT ( Paper7 ) {
 }
 '''
 
-def field_route_period(f):
-    """Extended field router: adds the 'period' route for Engine 6, and
-    delegates every other field to the harness field_route unchanged.
-    (For a full single-file merge, the harness field_route gains one line:
-       if 'period' in f: return 'period')"""
-    if 'period' in f or 'gauss-manin' in f:
-        return 'period'
-    _fr = globals().get('field_route')
-    return _fr(f) if _fr else 'general'
+_E6_KEYS = ('rank2', 'genus2', 'quintic', 'genus4')
+
+
+def _ob_e6_theorem1(engines, corrupt=False):
+    libs = {k: engines.get(k) for k in _E6_KEYS}
+    if not all(libs.values()):
+        return None
+    worst, bad = 0.0, []
+    for key, fn, cls, z, tol in (('rank2', 'period_audit_legendre', PeriodResult, 0.5, 1e-9),
+                                 ('genus2', 'period_g2_audit', PeriodG2Result, 0.5, 1e-9),
+                                 ('quintic', 'period_quintic_audit', PeriodG2Result, 0.5, 1e-9),
+                                 ('genus4', 'period_g4_audit', PeriodG4Result, -2.5, 1e-7)):
+        o = cls()
+        getattr(libs[key], fn)(ctypes.c_double(z), ctypes.c_double(1e-300 if corrupt else tol),
+                               ctypes.byref(o))
+        worst = max(worst, o.thm1_resid_max)
+        if not o.ok_theorem1:
+            bad.append(key)
+    if bad:
+        return False, f'Theorem 1 fails on {", ".join(bad)}'
+    return True, (f'Theorem 1 entry-wise at rank 2, genus 2, the mirror quintic and '
+                  f'genus 4, worst residual {worst:.1e}')
+_ob_e6_theorem1.corruption = 'a tolerance below its residuals'
+
+
+def _ob_e6_observation4(engines, corrupt=False):
+    libs = {k: engines.get(k) for k in ('genus2', 'quintic', 'genus4')}
+    if not all(libs.values()):
+        return None
+    bad = []
+    for key, fn in (('genus2', 'period_g2_audit'), ('quintic', 'period_quintic_audit')):
+        o = PeriodG2Result()
+        getattr(libs[key], fn)(ctypes.c_double(0.5), ctypes.c_double(1e-300 if corrupt else 1e-9),
+                               ctypes.byref(o))
+        if not (o.ok_traceless and o.ok_tr3_zero):
+            bad.append(key)
+    o = PeriodG4Result()
+    libs['genus4'].period_g4_audit(ctypes.c_double(-2.5), ctypes.c_double(1e-7), ctypes.byref(o))
+    if not o.worst_odd_rel < (1e-300 if corrupt else 1e-7):
+        bad.append('genus4')
+    if bad:
+        return False, f'an odd power trace of [U, Q] does not vanish on {", ".join(bad)}'
+    return True, ('tr[U, Q] = tr[U, Q]³ = 0 at genus 2 and the mirror quintic, and '
+                  f'every odd power trace at genus 4 ({o.worst_odd_rel:.1e} relative)')
+_ob_e6_observation4.corruption = 'a tolerance below its residuals'
+
+_E6_G4_SAMPLES = (-1.5, -2.5, -5.0, 9.5, 10.0, 12.0, 15.0)
+
+
+def _e6_f_vectors(lib, samples):
+    """(f2, f4, f6, f8) of the genus-4 engine at each sample point."""
+    out = []
+    for z in samples:
+        o = PeriodG4Result()
+        lib.period_g4_audit(ctypes.c_double(z), ctypes.c_double(1e-7), ctypes.byref(o))
+        out.append([o.f_invariants[i] for i in range(4)])
+    return out
+
+
+def _sample_rank(vectors):
+    """The rank of 4-vectors by Gaussian elimination (no numpy)."""
+    rows = [row[:] for row in vectors]
+    rank = 0
+    for col in range(4):
+        piv = -1
+        for i in range(rank, len(rows)):
+            if abs(rows[i][col]) > 1e-300:
+                piv = i
+                break
+        if piv < 0:
+            continue
+        rows[rank], rows[piv] = rows[piv], rows[rank]
+        pv = rows[rank][col]
+        for i in range(len(rows)):
+            if i != rank and abs(rows[i][col]) > 0:
+                f = rows[i][col] / pv
+                for j in range(4):
+                    rows[i][j] -= f * rows[rank][j]
+        rank += 1
+    return rank
+
+
+def _ob_e6_conjecture6(engines, corrupt=False):
+    lib = engines.get('genus4')
+    if not lib:
+        return None
+    samples = _E6_G4_SAMPLES[:3] if corrupt else _E6_G4_SAMPLES
+    rank = _sample_rank(_e6_f_vectors(lib, samples))
+    return rank == 4, (f'f2, f4, f6, f8 at {len(samples)} genus-4 points: rank {rank}/4, '
+                       f'so independent')
+_ob_e6_conjecture6.corruption = 'three of its seven points'
+
+_E6_LAMBDA2 = (-884266719222068786621093750, 97)
+_E6_RATIOS = []                          # filled once: SymPy is slow
+
+
+def _e6_residue_ratios():
+    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
+    exact rationals (SymPy); None without SymPy."""
+    if _E6_RATIOS:
+        return _E6_RATIOS[0]
+    try:
+        import sympy as sp
+    except ImportError:
+        return None
+    z = sp.Symbol('z')
+    a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
+    a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
+    U = sp.Matrix([[0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-a0, -a1, -a2, -a3]])
+    Q = sp.simplify(-(U.diff(z) + U@U))
+    cQ = sp.simplify(U@Q - Q@U)
+    cQ2 = cQ@cQ
+    f2s = sp.cancel(sp.together(cQ2.trace()))
+    f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
+    ratios = tuple(sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
+                   for pt in (sp.Integer(0), sp.Rational(1, 3125)))
+    _E6_RATIOS.append(ratios)
+    return ratios
+
+
+def _ob_e6_conjecture7(engines, corrupt=False):
+    ratios = _e6_residue_ratios()
+    if ratios is None:
+        return None
+    import sympy as sp
+    lam2 = sp.Rational(*_E6_LAMBDA2) + (1 if corrupt else 0)
+    return all(q == lam2 for q in ratios), (
+        f'Res(f4)/Res(f2) = {_E6_LAMBDA2[0]}/{_E6_LAMBDA2[1]} at z = 0 and z = 1/3125, '
+        f'in exact rationals')
+_ob_e6_conjecture7.corruption = 'λ₂ off by one'
+_ob_e6_conjecture7.requires = 'sympy'
+
+PAPER7_OBLIGATIONS = {
+    ('Paper7', 'Theorem1'): ('period', _ob_e6_theorem1),
+    ('Paper7', 'Observation4'): ('period', _ob_e6_observation4),
+    ('Paper7', 'Conjecture6'): ('period', _ob_e6_conjecture6),
+    ('Paper7', 'Conjecture7'): ('period', _ob_e6_conjecture7),
+}
+
 
 def audit_engine6_cfl(engines):
-    """Engine 6 through the CFL->FOL->QBF->field-router pipeline.
-    Reuses the harness CFL front-end; the Paper7 context routes to 'period'
-    and dispatches to a real Engine 6 verification."""
+    """Engine 6 through the CFL front end (CFL.md): the Paper 7 context
+    parsed, checked, its obligations decided as QBFs, routed to 'period' by
+    their field, and each dispatched to the Engine 6 check that discharges
+    it."""
     r = _AuditResult('Engine 6: CFL Front-End (Paper 7)')
-    g = globals()
-    cfl_lex    = g.get('cfl_lex')
-    cfl_parse  = g.get('cfl_parse')
-    cfl_to_fol = g.get('cfl_to_fol')
-    fol_to_qbf = g.get('fol_to_qbf')
-    if not all([cfl_lex, cfl_parse, cfl_to_fol, fol_to_qbf]):
-        r.add_test('CFL pipeline integration', False,
-                   'harness CFL front-end not loaded — import pq_verify first '
-                   '(CFL integration requires the stack)')
-        return r
-    t0 = time.perf_counter()
-    # Stage 1: lex
-    toks = cfl_lex(PAPER7_CFL_SPEC)
-    r.add_test('CFL lexer — Paper 7 context', len(toks) > 0, f'{len(toks)} tokens')
-    # Stage 2: parse to AST
-    ast = cfl_parse(toks)
-    n_ctx = len(ast['ctx'])
-    n_defs = sum(len(c['defs']) for c in ast['ctx'])
-    r.add_test('CFL parser — AST', n_ctx == 1 and n_defs == 4,
-               f'{n_ctx} context (Paper7), {n_defs} properties')
-    # Stage 3: FOL
-    fols = cfl_to_fol(ast)
-    r.add_test('FOL generation', len(fols) == 4, f'{len(fols)} FOL formulas')
-    # Stage 3b: QBF
-    qbfs = fol_to_qbf(fols)
-    qbf_ok = all(q['prefix'] and q['matrix'] for q in qbfs)
-    r.add_test('QBF encoder', qbf_ok and len(qbfs) == 4,
-               f'{len(qbfs)} QBF formulas (prenex + field annotation)')
-    # Stage 4: field routing — Paper 7 properties must route to 'period'
-    routes = [field_route_period(f) for f in fols]
-    all_period = all(rt == 'period' for rt in routes)
-    r.add_test('Field router — period route', all_period,
-               f"routes: {sorted(set(routes))} (Engine 6 = the 'period' field)")
-    # Stage 5: engine dispatch — actually run an Engine 6 verification per route
-    dispatched = 0
-    for key in ('rank2', 'genus2', 'quintic', 'genus4'):
-        lib = engines.get(key)
-        if not lib:
-            continue
-        if key == 'rank2':
-            o = PeriodResult()
-            lib.period_audit_legendre(ctypes.c_double(0.5), ctypes.c_double(1e-9),
-                                      ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-        elif key in ('genus2', 'quintic'):
-            o = PeriodG2Result()
-            fn = lib.period_g2_audit if key == 'genus2' else lib.period_quintic_audit
-            fn(ctypes.c_double(0.5), ctypes.c_double(1e-9), ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-        else:  # genus4
-            o = PeriodG4Result()
-            lib.period_g4_audit(ctypes.c_double(-2.5), ctypes.c_double(1e-7),
-                                ctypes.byref(o))
-            if o.ok_theorem1:
-                dispatched += 1
-    elapsed = (time.perf_counter() - t0) * 1e6
-    n_eng = sum(1 for k in ('rank2','genus2','quintic','genus4') if engines.get(k))
-    r.add_test(f'Engine dispatch via router ({n_eng} period engines)',
-               dispatched == n_eng,
-               f'{dispatched}/{n_eng} dispatched and verified, {elapsed:.0f}us total')
+    period = (('type', 'algebraic'), ('field', 'period'))
+    _cfl_stages(r, PAPER7_CFL_SPEC, engines, PAPER7_OBLIGATIONS,
+                names={'lexer': 'CFL lexer — Paper 7 context',
+                       'parser': 'CFL parser — AST',
+                       'fol': 'FOL generation', 'qbf': 'QBF encoder',
+                       'router': 'Field router — period route',
+                       'dispatch': f'Engine dispatch via router '
+                                   f'({len(PAPER7_OBLIGATIONS)} obligations)'},
+                expected=(('Paper7', (('DEFINE', 'Theorem1', period),
+                                      ('DEFINE', 'Observation4', period),
+                                      ('DEFINE', 'Conjecture6', (('type', 'rank'), ('field', 'period'))),
+                                      ('DEFINE', 'Conjecture7', (('type', 'residue'), ('field', 'period'))))),),
+                routes={f'Paper7.{n}': 'period'
+                        for n in ('Theorem1', 'Observation4', 'Conjecture6', 'Conjecture7')})
     return r
 
 # ============================================================
@@ -4430,7 +4966,9 @@ def audit_engine6_coq():
     r = _AuditResult('Engine 6: Coq Certificate')
     import shutil, subprocess
     cert_file, _ = gen_engine6_coq_cert()
-    r.add_test('Coq certificate generated', True, cert_file)
+    r.add_test('Coq certificate generated',
+               bool(cert_file) and os.path.isfile(cert_file)
+               and os.path.getsize(cert_file) > 0, cert_file)
     coqc = shutil.which('coqc')
     if not coqc:
         r.add_skip('Conjecture 7 + genus-2 residue theorem verified by coqc',
@@ -4651,125 +5189,6 @@ def _finite(v):
     return not (math.isnan(v) or math.isinf(v))
 
 
-# ================================================================
-# EXACT ELLIPTIC-CURVE POINT COUNTING  (Mestre baby-step/giant-step)
-# Replaces the naive O(p) count for p >= 10^4.  Exact for p up to
-# ~10^14 -- well past the auditor's range (e.g. the 23-bit Dilithium
-# prime).  For crypto-size primes one would need SEA; BSGS is the
-# right, verifiable tool at this scale.
-# ================================================================
-
-def _tonelli(n, p):
-    """sqrt of n mod p (p odd prime), or None if n is a non-residue."""
-    n %= p
-    if n == 0:
-        return 0
-    if pow(n, (p - 1) // 2, p) != 1:
-        return None
-    if p % 4 == 3:
-        return pow(n, (p + 1) // 4, p)
-    Q, S = p - 1, 0
-    while Q % 2 == 0:
-        Q //= 2; S += 1
-    z = 2
-    while pow(z, (p - 1) // 2, p) != p - 1:
-        z += 1
-    M, c, t, R = S, pow(z, Q, p), pow(n, Q, p), pow(n, (Q + 1) // 2, p)
-    while t != 1:
-        i, t2 = 0, t
-        while t2 != 1:
-            t2 = t2 * t2 % p; i += 1
-        bb = pow(c, 1 << (M - i - 1), p)
-        M, c, t, R = i, bb * bb % p, t * bb * bb % p, R * bb % p
-    return R
-
-
-def _ec_count_bsgs(a, b, p):
-    """Exact #E(F_p) for y^2 = x^3 + ax + b via Mestre BSGS.
-    Returns None for a singular curve."""
-    a %= p; b %= p
-    if (4 * pow(a, 3, p) + 27 * pow(b, 2, p)) % p == 0:
-        return None
-
-    def add(P, Q):
-        if P is None: return Q
-        if Q is None: return P
-        x1, y1 = P; x2, y2 = Q
-        if x1 == x2:
-            if (y1 + y2) % p == 0:
-                return None
-            lam = (3 * x1 * x1 + a) * pow(2 * y1 % p, p - 2, p) % p
-        else:
-            lam = (y2 - y1) * pow((x2 - x1) % p, p - 2, p) % p
-        x3 = (lam * lam - x1 - x2) % p
-        y3 = (lam * (x1 - x3) - y1) % p
-        return (x3, y3)
-
-    def neg(P):
-        return None if P is None else (P[0], (-P[1]) % p)
-
-    def mul(k, P):
-        if k < 0:
-            return mul(-k, neg(P))
-        R = None
-        while k:
-            if k & 1:
-                R = add(R, P)
-            P = add(P, P); k >>= 1
-        return R
-
-    rng = random.Random((a * 1000003 + b * 999983 + p) & 0xFFFFFFFF)
-
-    def rand_pt():
-        for _ in range(20000):
-            x = rng.randrange(p)
-            rhs = (pow(x, 3, p) + a * x + b) % p
-            if rhs == 0:
-                return (x, 0)
-            if pow(rhs, (p - 1) // 2, p) == 1:
-                y = _tonelli(rhs, p)
-                if y is not None and (y * y) % p == rhs:
-                    return (x, y)
-        return None
-
-    L = 2 * math.isqrt(p) + 1
-    w = math.isqrt(2 * L) + 1
-
-    def candidates(P):
-        baby = {}
-        cur = None
-        for j in range(w + 1):
-            if cur not in baby:
-                baby[cur] = j
-            cur = add(cur, P)
-        Q = mul(p + 1, P)
-        wP = mul(w, P)
-        nwP = neg(wP)
-        imax = L // w + 2
-        test = add(Q, mul(imax, wP))
-        found = set()
-        for i in range(-imax, imax + 1):
-            if test in baby:
-                t = i * w + baby[test]
-                if -L <= t <= L:
-                    found.add(p + 1 - t)
-            test = add(test, nwP)
-        return found
-
-    P1 = rand_pt()
-    if P1 is None:
-        return None
-    cands = {N for N in candidates(P1) if mul(N, P1) is None}
-    tries = 0
-    while len(cands) != 1 and tries < 10:
-        P = rand_pt()
-        tries += 1
-        if P is None:
-            break
-        cands &= {N for N in candidates(P) if mul(N, P) is None}
-    return cands.pop() if len(cands) == 1 else None
-
-
 def audit_stress(engines, e6_engines, quick=False):
     """Phase 7 — adversarial stress on the real engines. Returns a list
     of AuditResult so the tests fold into the unified report.
@@ -4924,7 +5343,10 @@ def audit_stress(engines, e6_engines, quick=False):
         g = engines['gf2']
         s = GF2S(); g.gf2_init(ctypes.byref(s), 64)
         bad = (ctypes.c_int * 1)(9999)            # var index >> MAX_VARS
-        rc = g.gf2_add_xor(ctypes.byref(s), bad, 1, 0)
+        try:
+            rc = g.gf2_add_xor(ctypes.byref(s), bad, 1, 0)
+        except EngineInputError as exc:
+            rc = exc.rc
         r.add_test('GF(2) rejects out-of-range variable', rc < 0,
                    f'gf2_add_xor returned {rc} (expected <0)')
     if engines.get('zq'):
@@ -4933,7 +5355,10 @@ def audit_stress(engines, e6_engines, quick=False):
         ca = (ctypes.c_uint16 * 4)(1, 1, 1, 1)
         last = 0
         for _ in range(4097):                     # MAX_EQUATIONS = 4096
-            last = z.zq_add_equation(ctypes.byref(s), ca, 0)
+            try:
+                last = z.zq_add_equation(ctypes.byref(s), ca, 0)
+            except EngineInputError as exc:
+                last = exc.rc
         r.add_test('Z_3329 rejects equation overflow', last < 0,
                    f'4097th zq_add_equation returned {last} (expected <0)')
     out.append(r)
