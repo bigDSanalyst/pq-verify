@@ -924,10 +924,10 @@ class AuditResult:
         verified-and-failed -- applied to pq-verify's own suite, which had it
         for everyone else's code and not its own.
         """
+        deps = [dep] if isinstance(dep, str) else list(dep or ())
         self.tests.append({'name': name, 'passed': None, 'detail': reason,
-                           'time_us': 0, 'skipped': True, 'dep': dep})
-        if dep:
-            DEGRADED['deps'].append(dep)
+                           'time_us': 0, 'skipped': True, 'dep': ', '.join(deps) or None})
+        DEGRADED['deps'].extend(deps)
         DEGRADED['skipped_checks'].append(name)
     def add_finding(self, severity, description, evidence=""):
         self.findings.append({'severity': severity, 'description': description, 'evidence': evidence})
@@ -2720,7 +2720,8 @@ def cfl_dispatch(props, engines, registry):
     """Each property's registered check, run on its engine, and run on a
     corrupted instance: {key: (status, detail)}, status True (passed and
     rejected the corruption), False, or None (no obligation is registered,
-    or an engine it needs is missing)."""
+    or an engine or library it needs is missing; a check's `requires`
+    attribute names the library)."""
     out = {}
     for p in props:
         entry = registry.get((p.context, p.name))
@@ -2733,7 +2734,9 @@ def cfl_dispatch(props, engines, registry):
             continue
         got = check(engines)
         if got is None:
-            out[p.key] = (None, 'an engine it needs is not built')
+            needs = getattr(check, 'requires', None)
+            out[p.key] = (None, f'{needs} is not installed' if needs
+                          else 'an engine it needs is not built')
             continue
         ok, detail = got
         if ok:
@@ -2912,14 +2915,21 @@ def _cfl_stages(r, spec, engines, registry, names, expected, routes, lib_gf2=Non
     row(names['router'], router)
 
     def dispatch():
-        missing = [k for k, (ok, _) in dispatched.items() if ok is None]
+        missing = [p for p in props if dispatched[p.key][0] is None]
         if missing:
-            return None, f'could not run: {", ".join(missing)}'
+            # A skip names the library it waits on, when every check that
+            # could not run names one: a missing engine or obligation is not
+            # a dependency, and is left unnamed for the integrity report.
+            needs = [getattr(registry.get((p.context, p.name), (None, None))[1], 'requires', None)
+                     for p in missing]
+            deps = sorted(set(needs)) if all(needs) else None
+            return None, 'could not run: ' + '; '.join(
+                f'{p.key} ({dispatched[p.key][1]})' for p in missing), deps
         failed = [k for k, (ok, _) in dispatched.items() if not ok]
-        return not failed, ('; '.join(f'{k}: {d}' for k, (_, d) in dispatched.items()))
-    ok, detail = dispatch()
+        return not failed, ('; '.join(f'{k}: {d}' for k, (_, d) in dispatched.items())), None
+    ok, detail, deps = dispatch()
     if ok is None:
-        r.add_skip(names['dispatch'], detail)
+        r.add_skip(names['dispatch'], detail, deps)
     else:
         r.add_test(names['dispatch'], ok, detail, dispatch_us)
 
@@ -4869,6 +4879,7 @@ def _ob_e6_conjecture7(engines, corrupt=False):
         f'Res(f4)/Res(f2) = {_E6_LAMBDA2[0]}/{_E6_LAMBDA2[1]} at z = 0 and z = 1/3125, '
         f'in exact rationals')
 _ob_e6_conjecture7.corruption = 'λ₂ off by one'
+_ob_e6_conjecture7.requires = 'sympy'
 
 PAPER7_OBLIGATIONS = {
     ('Paper7', 'Theorem1'): ('period', _ob_e6_theorem1),

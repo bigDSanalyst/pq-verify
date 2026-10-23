@@ -8087,6 +8087,37 @@ def test_engine6_cfl_rows_pass_and_dispatch_can_fail(monkeypatch):
         ["Engine dispatch via router (4 obligations)"]
 
 
+def test_a_cfl_dispatch_waiting_on_sympy_names_it(monkeypatch):
+    """Without SymPy, Conjecture 7's obligation cannot run. The dispatch row
+    was skipped without naming the library, so CI's base profile, which
+    requires every skip to name its dependency, failed."""
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    if not all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        pytest.skip("an Engine 6 library did not build")
+    monkeypatch.setattr(core, "_e6_residue_ratios", lambda: None)
+    with _isolated_degraded() as degraded:
+        r = core.audit_engine6_cfl(e6)
+        row = [t for t in r.tests if t["name"] == "Engine dispatch via router (4 obligations)"]
+        assert row and row[0]["skipped"] and row[0]["dep"] == "sympy", row
+        assert "Paper7.Conjecture7 (sympy is not installed)" in row[0]["detail"]
+        assert degraded["deps"] == ["sympy"]
+    assert all(t["passed"] for t in r.tests if not t["skipped"]), r.tests
+
+
+def test_a_skip_can_name_more_than_one_dependency():
+    import pq_verify.core as core
+    with _isolated_degraded() as degraded:
+        r = core.AuditResult("x")
+        r.add_skip("a", "needs both", ["sympy", "coq"])
+        r.add_skip("b", "needs one", "sympy")
+        r.add_skip("c", "needs none")
+        assert [t["dep"] for t in r.tests] == ["sympy, coq", "sympy", None]
+        assert degraded["deps"] == ["sympy", "coq", "sympy"]
+
+
 def test_cfl_benchmark_row_fails_when_the_round_trip_does(monkeypatch):
     import pq_verify.core as core
     C = _cfl()
