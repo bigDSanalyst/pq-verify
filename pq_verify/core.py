@@ -261,6 +261,11 @@ static void _init_kyber_zetas(uint16_t q,uint16_t zeta){
 if(_kyber_zetas_ready)return;
 for(int i=0;i<128;i++)_kyber_zetas[i]=_pow_mod16(zeta,_bitrev7(i),q);
 _kyber_zetas_ready=1;}
+/* The table the NTT and the Freivalds check use, read out for checks
+   made apart from the engine. */
+void zq_zeta_table(uint16_t*out,uint16_t q,uint16_t zeta){
+_init_kyber_zetas(q,zeta);
+for(int i=0;i<128;i++)out[i]=_kyber_zetas[i];}
 /* ---- Forward NTT (FIPS 203 Cooley-Tukey, in-place) ---- */
 void zq_ntt_forward(uint16_t*f,int n,uint16_t q,uint16_t zeta){
 _init_kyber_zetas(q,zeta);
@@ -414,6 +419,11 @@ static void _init_dili_zetas(uint32_t q,uint32_t zeta){
 if(_dili_zetas_ready)return;
 for(int i=0;i<256;i++)_dili_zetas[i]=_pow_mod32(zeta,_bitrev8(i),q);
 _dili_zetas_ready=1;}
+/* The table the NTT and the Freivalds check use, read out for checks
+   made apart from the engine. */
+void zq32_zeta_table(uint32_t*out,uint32_t q,uint32_t zeta){
+_init_dili_zetas(q,zeta);
+for(int i=0;i<256;i++)out[i]=_dili_zetas[i];}
 
 /* Forward ML-DSA NTT, in place. 8 layers: len = 128,64,...,2,1. */
 void zq32_ntt_forward(uint32_t*f,int n,uint32_t q,uint32_t zeta){
@@ -862,6 +872,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint16), ctypes.c_int,
             ctypes.c_uint16, ctypes.c_uint16, ctypes.c_int, ctypes.c_uint32]
         z.zq_freivalds_ntt.restype = ctypes.c_int
+        z.zq_zeta_table.argtypes = [ctypes.POINTER(ctypes.c_uint16), ctypes.c_uint16, ctypes.c_uint16]
+        z.zq_zeta_table.restype = None
         _checked(z.zq_init, z.zq_add_equation, z.zq_add_sparse, z.zq_add_ntt_butterfly)
 
     if engines.get('zq32'):
@@ -877,6 +889,8 @@ def bind_all(engines):
             ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
             ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
         z32.zq32_freivalds_ntt.restype = ctypes.c_int
+        z32.zq32_zeta_table.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_uint32]
+        z32.zq32_zeta_table.restype = None
         _checked(z32.zq32_init, z32.zq32_add_equation, z32.zq32_add_sparse,
                  z32.zq32_add_ntt_butterfly)
 
@@ -1408,8 +1422,8 @@ def audit_curve(engines, a, b, p):
     j-invariant; its point count, and its twist's, each with a certificate
     checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
     its point validation; and the conformity gradient on its discriminant
-    family. Findings: singular, supersingular, anomalous and near-anomalous,
-    and a small embedding degree."""
+    family. Findings: singular, supersingular, anomalous, trace 2, and a
+    small embedding degree."""
     from . import ec as EC
     r = AuditResult(f'Curve y\u00b2=x\u00b3+{a}x+{b} mod {p}')
     lib_c = engines.get('cubic')
@@ -1468,9 +1482,15 @@ def audit_curve(engines, a, b, p):
         elif trace == 1:
             r.add_finding('CRITICAL',
                 f'Anomalous curve: #E={count.n}=p, trace=1 (Smart attack vulnerable)')
-        elif abs(trace) <= 2:
+        elif trace == 2:
+            # #E = p - 1: every prime l dividing #E divides p - 1, so the
+            # embedding degree is 1 and a pairing carries the discrete log
+            # into F_p*. Through 2.14.0 this fired for |t| <= 2, but traces
+            # -1 and -2 have no such structure, and 0 is the supersingular
+            # finding below.
             r.add_finding('HIGH',
-                f'Near-anomalous curve: #E={count.n}, |t|={abs(trace)} (transfer attacks possible)')
+                f'Trace 2: #E={count.n} = p \u2212 1, so the embedding degree is 1 (a '
+                f'pairing carries the discrete log into F_p*)')
         if ok:
             # Embedding degree, SafeCurves' "transfer" criterion: k is the least
             # with l | p^k - 1, for l the largest prime factor of #E. The Weil
@@ -2068,21 +2088,40 @@ def audit_exhaustive_inverses(lib):
     r.add_test('Engine inverse (1000 samples)', eng_fails == 0, f'{eng_fails} failures')
     return r
 
+def _engine_zeta_table(lib, n):
+    """The zeta table an engine's NTT and Freivalds check use, read out of
+    the engine: the 16-bit engine's 128 (ML-KEM) or the 32-bit engine's 256
+    (ML-DSA)."""
+    if n == 128:
+        buf = (ctypes.c_uint16 * 128)()
+        lib.zq_zeta_table(buf, KYBER_Q, KYBER_ZETA)
+    else:
+        buf = (ctypes.c_uint32 * 256)()
+        lib.zq32_zeta_table(buf, DILI_Q, DILI_ZETA)
+    return list(buf)
+
+
 def audit_twiddle_completeness(lib):
-    """128 distinct Kyber twiddle factors, primitivity, butterfly correctness."""
+    """The engine's own 128 Kyber zetas: its root has order 256, the table
+    holds each of the root's first 128 powers once, and the butterfly is
+    right with each power. Through 2.14.0 the first three rows applied
+    Python's pow to pq-verify's constant 17, which tested no
+    implementation; they now read the table the engine's NTT and Freivalds
+    check use."""
     r = AuditResult('Twiddle Factors')
     Q, Z = KYBER_Q, KYBER_ZETA
-    r.add_test('\u03b6^256 \u2261 1 mod q', pow(Z, 256, Q) == 1,
-               f'{Z}^256 mod {Q} = {pow(Z, 256, Q)}')
-    r.add_test('\u03b6^128 \u2262 1 mod q (primitive)', pow(Z, 128, Q) != 1,
-               f'{Z}^128 mod {Q} = {pow(Z, 128, Q)}')
-    twiddles = set()
-    z = 1
-    for _ in range(128):
-        twiddles.add(z)
-        z = (z * Z) % Q
-    r.add_test('128 distinct twiddle factors', len(twiddles) == 128,
-               f'found {len(twiddles)} unique')
+    tab = _engine_zeta_table(lib, 128)
+    root = tab[64]                       # its zeta at BitRev7(i) = 1: the root
+    r.add_test('\u03b6^256 \u2261 1 mod q', pow(root, 256, Q) == 1,
+               f"the engine's root \u03b6 = {root} (its zeta where BitRev7(i) = 1): "
+               f'\u03b6^256 mod q = {pow(root, 256, Q)}')
+    r.add_test('\u03b6^128 \u2262 1 mod q (primitive)', pow(root, 128, Q) != 1,
+               f'\u03b6^128 mod q = {pow(root, 128, Q)}, so \u03b6 has order 256')
+    powers = {pow(root, j, Q) for j in range(128)}
+    r.add_test('128 distinct twiddle factors', len(set(tab)) == 128 and set(tab) == powers,
+               f"the engine's table holds {len(set(tab))} distinct values"
+               + (', each \u03b6^j for j < 128 once' if set(tab) == powers else
+                  ', NOT the powers \u03b6^j for j < 128'))
     tw_fails = 0
     z = 1
     s = ZqS(); res = ZqR()
@@ -2361,9 +2400,19 @@ def audit_fips203_zetas(lib):
     """Verify engine accepts all 128 FIPS 203 Kyber zetas."""
     r = AuditResult('FIPS 203 Zetas')
     Q, Z = KYBER_Q, KYBER_ZETA
-    r.add_test('Primitivity \u03b6^256\u22611, \u03b6^128\u2261-1',
-               pow(Z, 256, Q) == 1 and pow(Z, 128, Q) == Q-1,
-               f'\u03b6={Z}, q={Q}')
+    # The engine's table against FIPS 203's definition of it, zeta^BitRev7(i)
+    # mod q, computed here apart from the engine (its own bit reversal and
+    # power), compared mod q. Through 2.14.0 the row checked only that 17
+    # has order 256, by Python's pow on pq-verify's constant.
+    tab = _engine_zeta_table(lib, 128)
+    fips = [pow(Z, _bitrev(i, 7), Q) for i in range(128)]
+    off = [i for i in range(128) if (tab[i] - fips[i]) % Q]
+    order = pow(Z, 256, Q) == 1 and pow(Z, 128, Q) == Q - 1
+    r.add_test("Engine zetas are FIPS 203's: 17^BitRev7(i) mod q, 17 of order 256",
+               not off and order,
+               f"the engine's 128 zetas equal \u03b6^BitRev7(i) mod q for \u03b6 = {Z}"
+               + (f' \u2014 NOT at {len(off)}, first i = {off[0]}' if off else '')
+               + f'; \u03b6^128 \u2261 {pow(Z, 128, Q)} and \u03b6^256 \u2261 {pow(Z, 256, Q)} mod q')
     zetas = [pow(Z, _br7(i), Q) for i in range(128)]
     n_pass = 0
     s = ZqS(); res = ZqR()
@@ -2385,9 +2434,17 @@ def audit_fips204_zetas(lib, sample=64):
     """Verify engine accepts FIPS 204 Dilithium zetas."""
     r = AuditResult('FIPS 204 Zetas')
     Q, Z = DILI_Q, DILI_ZETA
-    r.add_test('Primitivity \u03b6^512\u22611, \u03b6^256\u2261-1',
-               pow(Z, 512, Q) == 1 and pow(Z, 256, Q) == Q-1,
-               f'\u03b6={Z}, q={Q}')
+    # As for FIPS 203: the 32-bit engine's table against zeta^BitRev8(i) mod
+    # q, computed here apart from the engine.
+    tab = _engine_zeta_table(lib, 256)
+    fips = [pow(Z, _bitrev(i, 8), Q) for i in range(256)]
+    off = [i for i in range(256) if (tab[i] - fips[i]) % Q]
+    order = pow(Z, 512, Q) == 1 and pow(Z, 256, Q) == Q - 1
+    r.add_test("Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q, 1753 of order 512",
+               not off and order,
+               f"the engine's 256 zetas equal \u03b6^BitRev8(i) mod q for \u03b6 = {Z}"
+               + (f' \u2014 NOT at {len(off)}, first i = {off[0]}' if off else '')
+               + f'; \u03b6^256 \u2261 {pow(Z, 256, Q)} and \u03b6^512 \u2261 {pow(Z, 512, Q)} mod q')
     zetas = [pow(Z, _br8(i), Q) for i in range(256)]
     indices = list(range(1, 256, max(1, 255//sample)))[:sample]
     n_pass = 0

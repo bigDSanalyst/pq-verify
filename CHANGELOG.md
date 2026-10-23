@@ -96,6 +96,24 @@ versioning](https://semver.org/spec/v2.0.0.html).
   connection of that shape. The daemon's Conjecture 7 row uses the same
   residues, and without SymPy the three rows are skipped.
 
+- **The five zeta rows tested no implementation.** 'ζ^256 ≡ 1 mod q',
+  'ζ^128 ≢ 1 mod q (primitive)' and '128 distinct twiddle factors' applied
+  Python's pow to pq-verify's constant 17, and the two 'Primitivity' rows did
+  the same for 17 and 1753. The 16-bit and 32-bit engines now export the
+  zeta tables their NTTs and Freivalds checks use. The three twiddle rows
+  check the 16-bit engine's: its root has order 256, and it holds each of the
+  root's first 128 powers once. The two primitivity rows compare each
+  engine's table with ζ^BitRev(i) mod q, computed apart from the engine for
+  FIPS's ζ = 17 and ζ = 1753, and keep the order checks. That ties the tables
+  to the standard's definition, given its ζ: a different root of the same
+  order would leave every table consistently wrong, and only the standard's
+  text says 17 and 1753.
+- **A small trace was a HIGH finding where it carries no attack.**
+  "Near-anomalous" fired for every |t| ≤ 2, and two of the self-suite's own
+  curves were flagged for traces −1 and −2, which have no transfer attack. It
+  is now a finding for trace 2 only (#E = p − 1, embedding degree 1). Trace 0
+  is the supersingular finding, and trace 1 the anomalous one.
+
 ### Changed
 
 - **Engine 6's identity rows are named for what they check.** With Q
@@ -117,7 +135,10 @@ versioning](https://semver.org/spec/v2.0.0.html).
   Near-singular curves' is 'B3: Small embedding degree', the SafeCurves case
   'near-singular mod 8380417' is 'embedding degree 6 mod 147457', and
   'Conjecture 7 + genus-2 residue theorem verified by coqc' is "Conjecture 7
-  and Paper 7 Table 1 on this run's residues, verified by coqc".
+  and Paper 7 Table 1 on this run's residues, verified by coqc". The two
+  'Primitivity' rows are "Engine zetas are FIPS 203's: 17^BitRev7(i) mod q,
+  17 of order 256" and "Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q,
+  1753 of order 512".
 
 ## [2.14.0] — 2026-10-23
 

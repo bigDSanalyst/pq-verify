@@ -9090,3 +9090,54 @@ def test_embedding_degree_replaces_the_near_singular_finding(monkeypatch):
     r = core.audit_curve(eng, *pos[3])
     assert any(f["severity"] == "INFO" and "Embedding degree not checked" in f["description"]
                for f in r.findings)
+
+
+def test_zeta_rows_read_the_engines_own_tables():
+    core, eng = _all_engines()
+    kem, dsa = eng["zq"], eng["zq32"]
+    Q, Z, DQ, DZ = core.KYBER_Q, core.KYBER_ZETA, core.DILI_Q, core.DILI_ZETA
+    assert core._engine_zeta_table(kem, 128) == [pow(Z, core._bitrev(i, 7), Q) for i in range(128)]
+    assert core._engine_zeta_table(dsa, 256) == [pow(DZ, core._bitrev(i, 8), DQ) for i in range(256)]
+    fips203 = "Engine zetas are FIPS 203's: 17^BitRev7(i) mod q, 17 of order 256"
+    fips204 = "Engine zetas are FIPS 204's: 1753^BitRev8(i) mod q, 1753 of order 512"
+    assert _rows(core.audit_fips203_zetas(kem))[fips203]["passed"] is True
+    assert _rows(core.audit_fips204_zetas(dsa))[fips204]["passed"] is True
+    assert all(t["passed"] for t in core.audit_twiddle_completeness(kem).tests)
+
+    def kem_with(mutate):
+        def table(buf, q, z):
+            kem.zq_zeta_table(buf, q, z)
+            mutate(buf)
+        return _Swap(kem, zq_zeta_table=table)
+
+    def duplicate(buf):                  # one entry repeated: not FIPS's, not distinct
+        buf[5] = buf[6]
+
+    def other_root(buf):                 # 17^3 also has order 256: consistent but not FIPS's
+        for i in range(128):
+            buf[i] = pow(Z, 3 * core._bitrev(i, 7), Q)
+    rows = _rows(core.audit_twiddle_completeness(kem_with(duplicate)))
+    assert rows["128 distinct twiddle factors"]["passed"] is False
+    assert _rows(core.audit_fips203_zetas(kem_with(duplicate)))[fips203]["passed"] is False
+    rows = _rows(core.audit_twiddle_completeness(kem_with(other_root)))
+    assert all(rows[n]["passed"] for n in ("ζ^256 ≡ 1 mod q", "ζ^128 ≢ 1 mod q (primitive)",
+                                          "128 distinct twiddle factors"))
+    assert _rows(core.audit_fips203_zetas(kem_with(other_root)))[fips203]["passed"] is False
+
+    def dsa_table(buf, q, z):
+        dsa.zq32_zeta_table(buf, q, z)
+        buf[200] = (buf[200] + 1) % q
+    rows = _rows(core.audit_fips204_zetas(_Swap(dsa, zq32_zeta_table=dsa_table)))
+    assert rows[fips204]["passed"] is False
+
+
+def test_trace_finding_is_for_trace_2_only():
+    core, eng = _all_engines()
+
+    def traces(a, b, p):
+        return [f["description"] for f in core.audit_curve(eng, a, b, p).findings
+                if f["description"].startswith(("Trace 2", "Near-anomalous"))]
+    assert traces(2, 2, 17) == [] and traces(2, 3, 97) == []     # t = -1 and t = -2
+    assert len(traces(67089, 7437, 131267)) == 1                 # t = 2: #E = p - 1
+    found = [f["description"] for f in core.audit_curve(eng, 0, 1, 23).findings]   # t = 0
+    assert any(d.startswith("Supersingular") for d in found) and not traces(0, 1, 23)
