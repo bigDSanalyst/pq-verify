@@ -158,13 +158,10 @@ versioning](https://semver.org/spec/v2.0.0.html).
   - **The BSGS point count could be wrong, and its "cannot decide" was
     reported as a singular curve.** A point whose order was at most the
     number of baby steps left orders out of the candidates: over F₁₉ it
-    counted 18 points on y² = x³ + 5, which has 27. Such points are now
-    skipped. It still does not use the quadratic twist, so on some curves
-    (j = 0 ones, for example) it cannot decide. The curve audit reported that
-    as "curve singular", passed, and dropped its Hasse check; both are now
-    recorded as checks that did not run. The curve audit uses BSGS only from
-    p = 10,000, where no wrong count turned up in 560 curves, and it runs
-    only inside the self-suite.
+    counted 18 points on y² = x³ + 5, which has 27. When it could not decide,
+    the curve audit reported "curve singular", passed, and dropped its Hasse
+    check. `pq_verify/ec.py` replaces that count, with a certificate for
+    every count (the elliptic-curve entry above).
   - The two "Coq certificate generated" checks passed without looking for
     the file. They now check that it exists and is not empty.
   - **The ML-DSA full-NTT check was circular.** It compared 27 butterflies of
