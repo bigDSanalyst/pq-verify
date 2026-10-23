@@ -75,15 +75,49 @@ versioning](https://semver.org/spec/v2.0.0.html).
     Freivalds check that shares its zeta table. The NTT must now also be
     FIPS 203's, by the definition.
 
+- **The near-singular finding is gone.** It flagged a curve HIGH when
+  |4a³ + 27b²|/p < 0.01, but over F_p a curve is singular or it is not, and
+  that ratio depends on which integers stand for a and b. In its place the
+  curve audit checks the embedding degree, SafeCurves' transfer criterion: a
+  HIGH finding when the largest prime-order subgroup's k = ord_ℓ(p) is at
+  most (ℓ − 1)/100, checked up to k = 100 (ECC.md). 'B3: Near-singular
+  curves' is now 'B3: Small embedding degree': ordinary curves with k = 1, 3,
+  4 and 6, each found by search and counted with a certificate at run time,
+  and two controls with k in the tens of thousands. The SafeCurves case
+  'near-singular mod 8380417' is now 'embedding degree 6 mod 147457'. Where
+  #E cannot be factored within a step limit, an INFO finding says the degree
+  was not checked (`pq_verify.ec.largest_prime_factor`).
+- **The Engine 6 Coq certificate stated integers fixed in this file,** and
+  its "genus-2 residue theorem" was a + b − b − a = 0. It now states the
+  residues this run computes exactly (SymPy). Conjecture 7 is stated on the
+  mirror quintic's residues, and the genus-2 residues, computed from the
+  engine's own M(z) with SymPy's exact derivative, must equal Paper 7's
+  Table 1. The residue theorem stays, described for what it is: true of any
+  connection of that shape. The daemon's Conjecture 7 row uses the same
+  residues, and without SymPy the three rows are skipped.
+
 ### Changed
 
+- **Engine 6's identity rows are named for what they check.** With Q
+  defined as −(U′ + U²), Theorem 1 holds for any matrices U, U′ and U″
+  (checked in exact arithmetic on unrelated random matrices), and so do
+  Lemma 3 at rank 2 and Observation 4 for a companion-form U. Those six rows
+  test the engine's arithmetic, not its periods, and are now named
+  "Theorem 1 identity in the engine's arithmetic, rank 2 (10 samples)" and
+  likewise at rank 4, rank-4 CY3 and rank 8, "Lemma 3 identity in the
+  engine's arithmetic (rank 2)" and "Observation 4 identity in the engine's
+  arithmetic (CY3, companion form)".
 - Five self-suite rows are renamed for what they now check: 'Coq daemon
   startup' is 'Coq daemon rejects a false theorem', 'NTT Coq certificate
   emitted' is 'NTT Coq certificate rejects a wrong output', 'Coq certificate
   generation' is 'Coq batch certificate rejects a wrong zeta', 'Coq
   certificate generated' is 'Engine 6 Coq certificate rejects a wrong λ₂',
   and "Riccati U' = -U^2 - Q" is "Riccati inputs: U the Legendre periods'
-  connection, U′ and U″ its derivatives".
+  connection, U′ and U″ its derivatives". With the fixes above, 'B3:
+  Near-singular curves' is 'B3: Small embedding degree', the SafeCurves case
+  'near-singular mod 8380417' is 'embedding degree 6 mod 147457', and
+  'Conjecture 7 + genus-2 residue theorem verified by coqc' is "Conjecture 7
+  and Paper 7 Table 1 on this run's residues, verified by coqc".
 
 ## [2.14.0] — 2026-10-23
 

@@ -1409,7 +1409,7 @@ def audit_curve(engines, a, b, p):
     checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
     its point validation; and the conformity gradient on its discriminant
     family. Findings: singular, supersingular, anomalous and near-anomalous,
-    near-singular."""
+    and a small embedding degree."""
     from . import ec as EC
     r = AuditResult(f'Curve y\u00b2=x\u00b3+{a}x+{b} mod {p}')
     lib_c = engines.get('cubic')
@@ -1471,6 +1471,24 @@ def audit_curve(engines, a, b, p):
         elif abs(trace) <= 2:
             r.add_finding('HIGH',
                 f'Near-anomalous curve: #E={count.n}, |t|={abs(trace)} (transfer attacks possible)')
+        if ok:
+            # Embedding degree, SafeCurves' "transfer" criterion: k is the least
+            # with l | p^k - 1, for l the largest prime factor of #E. The Weil
+            # or Tate pairing then carries the discrete log of the order-l
+            # subgroup into F_(p^k), and SafeCurves requires k > (l - 1)/100.
+            # Checked here up to k = 100; l = p is the anomalous case above.
+            big = EC.largest_prime_factor(count.n)
+            if big is None:
+                r.add_finding('INFO', f'Embedding degree not checked: #E={count.n} was not '
+                                      f'factored within the step limit')
+            elif big != p:
+                kmax = min(100, (big - 1) // 100)
+                k = next((k for k in range(1, kmax + 1) if pow(p, k, big) == 1), None)
+                if k is not None:
+                    r.add_finding('HIGH',
+                        f'Small embedding degree k={k} for the subgroup of order {big} '
+                        f'(SafeCurves requires k > (order \u2212 1)/100): a pairing carries '
+                        f'its discrete log into F_(p^{k})')
     twist = E.twist()
     tcount = EC.count(twist)
     if count is None or tcount is None:
@@ -1533,7 +1551,10 @@ def audit_curve(engines, a, b, p):
                    f'{sum(got)}/{len(got)}: a point of E, a point off it, an unreduced '
                    f'x and an unreduced b')
 
-    # CONFORMITY: stability via discriminant family
+    # CONFORMITY on the discriminant family (research framework). It used to
+    # report |4a^3 + 27b^2|/p as a "stability margin" and a curve under 0.01
+    # as a near-singular fiber (HIGH); over F_p a curve is singular or it is
+    # not, and that ratio depends on which integers stand for a and b.
     if lib_cf and disc_raw != 0:
         dt = 0.001
         points = []
@@ -1553,7 +1574,6 @@ def audit_curve(engines, a, b, p):
             points.append(PeriodData(omega, omega_p, omega_pp, omega_ppp, t_off))
         if len(points) == 3:
             res = lib_cf.conformity_compute(ctypes.byref(points[1]))
-            stability = abs(disc_raw) / float(p)
             # D = 2u' + 4u^2 with u = omega'/omega = Delta'/(12 Delta), from the
             # discriminant itself rather than the omega derivatives the engine
             # was given. Through 2.14.0 the row checked only the engine's
@@ -1564,10 +1584,7 @@ def audit_curve(engines, a, b, p):
             d_ok = res.valid == 1 and math.isclose(res.D, want, rel_tol=1e-9, abs_tol=1e-300)
             r.add_test('Conformity D(t)', d_ok,
                        f'D={res.D:.6g}, {"" if d_ok else "NOT "}2u\u2032+4u\u00b2 for '
-                       f'u = \u0394\u2032/(12\u0394) ({want:.6g}); stability margin '
-                       f'|\u0394|/p={stability:.4f}')
-            if stability < 0.01:
-                r.add_finding('HIGH', f'Near singular fiber: margin={stability:.6f}')
+                       f'u = \u0394\u2032/(12\u0394) ({want:.6g})')
             chk = lib_cf.conformity_verify(ctypes.byref(points[0]),
                     ctypes.byref(points[1]), ctypes.byref(points[2]), ctypes.c_double(dt))
             r.add_test('Conservation law on family', chk.cv_residual < 0.01,
@@ -2230,13 +2247,24 @@ def audit_adversarial(engines):
     r.add_test(f'B2: Supersingular curves', c2 == len(pos) and f2 == 0,
                f'{c2}/{len(pos)} flagged, {f2}/{len(neg)} ordinary j=0/1728 controls flagged')
 
-    c3 = 0; t3 = 0
-    for a, b, p in [(1,6,8380417),(1,55,8380417)]:
-        ar = audit_curve(engines, a, b, p)
-        high = any(f['severity'] in ('HIGH','CRITICAL') for f in ar.findings)
-        t3 += 1
-        if high: c3 += 1
-    r.add_test(f'B3: Near-singular curves', c3 == t3, f'{c3}/{t3} HIGH+ flagged')
+    # Small embedding degree (MOV / Frey-Ruck): ordinary curves whose largest
+    # prime-order subgroup has k = 1, 3, 4 and 6 (trace 2, and MNT-style
+    # orders), each found by search and its count certified at run time; and
+    # two controls whose k is in the tens of thousands. Through 2.14.0 this
+    # was "near-singular curves", flagged by |4a^3 + 27b^2|/p < 0.01, which
+    # means nothing over F_p.
+    def _k(a, b, p):
+        got = [f for f in audit_curve(engines, a, b, p).findings
+               if f['severity'] == 'HIGH' and f['description'].startswith('Small embedding degree')]
+        return int(got[0]['description'].split('k=')[1].split()[0]) if got else None
+    pos3 = {1: (67089, 7437, 131267), 3: (13066, 76929, 132299),
+            4: (110478, 24182, 136531), 6: (138116, 141734, 147457)}
+    neg3 = [(51725, 63044, 131267), (38135, 145724, 147457)]
+    c3 = sum(_k(*c) == k for k, c in pos3.items())
+    f3 = sum(_k(*c) is not None for c in neg3)
+    r.add_test(f'B3: Small embedding degree', c3 == len(pos3) and f3 == 0,
+               f'k = 1, 3, 4, 6 found exactly in {c3}/{len(pos3)}; {f3}/{len(neg3)} '
+               f'controls with large k flagged')
 
     c4 = 0; t4 = 0
     primes4 = [17, 23, 29, 37, 41, 43, 53]
@@ -2389,7 +2417,7 @@ def audit_safecurves(engines):
         ('supersingular j=1728 mod 23', 1, 0, 23, 'HIGH'),
         ('anomalous mod 17', 1, 3, 17, 'CRITICAL'),
         ('anomalous mod 23', 5, 3, 23, 'CRITICAL'),
-        ('near-singular mod 8380417', 1, 6, 8380417, 'HIGH'),
+        ('embedding degree 6 mod 147457', 138116, 141734, 147457, 'HIGH'),
         ('ordinary curve mod 31', 1, 4, 31, 'OK'),
     ]
     for label, a, b, p, expected in cases:
@@ -5066,6 +5094,13 @@ def _legendre_connection_check(lib, samples):
     return ok, worst_p, worst_d, n_p
 
 
+# Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U hold
+# for any matrices of their shape, Q being defined from U: rows of them test
+# the engine's arithmetic, never its periods (ARCHITECTURE.md).
+_E6_IDENTITY = ("; an identity for any U, U\u2032, U\u2033, so it checks the engine's "
+                "arithmetic, not its periods")
+
+
 # ============================================================
 # AUDIT 6a — RANK 2  (Legendre, genus 1)
 # ============================================================
@@ -5087,8 +5122,12 @@ def audit_engine6_rank2(lib):
         nx += int(bool(o.ok_closed_form))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 2 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
+    # Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U
+    # hold for any matrices of their shape (Q is defined from U), so these
+    # rows test the engine's arithmetic, never its periods; the closed form
+    # and residue rows do that.
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 2 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
     # Through 2.14.0 this row counted the engine's ok_riccati, which is set
     # to 1 unconditionally (see _legendre_connection_check).
     c_ok, c_per, c_der, c_n = _legendre_connection_check(lib, samples)
@@ -5097,7 +5136,8 @@ def audit_engine6_rank2(lib):
                f'{c_n} samples in (0, 1): F = \u2082F\u2081(\u00bd,\u00bd;1;z) and F(1\u2212z) '
                f'satisfy (\u03c9,\u03c9\u2032)\u2032 = U(\u03c9,\u03c9\u2032) to {c_per:.1e}; '
                f'at all {n}, U\u2032 and U\u2033 equal central differences to {c_der:.1e}')
-    r.add_test('Lemma 3 / traceless commutator', nc == n, f'{nc}/{n}')
+    r.add_test("Lemma 3 identity in the engine's arithmetic (rank 2)", nc == n,
+               f'{nc}/{n}; tr[U,Q] = 0 and [U,Q]\u00b2 scalar hold for any 2\u00d72 U and Q')
     r.add_test('Legendre closed form tr(U[U,Q]U\')', nx == n, f'{nx}/{n}')
     if nt != n:
         r.add_finding('CRITICAL', f'rank-2 Theorem 1 failed on {n-nt} samples')
@@ -5131,14 +5171,15 @@ def audit_engine6_genus2(lib):
         n3  += int(bool(o.ok_tr3_zero))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 4 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 4 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
     r.add_test('tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
-               ntr == n and n3 == n, f'traceless {ntr}/{n}, tr3 {n3}/{n}')
+               ntr == n and n3 == n, f'traceless {ntr}/{n} (true of any matrices), '
+               f'tr3 {n3}/{n} (this M is not in companion form, so tr3 is the check)')
     if nt != n:
         r.add_finding('CRITICAL', f'genus-2 Theorem 1 failed on {n-nt} samples')
     # Paper 7 Table 1 residues of f2 at z=0,1,2,3
-    f2_exact = [61495.0/15552.0, 45.0/64.0, -45.0/64.0, -61495.0/15552.0]
+    f2_exact = [a / b for a, b in _E6_G2_TABLE1]
     f2_got = [lib.period_g2_residue_f2(float(z), 0.4, 8192) for z in range(4)]
     f2_ok = all(abs(g - e) < 1e-3 for g, e in zip(f2_got, f2_exact))
     r.add_test('Paper 7 Table 1: Res f2 at z=0,1,2,3', f2_ok,
@@ -5171,9 +5212,10 @@ def audit_engine6_quintic(lib):
         n3 += int(bool(o.ok_tr3_zero))
         worst_thm1 = max(worst_thm1, o.thm1_resid_max)
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank-4 CY3 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
-    r.add_test('tr[U,Q]^3 = 0 (Observation 4, CY3)', n3 == n, f'{n3}/{n}')
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank-4 CY3 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
+    r.add_test("Observation 4 identity in the engine's arithmetic (CY3, companion form)", n3 == n,
+               f'{n3}/{n}; tr[U,Q]\u00b3 = 0 holds for any companion-form U')
     if nt != n:
         r.add_finding('CRITICAL', f'mirror quintic Theorem 1 failed on {n-nt} samples')
     # f2(z) matches Paper 7 closed form
@@ -5231,8 +5273,8 @@ def audit_engine6_genus4(lib):
         best_odd   = min(best_odd, o.worst_odd_rel)
         fvecs.append([o.f_invariants[i] for i in range(4)])
     elapsed = (time.perf_counter() - t0) * 1e6
-    r.add_test(f'Theorem 1 entry-wise, rank 8 ({n} samples)', nt == n,
-               f'{nt}/{n} pass, worst residual {worst_thm1:.2e}', elapsed)
+    r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 8 ({n} samples)", nt == n,
+               f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
     r.add_test('Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0', n_obs4 == n,
                f'{n_obs4}/{n}, best {best_odd:.2e}, worst {worst_odd:.2e} '
                f'(Paper 7 verifies only through rank 6)')
@@ -5281,8 +5323,9 @@ def _ob_e6_theorem1(engines, corrupt=False):
             bad.append(key)
     if bad:
         return False, f'Theorem 1 fails on {", ".join(bad)}'
-    return True, (f'Theorem 1 entry-wise at rank 2, genus 2, the mirror quintic and '
-                  f'genus 4, worst residual {worst:.1e}')
+    return True, (f'Theorem 1, an identity for any connection, holds in the engines\' '
+                  f'arithmetic at rank 2, genus 2, the mirror quintic and genus 4, worst '
+                  f'residual {worst:.1e}')
 _ob_e6_theorem1.corruption = 'a tolerance below its residuals'
 
 
@@ -5354,18 +5397,33 @@ def _ob_e6_conjecture6(engines, corrupt=False):
 _ob_e6_conjecture6.corruption = 'three of its seven points'
 
 _E6_LAMBDA2 = (-884266719222068786621093750, 97)
-_E6_RATIOS = []                          # filled once: SymPy is slow
+_E6_EXACT = []                           # filled once: SymPy is slow
+
+# Paper 7, Table 1: the residues of f2 = tr([U,Q]^2) for genus 2, at z = 0..3.
+_E6_G2_TABLE1 = ((61495, 15552), (45, 64), (-45, 64), (-61495, 15552))
 
 
-def _e6_residue_ratios():
-    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
-    exact rationals (SymPy); None without SymPy."""
-    if _E6_RATIOS:
-        return _E6_RATIOS[0]
+def _e6_exact_residues():
+    """This run's exact residues, by SymPy, or None without it.
+
+    {'quintic': {z0: (Res f2, Res f4)} at z0 = 0 and 1/3125, from the mirror
+     quintic's Picard-Fuchs operator,
+     'genus2': [Res f2 at z = 0, 1, 2, 3], from the genus-2 engine's own
+     M(z), read from its source, with SymPy's exact derivative in place of
+     the engine's hand-written M'(z)}.
+
+    The genus-2 f2 is built as polynomials over the common denominator
+    D = z(z-1)(z-2)(z-3): with M = N/D, -Q D^2 = N'D - ND' + N^2 and
+    [M,Q] D^3 = PN - NP, so f2 = tr((NP - PN)^2) / D^6 and each residue is a
+    Taylor coefficient at a simple root of D (simplifying the rational
+    entries instead takes about 50 s)."""
+    if _E6_EXACT:
+        return _E6_EXACT[0]
     try:
         import sympy as sp
     except ImportError:
         return None
+    import re as _re6
     z = sp.Symbol('z')
     a3 = 2*(12500*z-3)/(z*(3125*z-1)); a2 = (45000*z-7)/(z**2*(3125*z-1))
     a1 = (15000*z-1)/(z**3*(3125*z-1)); a0 = 120/(z**3*(3125*z-1))
@@ -5375,10 +5433,51 @@ def _e6_residue_ratios():
     cQ2 = cQ@cQ
     f2s = sp.cancel(sp.together(cQ2.trace()))
     f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
-    ratios = tuple(sp.Rational(sp.residue(f4s, z, pt), sp.residue(f2s, z, pt))
-                   for pt in (sp.Integer(0), sp.Rational(1, 3125)))
-    _E6_RATIOS.append(ratios)
-    return ratios
+    quintic = {pt: (sp.Rational(sp.residue(f2s, z, pt)), sp.Rational(sp.residue(f4s, z, pt)))
+               for pt in (sp.Integer(0), sp.Rational(1, 3125))}
+    src = _decode(_SRC_GENUS2)
+    body = src[src.index('static void compute_M(T z, T *M)'):src.index('static void compute_Mp')]
+    ent = {int(i): _re6.sub(r'(\d+)\.0\b', r'\1', e)
+           for i, e in _re6.findall(r'M\[(\d+)\] = T\((.*)\);', body)}
+    if sorted(ent) != list(range(16)):
+        raise ArithmeticError("the genus-2 engine's M(z) could not be read from its source")
+    D = sp.Poly(z * (z - 1) * (z - 2) * (z - 3), z)
+    N = []
+    for i in range(16):
+        num, den = sp.fraction(sp.cancel(sp.sympify(ent[i], locals={'z': z}, rational=True)
+                                         * D.as_expr()))
+        if sp.Poly(den, z).degree() != 0:
+            raise ArithmeticError('the genus-2 M(z) has a pole off z = 0, 1, 2, 3')
+        N.append(sp.Poly(num / den, z))
+    N = [N[4 * i:4 * i + 4] for i in range(4)]
+    zero = sp.Poly(0, z)
+
+    def mul(A, B):
+        return [[sum((A[i][k] * B[k][j] for k in range(4)), zero) for j in range(4)]
+                for i in range(4)]
+    Dp, NN = D.diff(z), mul(N, N)
+    P = [[N[i][j].diff(z) * D - N[i][j] * Dp + NN[i][j] for j in range(4)] for i in range(4)]
+    NP, PN = mul(N, P), mul(P, N)
+    C = [[NP[i][j] - PN[i][j] for j in range(4)] for i in range(4)]
+    CC = mul(C, C)
+    f2num = sum((CC[i][i] for i in range(4)), zero).as_expr()
+    genus2 = []
+    for a in range(4):
+        H = sp.quo(D, sp.Poly(z - a, z)).as_expr()     # D / (z - a)
+        g = f2num / H ** 6                              # (z - a)^6 f2: regular at a
+        genus2.append(sp.Rational(sp.cancel(sp.diff(g, z, 5).subs(z, a) / 120)))
+    out = {'quintic': quintic, 'genus2': genus2}
+    _E6_EXACT.append(out)
+    return out
+
+
+def _e6_residue_ratios():
+    """Res(f4)/Res(f2) of the mirror quintic at z = 0 and z = 1/3125, in
+    exact rationals (SymPy); None without SymPy."""
+    res = _e6_exact_residues()
+    if res is None:
+        return None
+    return tuple(r4 / r2 for r2, r4 in res['quintic'].values())
 
 
 def _ob_e6_conjecture7(engines, corrupt=False):
@@ -5433,39 +5532,56 @@ def audit_engine6_cfl(engines):
 # residue theorem (finite residues of f2 sum to zero).  Verified by coqc,
 # which returns a real exit code — unlike the daemon's write-only check.
 
-def gen_engine6_coq_cert(filename=None, lam_num=-_E6_LAMBDA2[0]):
-    """Emit a Coq certificate of Engine 6's EXACT results. lambda2 is
-    -lam_num/97; a different lam_num states a false lambda2, which coqc must
-    reject (the certificate's negative control)."""
+def _coq_q(x):
+    """A Coq Q literal for the rational x."""
+    return f'(({x.p}) # {x.q})'
+
+
+def gen_engine6_coq_cert(filename=None, lam_num=-_E6_LAMBDA2[0], residues=None):
+    """A Coq certificate of Engine 6's exact results, stated on the residues
+    this run computed (_e6_exact_residues): Conjecture 7 on the mirror
+    quintic's, Paper 7's Table 1 on the genus-2 engine's, and the residue
+    theorem on those. lambda2 is -lam_num/97; a different lam_num states a
+    false lambda2, which coqc must reject (the certificate's control).
+    (filename, text), or (None, None) without SymPy. Through 2.14.0 the
+    certificate stated integers fixed in this file, and its genus-2 theorem
+    was a + b - b - a = 0."""
+    res = residues or _e6_exact_residues()
+    if res is None:
+        return None, None
     if filename is None:
         filename = os.path.join(_pqv_workdir(), 'pq_engine6_cert.v')
-    # Conjecture 7 exact residue integers (z=0 and conifold z=1/3125)
-    rf2_0, rf4_0 = (-527286529541015625000,
-                     4806824016156951984157785773277282714843750000)
-    rf2_c, rf4_c = ( 527286529541015625000,
-                    -4806824016156951984157785773277282714843750000)
+    conj7 = []
+    for tag, (r2, r4) in zip(('z0', 'conifold'), res['quintic'].values()):
+        conj7 += [f"Theorem conj7_{tag} :",
+                  f"  97 * (({r4.p}) * {r2.q}) = (-{lam_num}) * (({r2.p}) * {r4.q}).",
+                  "Proof. vm_compute. reflexivity. Qed.", ""]
+    g = [_coq_q(x) for x in res['genus2']]
+    table = ' /\\ '.join(f'{gi} == (({a}) # {b})' for gi, (a, b) in zip(g, _E6_G2_TABLE1))
     lines = [
-        "(* pq-engine6 Coq certificate — Paper 7 exact results *)",
+        "(* pq-engine6 Coq certificate: Paper 7's exact results, on the residues *)",
+        "(* this run computed (SymPy): the mirror quintic's from its Picard-Fuchs  *)",
+        "(* operator, the genus-2 engine's from its own connection matrix M(z).    *)",
         "Require Import ZArith QArith.",
         "Open Scope Z_scope.",
         "",
-        "(* Conjecture 7 (CY3 residue rigidity): Res(f4)/Res(f2) = -lambda2 *)",
-        "(*   <=>  97 * Res(f4) = -lambda2_num * Res(f2)                    *)",
-        f"Theorem conj7_z0 :",
-        f"  (97 * {rf4_0}) = ((-{lam_num}) * ({rf2_0})).",
-        "Proof. vm_compute. reflexivity. Qed.",
-        "",
-        f"Theorem conj7_conifold :",
-        f"  (97 * ({rf4_c})) = ((-{lam_num}) * {rf2_c}).",
-        "Proof. vm_compute. reflexivity. Qed.",
-        "",
-        "(* Genus-2 residue theorem: finite residues of f2 sum to zero *)",
+        "(* Conjecture 7 (CY3 residue rigidity): Res(f4)/Res(f2) = lambda2 = -lam/97 *)",
+        "(* at z = 0 and z = 1/3125, i.e. 97 Res(f4) = -lam Res(f2), cleared of     *)",
+        "(* denominators.                                                           *)",
+    ] + conj7 + [
         "Open Scope Q_scope.",
-        "Theorem genus2_residue_sum_zero :",
-        "  (61495 # 15552) + (45 # 64) + (- (45 # 64)) + (- (61495 # 15552)) == 0.",
-        "Proof. reflexivity. Qed.",
+        "(* Paper 7 Table 1: the genus-2 residues of f2 at z = 0, 1, 2, 3. *)",
+        f"Theorem genus2_table1 : {table}.",
+        "Proof. repeat split; vm_compute; reflexivity. Qed.",
+        "",
+        "(* The residue theorem: f2 vanishes to order 8 at infinity, so its finite *)",
+        "(* residues sum to zero. True of any connection of this shape: a check   *)",
+        "(* of the residues, not of the connection.                               *)",
+        f"Theorem genus2_residue_sum_zero : {' + '.join(g)} == 0.",
+        "Proof. vm_compute. reflexivity. Qed.",
         "Print Assumptions conj7_z0.",
         "Print Assumptions conj7_conifold.",
+        "Print Assumptions genus2_table1.",
         "Print Assumptions genus2_residue_sum_zero.",
     ]
     cert = '\n'.join(lines) + '\n'
@@ -5474,32 +5590,42 @@ def gen_engine6_coq_cert(filename=None, lam_num=-_E6_LAMBDA2[0]):
     return filename, cert
 
 def audit_engine6_coq():
-    """The Engine 6 Coq certificate verified by coqc, and coqc shown to reject
-    it with a wrong lambda2; then Conjecture 7 through the persistent daemon,
-    which must reject a wrong lambda2 as well. Through 2.14.0 one row only
-    checked that the certificate file had been written, and the daemon row
-    passed without reading a verdict."""
+    """The Engine 6 Coq certificate, stated on this run's exact residues,
+    verified by coqc; coqc shown to reject it with a wrong lambda2; and
+    Conjecture 7 on the same residues through the persistent daemon, which
+    must reject a wrong lambda2 as well. Through 2.14.0 one row only checked
+    that the certificate file had been written, the daemon row passed
+    without reading a verdict, and the certificate stated integers fixed in
+    this file."""
     r = _AuditResult('Engine 6: Coq Certificate')
-    names = ('Conjecture 7 + genus-2 residue theorem verified by coqc',
+    names = ("Conjecture 7 and Paper 7 Table 1 on this run's residues, verified by coqc",
              'Engine 6 Coq certificate rejects a wrong \u03bb\u2082',
              'Conjecture 7 via persistent Coq daemon')
-    cert_file, _ = gen_engine6_coq_cert()
     if not shutil.which('coqc'):
         for name in names:
             r.add_skip(name, 'coqc not in PATH \u2014 !apt install coq -y -qq', 'coq')
         return r
+    residues = _e6_exact_residues()
+    if residues is None:
+        for name in names:
+            r.add_skip(name, "SymPy not available: the certificate states this run's exact "
+                             "residues \u2014 pip install sympy", 'sympy')
+        return r
     lam_num = -_E6_LAMBDA2[0]
+    cert_file, _ = gen_engine6_coq_cert(residues=residues)
     try:
         t0 = time.perf_counter()
         ok, detail = coq_check(cert_file)
         elapsed = (time.perf_counter() - t0) * 1000
         r.add_test(names[0], ok,
-                   ('coqc accepted 3 theorems (2 bignum identities + '
-                    f'1 rational), all closed, {elapsed:.0f}ms' if ok else detail))
+                   ('coqc accepted 4 theorems on the residues SymPy computed this run: '
+                    'Conjecture 7 at z = 0 and z = 1/3125, the genus-2 residues equal to '
+                    f'Paper 7 Table 1, and their sum zero; all closed, {elapsed:.0f}ms'
+                    if ok else detail))
         if not ok:
             r.add_finding('CRITICAL', 'Engine 6 Coq certificate rejected by coqc')
         wrong_file, _ = gen_engine6_coq_cert(
-            os.path.join(_pqv_workdir(), 'pq_engine6_cert_wrong.v'), lam_num + 1)
+            os.path.join(_pqv_workdir(), 'pq_engine6_cert_wrong.v'), lam_num + 1, residues)
         took, why = coq_check(wrong_file)
         r.add_test(names[1], ok and not took,
                    f'the same certificate with \u03bb\u2082 = \u2212{lam_num + 1}/97: '
@@ -5519,20 +5645,21 @@ def audit_engine6_coq():
             r.add_skip(names[2], 'coqtop failed to start', 'coq')
             return r
         t0 = time.perf_counter()
-        # The exact Conjecture 7 identities through the daemon, and one with
-        # lambda2 off by one, which it must reject.
-        rf2, rf4 = 527286529541015625000, 4806824016156951984157785773277282714843750000
-        true_ok = [daemon.check_theorem(f'e6_{tag}', stmt)[0] for tag, stmt in (
-            ('conj7_z0', f'(97 * {rf4}) = ((-{lam_num}) * (-{rf2}))'),
-            ('conj7_conifold', f'(97 * (-{rf4})) = ((-{lam_num}) * {rf2})'))]
-        wrong_ok, why = daemon.check_theorem(
-            'e6_conj7_wrong', f'(97 * {rf4}) = ((-{lam_num + 1}) * (-{rf2}))')
+        # Conjecture 7 on this run's residues through the daemon, cleared of
+        # denominators, and once with lambda2 off by one, which it must reject.
+        def stmt(r2, r4, lam):
+            return f'97 * (({r4.p}) * {r2.q}) = (-{lam}) * (({r2.p}) * {r4.q})'
+        pts = list(residues['quintic'].values())
+        true_ok = [daemon.check_theorem(f'e6_{tag}', stmt(r2, r4, lam_num))[0]
+                   for tag, (r2, r4) in zip(('conj7_z0', 'conj7_conifold'), pts)]
+        wrong_ok, why = daemon.check_theorem('e6_conj7_wrong', stmt(*pts[0], lam_num + 1))
         elapsed = (time.perf_counter() - t0) * 1000
         daemon.close()
         n_ok = sum(true_ok)
         r.add_test(names[2], n_ok == 2 and not wrong_ok,
-                   f'{n_ok}/2 proved by coqtop and closed; \u03bb\u2082 off by one '
-                   + ('rejected' if not wrong_ok else 'ACCEPTED') + f', {elapsed:.0f}ms')
+                   f"{n_ok}/2 on this run's residues proved by coqtop and closed; "
+                   f'\u03bb\u2082 off by one ' + ('rejected' if not wrong_ok else 'ACCEPTED')
+                   + f', {elapsed:.0f}ms')
     except Exception as e:
         r.add_skip(names[2], f'daemon error: {str(e)[:80]}', 'coq')
     return r
@@ -5545,21 +5672,23 @@ def audit_engine6_coq():
 # tests/test_pqverify.py holds these to the audits' own titles.
 _E6_CHECKS = {
     'rank2':   ('Engine 6a: rank-2 Legendre',
-                ['Theorem 1 entry-wise, rank 2',
+                ["Theorem 1 identity in the engine's arithmetic, rank 2",
                  "Riccati inputs: U the Legendre periods' connection, U\u2032 and U\u2033 "
                  "its derivatives",
-                 'Lemma 3 / traceless commutator', "Legendre closed form tr(U[U,Q]U')",
+                 "Lemma 3 identity in the engine's arithmetic (rank 2)",
+                 "Legendre closed form tr(U[U,Q]U')",
                  'Residues |Res| = 17/4 at z=0,1 (antisymmetric)']),
     'genus2':  ('Engine 6b: rank-4 genus-2',
-                ['Theorem 1 entry-wise, rank 4',
+                ["Theorem 1 identity in the engine's arithmetic, rank 4",
                  'tr[U,Q] = 0 and tr[U,Q]^3 = 0 (Observation 4)',
                  'Paper 7 Table 1: Res f2 at z=0,1,2,3', 'Paper 7 Table 1: Res f4 at z=0']),
     'quintic': ('Engine 6c: rank-4 mirror quintic',
-                ['Theorem 1 entry-wise, rank-4 CY3', 'tr[U,Q]^3 = 0 (Observation 4, CY3)',
+                ["Theorem 1 identity in the engine's arithmetic, rank-4 CY3",
+                 "Observation 4 identity in the engine's arithmetic (CY3, companion form)",
                  'f2(z) matches Paper 7 closed form',
                  'Conjecture 7: CY3 residue rigidity']),
     'genus4':  ('Engine 6d: rank-8 genus-4 (NEW)',
-                ['Theorem 1 entry-wise, rank 8',
+                ["Theorem 1 identity in the engine's arithmetic, rank 8",
                  'Observation 4 at rank 8: tr[U,Q]^(2k+1) = 0',
                  'Conjecture 6 lower bound at g=4: f2,f4,f6,f8 independent']),
 }

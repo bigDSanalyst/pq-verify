@@ -96,6 +96,19 @@ not apply. Computed exactly at sample points, their [U, Q] still has rank two
 and odd power traces of zero, but that is an observation, not a proof. The
 rank-8 check remains evidence beyond Paper 7's rank-6 verification.
 
+**Which of Engine 6's checks test its periods.** With Q defined as
+−(U′ + U²), the two sides of Theorem 1 agree for any matrices U, U′ and U″,
+at every rank (checked in exact arithmetic on unrelated random matrices), and
+at rank 2 so do Lemma 3's tr[U, Q] = 0 and [U, Q]² scalar. Those rows, and
+Observation 4 where U is a companion matrix, test the engine's arithmetic,
+and are named "… identity in the engine's arithmetic …". The periods are
+tested by the rows that compare with something outside the identities: the
+connection U against the Legendre periods ₂F₁(½, ½; 1; z), the Legendre
+closed form and residues ±17/4, Paper 7's Table 1, the mirror quintic's f2
+and Conjecture 7, and the genus-2 and genus-4 odd traces. The Coq certificate
+states the residues each run computes, exactly, and Conjecture 7 and Table 1
+on them.
+
 [1] N. C. Maino, *A Matrix Amari–Schwarzian Identity, with Witnesses at
 Genus 1, Genus 2, and the Mirror Quintic*, Zenodo, 2026,
 [doi:10.5281/zenodo.20129361](https://doi.org/10.5281/zenodo.20129361).

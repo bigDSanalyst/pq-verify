@@ -8950,8 +8950,10 @@ def test_coq_certificate_controls_need_a_certificate_that_pins_its_claim(monkeyp
     core, eng = _all_engines()
     wd = core._pqv_workdir()
     # Engine 6 and the batch certificate, stated wrongly: coqc rejects both.
-    wrong = core.gen_engine6_coq_cert(os.path.join(wd, "e6_wrong.v"), -core._E6_LAMBDA2[0] + 1)[0]
-    assert core.coq_check(wrong)[0] is False
+    if core._e6_exact_residues() is not None:
+        wrong = core.gen_engine6_coq_cert(os.path.join(wd, "e6_wrong.v"),
+                                          -core._E6_LAMBDA2[0] + 1)[0]
+        assert core.coq_check(wrong)[0] is False
     res = [core.AuditResult("Z_3329 (Kyber)"), core.AuditResult("Z_8380417 (Dilithium)")]
     batch = core.gen_coq_cert(res, os.path.join(wd, "batch_wrong.v"), corrupt=True)
     assert core.coq_check(batch)[0] is False
@@ -8968,3 +8970,123 @@ def test_coq_certificate_controls_need_a_certificate_that_pins_its_claim(monkeyp
     rows = _rows(core.audit_full_ntt(eng["zq"]))
     assert rows["NTT Coq certificate verified"]["passed"] is True
     assert rows[name]["passed"] is False
+
+
+# ---- The four follow-ups: identity rows, Engine 6's certificate, embedding degree --------
+
+def test_engine6_identity_rows_say_they_check_arithmetic():
+    """Theorem 1, Lemma 3 at rank 2 and Observation 4 for a companion-form U
+    hold for any matrices of their shape; the rows say so instead of
+    reading as verification of the periods."""
+    from fractions import Fraction as F
+    import pq_verify.core as core
+    rng = _random.Random(1)
+
+    def rnd(n):
+        return [[F(rng.randint(-9, 9), rng.randint(1, 5)) for _ in range(n)] for _ in range(n)]
+
+    def mul(A, B):
+        return [[sum(A[i][k] * B[k][j] for k in range(len(B))) for j in range(len(B[0]))]
+                for i in range(len(A))]
+
+    def lin(*terms):
+        return [[sum(c * M[i][j] for c, M in terms) for j in range(len(terms[0][1]))]
+                for i in range(len(terms[0][1]))]
+    for n in (2, 4, 8):                  # Theorem 1, as the engines compute it, for random U, U', U''
+        U, Up, Upp = rnd(n), rnd(n), rnd(n)
+        Q = lin((-1, Up), (-1, mul(U, U)))
+        Qp = lin((-1, Upp), (-1, mul(Up, U)), (-1, mul(U, Up)))
+        D = lin((2, mul(U, U)), (-2, Q))
+        A = lin((-4, mul(U, Up)), (-2, Qp))
+        S, Sp = lin((2, Q)), lin((2, Qp))
+        in1, in2, in3 = lin((1, A), (1, Sp)), lin((1, D), (1, S)), lin((1, D), (2, S))
+        R = lin((1, mul(in1, in1)), (-2, mul(in2, mul(in3, in3))))
+        C = lin((1, mul(U, Q)), (-1, mul(Q, U)))
+        assert R == lin((16, mul(U, mul(C, Up)))), n
+    with contextlib.redirect_stdout(io.StringIO()):
+        e6 = core.compile_engine6()
+        core.bind_engine6(e6)
+    names = {t["name"]: t for key, fn in (("rank2", core.audit_engine6_rank2),
+                                          ("genus2", core.audit_engine6_genus2),
+                                          ("quintic", core.audit_engine6_quintic),
+                                          ("genus4", core.audit_engine6_genus4))
+             if e6.get(key) for t in fn(e6[key]).tests}
+    ident = [n for n in names if "identity in the engine's arithmetic" in n]
+    if all(e6.get(k) for k in ("rank2", "genus2", "quintic", "genus4")):
+        assert len(ident) == 6, ident
+    assert all("for any" in names[n]["detail"] for n in ident), [names[n]["detail"] for n in ident]
+    assert not [n for n in names if n.startswith("Theorem 1 entry-wise")]
+
+
+def test_engine6_certificate_states_this_runs_residues(monkeypatch):
+    pytest.importorskip("sympy")
+    import os
+    import pq_verify.core as core
+    res = core._e6_exact_residues()
+    assert [(x.p, x.q) for x in res["genus2"]] == list(core._E6_G2_TABLE1)
+    num, den = core._E6_LAMBDA2                  # Res(f4)/Res(f2) = num/den at both points
+    assert all(r4 * den == r2 * num for r2, r4 in res["quintic"].values())
+    # A different genus-2 connection gives different residues, so the
+    # certificate's Table 1 theorem is about the engine it came from.
+    real = core._decode
+
+    def tweaked(blob):
+        text = real(blob)
+        if blob is core._SRC_GENUS2:
+            text = text.replace("M[3] = T((3.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));",
+                                "M[3] = T((5.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));", 1)
+            assert "5.0/2.0" in text
+        return text
+    monkeypatch.setattr(core, "_E6_EXACT", [])
+    monkeypatch.setattr(core, "_decode", tweaked)
+    other = core._e6_exact_residues()
+    assert [(x.p, x.q) for x in other["genus2"]] != list(core._E6_G2_TABLE1)
+    if _shutil.which("coqc"):
+        cert, _ = core.gen_engine6_coq_cert(os.path.join(core._pqv_workdir(), "e6_other.v"),
+                                            residues=other)
+        assert core.coq_check(cert)[0] is False
+        good, _ = core.gen_engine6_coq_cert(os.path.join(core._pqv_workdir(), "e6_good.v"),
+                                            residues=res)
+        assert core.coq_check(good)[0] is True
+
+
+def test_largest_prime_factor_is_bounded_and_right():
+    import time
+    E = _ec()
+    rng = _random.Random(4)
+    for _ in range(500):
+        n = rng.randrange(2, 10 ** rng.randint(1, 15))
+        assert E.largest_prime_factor(n) == max(E.factor(n)), n
+    t0 = time.perf_counter()
+    assert E.largest_prime_factor(((1 << 61) - 1) * 9223372036854775783) is None
+    assert time.perf_counter() - t0 < 10
+    assert E.largest_prime_factor(65537 ** 3) == 65537
+
+
+def test_embedding_degree_replaces_the_near_singular_finding(monkeypatch):
+    core, eng = _all_engines()
+    E = _ec()
+    pos = {1: (67089, 7437, 131267), 3: (13066, 76929, 132299),
+           4: (110478, 24182, 136531), 6: (138116, 141734, 147457)}
+    for k, (a, b, p) in pos.items():
+        found = [f["description"] for f in core.audit_curve(eng, a, b, p).findings
+                 if f["description"].startswith("Small embedding degree")]
+        assert len(found) == 1 and found[0].startswith(f"Small embedding degree k={k} "), (k, found)
+    for a, b, p in ((51725, 63044, 131267), (38135, 145724, 147457), (1, 6, 8380417), (1, 55, 8380417)):
+        r = core.audit_curve(eng, a, b, p)
+        assert not [f for f in r.findings if "embedding" in f["description"] or
+                    "ingular fiber" in f["description"]], r.findings
+        assert all("stability" not in t["detail"] for t in r.tests)
+    with contextlib.redirect_stdout(io.StringIO()):
+        rows = _rows(core.audit_adversarial(eng))
+    assert rows["B3: Small embedding degree"]["passed"] is True
+    assert _rows(core.audit_safecurves(eng))["embedding degree 6 mod 147457"]["passed"] is True
+    # With the subgroup's order unknown the finding cannot be made: B3 must
+    # fail, and the curve says it was not checked.
+    monkeypatch.setattr(E, "largest_prime_factor", lambda n, *a, **k: None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        rows = _rows(core.audit_adversarial(eng))
+    assert rows["B3: Small embedding degree"]["passed"] is False
+    r = core.audit_curve(eng, *pos[3])
+    assert any(f["severity"] == "INFO" and "Embedding degree not checked" in f["description"]
+               for f in r.findings)
