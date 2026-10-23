@@ -5,6 +5,20 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.0] — 2026-10-23
+
+A feature release for the research and classical tracks, whose engines now
+decide exactly and certify their answers. DQBF is decided exactly, and each
+answer's certificate is checked. The CFL front end parses a real grammar and
+decides its obligations through the DQBF stage. Elliptic-curve point counts
+carry certificates, at any size for j = 0 and 1728 and up to 2³²⁰ for other
+curves by Schoof–Elkies–Atkin, which counts P-256 to its published order.
+Self-suite checks that passed whatever they found now fail when their claim
+is false; there are still 160. Native JSON reports name the pq-verify that
+wrote them (schema 1.2), and gain fields but lose none. No pinned vector or
+exit code changes, and no verdict on a vendor library depended on the
+rebuilt engines.
+
 ### Added
 
 - **Schoof–Elkies–Atkin point counting** (`pq_verify/sea.py`,

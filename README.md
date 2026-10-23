@@ -1,4 +1,4 @@
-# pq-verify v2.13.0 — PQC Implementation Verification
+# pq-verify v2.14.0 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -261,7 +261,7 @@ appear as annotations on the pull request, and the build fails on any result
 that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.13.0
+- uses: bigDSanalyst/pq-verify@v2.14.0
   with:
     audit: dsa                       # kem | dsa | hbs | ntt
     library: build/libmldsa65.so
@@ -272,7 +272,7 @@ With no library at all, it runs the NIST ACVP suites against pq-verify's own
 reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.13.0
+- uses: bigDSanalyst/pq-verify@v2.14.0
 ```
 
 | Input | Default | Purpose |
@@ -600,7 +600,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.13.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.14.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
