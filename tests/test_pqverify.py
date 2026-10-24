@@ -2254,7 +2254,8 @@ import pathlib as _pathlib
 import re as _re
 
 _REPO = _pathlib.Path(__file__).resolve().parent.parent
-_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
+_DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md",
+         "EVIDENCE.md", "SOURCE-AUDIT.md")
 
 
 def _doc_text(name):
@@ -2342,7 +2343,8 @@ def test_internal_doc_links_resolve():
     """
     import pathlib as _pl
     files = ("README.md", "QUICKSTART.md", "SECURITY.md", "CHANGELOG.md",
-             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md")
+             "AUDITS.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md",
+             "EVIDENCE.md", "SOURCE-AUDIT.md")
     present = {n: _pl.Path(_REPO / n) for n in files
                if (_REPO / n).exists()}
     if not present:
