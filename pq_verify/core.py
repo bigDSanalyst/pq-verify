@@ -993,7 +993,7 @@ def audit_gf2(lib, n_trials=1000):
     """Random XOR systems with at least as many equations as variables, so
     most have no solution. Each answer is checked apart from the engine: an
     assignment against every equation, an 'unsatisfiable' by elimination
-    here. Through 2.14.0 an unsatisfiable answer counted as verified
+    here. Through 2.13.0 an unsatisfiable answer counted as verified
     unchecked -- 874 of the 1000 -- so an engine that gave it to every
     system passed."""
     r = AuditResult('GF(2)')
@@ -1041,7 +1041,7 @@ def audit_gf2_nullspace(lib, n_trials=200):
     consistency and rank: an 'unsatisfiable' must be right, and a consistent
     system must have exactly 2^(variables - rank) solutions, each checked
     against every equation and all distinct -- which makes the enumeration
-    complete. Through 2.14.0 an unsatisfiable answer counted as verified
+    complete. Through 2.13.0 an unsatisfiable answer counted as verified
     unchecked, and the number of free variables was compared only with the
     engine's own."""
     r = AuditResult('GF(2) Null-Space')
@@ -1360,7 +1360,7 @@ def audit_conformity(lib):
 
     # The engine's one validity guard is omega = 0, where u = omega'/omega is
     # undefined: it must refuse that point and accept the one above. Through
-    # 2.14.0 only the second was checked, which no input here could fail.
+    # 2.13.0 only the second was checked, which no input here could fail.
     zero = lib.conformity_compute(ctypes.byref(PeriodData(0.0, wp, wpp, wppp, t0)))
     r.add_test('Valid computation', res.valid == 1 and zero.valid == 0,
                f'valid={res.valid} at t = {t0}; valid={zero.valid} with \u03c9 = 0, '
@@ -1485,7 +1485,7 @@ def audit_curve(engines, a, b, p):
         elif trace == 2:
             # #E = p - 1: every prime l dividing #E divides p - 1, so the
             # embedding degree is 1 and a pairing carries the discrete log
-            # into F_p*. Through 2.14.0 this fired for |t| <= 2, but traces
+            # into F_p*. Through 2.13.0 this fired for |t| <= 2, but traces
             # -1 and -2 have no such structure, and 0 is the supersingular
             # finding below.
             r.add_finding('HIGH',
@@ -1596,7 +1596,7 @@ def audit_curve(engines, a, b, p):
             res = lib_cf.conformity_compute(ctypes.byref(points[1]))
             # D = 2u' + 4u^2 with u = omega'/omega = Delta'/(12 Delta), from the
             # discriminant itself rather than the omega derivatives the engine
-            # was given. Through 2.14.0 the row checked only the engine's
+            # was given. Through 2.13.0 the row checked only the engine's
             # valid flag, which is 0 only for omega = 0.
             dl, dlp = 4.0 * float(a) ** 3 + 27.0 * float(b) ** 2, 54.0 * float(b)
             u = dlp / (12.0 * dl)
@@ -2047,7 +2047,7 @@ def audit_fips203_params():
 def audit_exhaustive_inverses(lib):
     """Every inverse in Z_3329 through the engine, and a sample of a*x = b.
 
-    Through 2.14.0 the exhaustive row checked Python's own pow(a, q - 2, q)
+    Through 2.13.0 the exhaustive row checked Python's own pow(a, q - 2, q)
     against a*x = 1 -- Fermat's little theorem in the interpreter, which no
     defect in pq-verify could make fail. Each a now goes through the engine,
     and its answer is checked here."""
@@ -2104,7 +2104,7 @@ def _engine_zeta_table(lib, n):
 def audit_twiddle_completeness(lib):
     """The engine's own 128 Kyber zetas: its root has order 256, the table
     holds each of the root's first 128 powers once, and the butterfly is
-    right with each power. Through 2.14.0 the first three rows applied
+    right with each power. Through 2.13.0 the first three rows applied
     Python's pow to pq-verify's constant 17, which tested no
     implementation; they now read the table the engine's NTT and Freivalds
     check use."""
@@ -2289,7 +2289,7 @@ def audit_adversarial(engines):
     # Small embedding degree (MOV / Frey-Ruck): ordinary curves whose largest
     # prime-order subgroup has k = 1, 3, 4 and 6 (trace 2, and MNT-style
     # orders), each found by search and its count certified at run time; and
-    # two controls whose k is in the tens of thousands. Through 2.14.0 this
+    # two controls whose k is in the tens of thousands. Through 2.13.0 this
     # was "near-singular curves", flagged by |4a^3 + 27b^2|/p < 0.01, which
     # means nothing over F_p.
     def _k(a, b, p):
@@ -2402,7 +2402,7 @@ def audit_fips203_zetas(lib):
     Q, Z = KYBER_Q, KYBER_ZETA
     # The engine's table against FIPS 203's definition of it, zeta^BitRev7(i)
     # mod q, computed here apart from the engine (its own bit reversal and
-    # power), compared mod q. Through 2.14.0 the row checked only that 17
+    # power), compared mod q. Through 2.13.0 the row checked only that 17
     # has order 256, by Python's pow on pq-verify's constant.
     tab = _engine_zeta_table(lib, 128)
     fips = [pow(Z, _bitrev(i, 7), Q) for i in range(128)]
@@ -2647,7 +2647,7 @@ def audit_full_ntt(lib):
         f_layer = f_next
 
     # Algorithm 9 and the layers share the zeta table; the definition does
-    # not. Through 2.14.0 only the first two were compared.
+    # not. Through 2.13.0 only the first two were compared.
     defined = _mlkem_ntt_by_definition(f_input)
     ntt_match = f_layer == f_ntt == defined
 
@@ -2663,7 +2663,7 @@ def audit_full_ntt(lib):
     # and Coq recomputes it from its own FIPS 203 definitions. Before 2.9.0 it
     # held one layer-0 butterfly under a "Full NTT" header. Its control is the
     # same certificate with one output off by one, which coqc must reject:
-    # through 2.14.0 that row only checked the file had been written.
+    # through 2.13.0 that row only checked the file had been written.
     names = ('NTT Coq certificate rejects a wrong output', 'NTT Coq certificate verified')
     ntt_cert_file = os.path.join(_pqv_workdir(), 'pq_ntt_cert.v')
     _, thms = gen_coq_ntt_cert('ML-KEM', f_input, f_ntt, ntt_cert_file)
@@ -2737,7 +2737,7 @@ def audit_freivalds_ntt(lib):
     lib.zq_ntt_forward(y, N, Q, Z)
     # The engine's NTT and its Freivalds check share one zeta table, so the
     # check accepting the NTT says nothing if that table is wrong. The NTT
-    # must also be FIPS 203's, by the definition; through 2.14.0 it was not
+    # must also be FIPS 203's, by the definition; through 2.13.0 it was not
     # compared with anything.
     fips = list(y) == _mlkem_ntt_by_definition(list(x))
     ok = lib.zq_freivalds_ntt(x, y, N, Q, Z, 10, freivalds_seed(0))
@@ -3305,7 +3305,7 @@ def audit_aes_sbox(lib_gf2):
         # Differential: an independent SAT solver decides the systems the
         # engine decided -- this AES system, and the first 100 random ones of
         # audit_gf2, most of them unsatisfiable -- and the two must agree,
-        # every model checked against every equation. Through 2.14.0 this row
+        # every model checked against every equation. Through 2.13.0 this row
         # timed CMS5 on unit clauses and passed as a hard-coded True.
         aes = [([i], test_input[i]) for i in range(8)] + [
             ([8 + i] + [j for j in range(8) if aes_matrix[i][j]], aes_constant[i])
@@ -3474,7 +3474,7 @@ def audit_fips205_params():
     """FIPS 205 sizes for all twelve SLH-DSA parameter sets, and a keyGen
     vector of each. Hash-based signatures — no NTT, no lattice.
 
-    Through 2.14.0 each row checked the table against arithmetic on itself
+    Through 2.13.0 each row checked the table against arithmetic on itself
     (pk = 2n with n = pk/2, and sig > 10 pk), which no wrong size could fail.
     Each size is now checked against FIPS 205's formulas from Table 2's
     parameters, pinned separately, and against the lengths in NIST's ACVP
@@ -3725,7 +3725,7 @@ class CoqDaemon:
     Every statement goes to coqtop followed by a marker, and coqtop's reply
     is read back up to that marker, so each verdict is coqtop's own. A
     theorem counts only if coqtop proves it and Print Assumptions finds it
-    closed under the global context, with no axiom. Through 2.14.0 the
+    closed under the global context, with no axiom. Through 2.13.0 the
     daemon wrote to coqtop and never read a reply: every theorem it was sent
     was 'accepted', true or false.
     """
@@ -3825,7 +3825,7 @@ class CoqDaemon:
 
 def audit_coq_daemon():
     """The persistent coqtop daemon: a false theorem must be rejected, and 16
-    true ones each accepted, by coqtop's own reply. Through 2.14.0 its start
+    true ones each accepted, by coqtop's own reply. Through 2.13.0 its start
     passed as a hard-coded True and the daemon never read a verdict, so both
     rows passed whatever coqtop said."""
     r = AuditResult('Coq Daemon')
@@ -3911,7 +3911,7 @@ def audit_c_cfl(engines):
     # either reject with a CFLError giving a line and column, or accept as a
     # specification that prints back to itself, with closed obligations. Any
     # other outcome (an IndexError, an error with no position) fails the row.
-    # Through 2.14.0 the row timed 100 runs of a deterministic function and
+    # Through 2.13.0 the row timed 100 runs of a deterministic function and
     # repeated the parser's round trip, which nothing could make fail.
     rng = random.Random(2603)
     alphabet = '(){}<>:;,"\\ \n_aZ09@'
@@ -4525,7 +4525,7 @@ def main(quick=False):
     coq_file = gen_coq_cert(results)
     cert_r = AuditResult('Coq Certificate')
     # The control: the same certificate with one zeta off by one, which coqc
-    # must reject. Through 2.14.0 this row only checked that the file had
+    # must reject. Through 2.13.0 this row only checked that the file had
     # been written.
     names = ('Coq batch certificate rejects a wrong zeta', 'Coq batch verified by coqc')
     wrong_file = gen_coq_cert(results, os.path.join(_pqv_workdir(), 'pq_verify_cert_wrong.v'),
@@ -5185,7 +5185,7 @@ def audit_engine6_rank2(lib):
     # and residue rows do that.
     r.add_test(f"Theorem 1 identity in the engine's arithmetic, rank 2 ({n} samples)", nt == n,
                f'{nt}/{n} hold, worst residual {worst_thm1:.2e}' + _E6_IDENTITY, elapsed)
-    # Through 2.14.0 this row counted the engine's ok_riccati, which is set
+    # Through 2.13.0 this row counted the engine's ok_riccati, which is set
     # to 1 unconditionally (see _legendre_connection_check).
     c_ok, c_per, c_der, c_n = _legendre_connection_check(lib, samples)
     r.add_test('Riccati inputs: U the Legendre periods\' connection, U\u2032 and U\u2033 '
@@ -5600,7 +5600,7 @@ def gen_engine6_coq_cert(filename=None, lam_num=-_E6_LAMBDA2[0], residues=None):
     quintic's, Paper 7's Table 1 on the genus-2 engine's, and the residue
     theorem on those. lambda2 is -lam_num/97; a different lam_num states a
     false lambda2, which coqc must reject (the certificate's control).
-    (filename, text), or (None, None) without SymPy. Through 2.14.0 the
+    (filename, text), or (None, None) without SymPy. Through 2.13.0 the
     certificate stated integers fixed in this file, and its genus-2 theorem
     was a + b - b - a = 0."""
     res = residues or _e6_exact_residues()
@@ -5650,7 +5650,7 @@ def audit_engine6_coq():
     """The Engine 6 Coq certificate, stated on this run's exact residues,
     verified by coqc; coqc shown to reject it with a wrong lambda2; and
     Conjecture 7 on the same residues through the persistent daemon, which
-    must reject a wrong lambda2 as well. Through 2.14.0 one row only checked
+    must reject a wrong lambda2 as well. Through 2.13.0 one row only checked
     that the certificate file had been written, the daemon row passed
     without reading a verdict, and the certificate stated integers fixed in
     this file."""

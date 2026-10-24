@@ -120,7 +120,7 @@ transfer criterion: for ℓ the largest prime dividing #E, the least k with
 ℓ | p^k − 1 must exceed (ℓ − 1)/100, or a pairing carries the discrete log
 of the order-ℓ subgroup into F_(p^k). It is checked up to k = 100, and when
 #E cannot be factored within a step limit an INFO finding says so. A rejected
-certificate would be a CRITICAL defect in pq-verify. Through 2.14.0 there was
+certificate would be a CRITICAL defect in pq-verify. Through 2.13.0 there was
 also a "near-singular fiber" finding, |4a³ + 27b²|/p < 0.01, which has no
 meaning over F_p: a curve is singular or it is not, and the ratio depends on
 which integers stand for a and b. And a "near-anomalous" finding fired for
