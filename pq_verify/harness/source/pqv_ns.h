@@ -38,6 +38,35 @@
 #define PQV_SYM_poly_frommsg NS(poly_frommsg)
 #endif
 
+#ifndef PQV_SYM_reduce32
+#define PQV_SYM_reduce32 NS(reduce32)
+#endif
+#ifndef PQV_SYM_caddq
+#define PQV_SYM_caddq NS(caddq)
+#endif
+#ifndef PQV_SYM_freeze
+#define PQV_SYM_freeze NS(freeze)
+#endif
+#ifndef PQV_SYM_invntt_tomont
+#define PQV_SYM_invntt_tomont NS(invntt_tomont)
+#endif
+#ifndef PQV_SYM_poly_pointwise_montgomery
+#define PQV_SYM_poly_pointwise_montgomery NS(poly_pointwise_montgomery)
+#endif
+#ifndef PQV_SYM_poly_chknorm
+#define PQV_SYM_poly_chknorm NS(poly_chknorm)
+#endif
+#ifndef PQV_SYM_power2round
+#define PQV_SYM_power2round NS(power2round)
+#endif
+#ifndef PQV_SYM_decompose
+#define PQV_SYM_decompose NS(decompose)
+#endif
+#ifndef PQV_SYM_use_hint
+#define PQV_SYM_use_hint NS(use_hint)
+#endif
 int16_t nondet_int16(void);
 uint8_t nondet_uint8(void);
+int32_t nondet_int32(void);
+int64_t nondet_int64(void);
 #endif

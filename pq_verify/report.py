@@ -122,13 +122,14 @@ RULES = {
         "name": "SourceDefect",
         "short": "Undefined behaviour, an overflow or a wrong reduction in the C source",
         "full": ("Checked from the library's C source: CBMC found an input FIPS 203 "
-                 "allows on which poly_reduce, ntt, the NTT-domain multiplication or "
-                 "frommsg has undefined behaviour (an out-of-bounds access, a signed "
-                 "overflow, an undefined shift), stores a coefficient in a type it "
-                 "does not fit, or breaks its output bound; or the exhaustive test "
-                 "found a wrong result of barrett_reduce or montgomery_reduce, or a "
-                 "zeta that is not FIPS 203's. Each is a defect for some input, "
-                 "found by checking every input, not by sampling."),
+                 "or 204 allows on which a checked function (an NTT, the NTT-domain "
+                 "multiplication, a reduction) has undefined behaviour (an "
+                 "out-of-bounds access, a signed overflow, an undefined shift), "
+                 "stores a coefficient in a type it does not fit, or breaks its "
+                 "output bound; or the exhaustive test found a wrong result of a "
+                 "reduction or of ML-DSA's rounding, or a zeta that is not the "
+                 "standard's. Each is a defect for some input, found by checking "
+                 "every input, not by sampling."),
         "level": "error",
     },
     "PQV005": {
@@ -899,9 +900,13 @@ def to_json_source_audit(result):
     doc["layout"], doc["tools"] = result.get("layout"), result.get("tools")
     doc["selftest"] = result.get("selftest")
     checks = result.get("checks") or []
+    # each check names the solver that ran; a split check also says how each
+    # group went, and which multiplications its operands' types decided
+    # without the solver
     doc["checks"] = [dict((k, r.get(k)) for k in ("function", "profile", "result",
                                                    "properties", "seconds", "contracts",
-                                                   "failed"))
+                                                   "solver", "failed", "groups", "by_types")
+                          if k in r)
                      for r in checks]
     ex = result.get("exhaustive") or {}
     doc["exhaustive"] = ex or None
@@ -926,13 +931,12 @@ def to_json_source_audit(result):
     doc["reason"] = result.get("reason")
     doc["summary"] = {"checks_passed": passed, "checks_total": total,
                       "findings": len(findings), "notes": len(doc["notes"])}
+    doc["scheme"] = result.get("scheme")
     doc["scope"] = {
         "complete": result["status"] == "VERIFIED",
-        "statement": ("poly_reduce, ntt, poly_basemul_montgomery and poly_frommsg, by "
-                      "CBMC on every input FIPS 203 allows them; barrett_reduce, "
-                      "montgomery_reduce and the zeta table exhaustively. No other "
-                      "function, no functional equality with FIPS 203, no strict "
-                      "aliasing, no timing (SOURCE-AUDIT.md)")}
+        "statement": result.get("scope") or (
+            "the source was not read as ML-KEM or ML-DSA, so nothing in it was "
+            "checked (SOURCE-AUDIT.md)")}
     return doc
 
 

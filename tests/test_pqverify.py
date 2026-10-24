@@ -9248,7 +9248,7 @@ def _sa_fake_library(tmp_path, prefix="FOO_", barrett_bug=False, zeta_bug=None):
     if zeta_bug is not None:
         zetas[zeta_bug] += 1
     d = tmp_path / "lib"
-    d.mkdir()
+    d.mkdir(parents=True)
     (d / "params.h").write_text("#define KYBER_K 3\n#define KYBER_N 256\n#define KYBER_Q 3329\n"
                                 "#define KYBER_INDCPA_MSGBYTES 32\n")
     (d / "reduce.h").write_text("#include <stdint.h>\n#define QINV -3327\n"
@@ -9273,6 +9273,212 @@ def _sa_fake_library(tmp_path, prefix="FOO_", barrett_bug=False, zeta_bug=None):
     (d / "poly.c").write_text("")
     (d / "verify.c").write_text(f"void {prefix}cmov_int16(void);\n")
     return str(d)
+
+
+def _sa_fake_dsa_library(tmp_path, prefix="FOO_", reduce32_bug=False, zeta_bug=None,
+                         decompose_bug=False):
+    """An ML-DSA-65 library with PQClean's file layout, reductions and rounding,
+    enough for detect() and the exhaustive harness. Its zetas come from FIPS
+    204's definition, kept static in ntt.c as the reference keeps them."""
+    Q = 8380417
+
+    def bitrev8(i):
+        return int(format(i, "08b")[::-1], 2)
+    zetas = [0]
+    for i in range(1, 256):
+        z = pow(1753, bitrev8(i), Q) * 2**32 % Q
+        zetas.append(z - Q if z > Q // 2 else z)
+    if zeta_bug is not None:
+        zetas[zeta_bug] += 1
+    d = tmp_path / "lib"
+    d.mkdir(parents=True)
+    (d / "params.h").write_text(
+        "#define N 256\n#define Q 8380417\n#define D 13\n#define K 6\n#define L 5\n"
+        "#define ETA 4\n#define GAMMA1 (1 << 19)\n#define GAMMA2 ((Q-1)/32)\n")
+    (d / "reduce.h").write_text(
+        "#include <stdint.h>\n#define QINV 58728449\n"
+        f"int32_t {prefix}montgomery_reduce(int64_t a);\nint32_t {prefix}reduce32(int32_t a);\n"
+        f"int32_t {prefix}caddq(int32_t a);\nint32_t {prefix}freeze(int32_t a);\n")
+    bug = " + (a == 77)" if reduce32_bug else ""
+    (d / "reduce.c").write_text(
+        '#include "params.h"\n#include "reduce.h"\n'
+        f"int32_t {prefix}montgomery_reduce(int64_t a) {{\n"
+        "    int32_t t = (int32_t)((uint64_t)a * (uint64_t)QINV);\n"
+        "    return (int32_t)((a - (int64_t)t * Q) >> 32);\n}\n"
+        f"int32_t {prefix}reduce32(int32_t a) {{\n"
+        f"    int32_t t = (a + (1 << 22)) >> 23;\n    return a - t * Q{bug};\n}}\n"
+        f"int32_t {prefix}caddq(int32_t a) {{\n    return a + ((a >> 31) & Q);\n}}\n"
+        f"int32_t {prefix}freeze(int32_t a) {{\n    return {prefix}caddq({prefix}reduce32(a));\n}}\n")
+    (d / "rounding.h").write_text(
+        "#include <stdint.h>\n"
+        f"int32_t {prefix}power2round(int32_t *a0, int32_t a);\n"
+        f"int32_t {prefix}decompose(int32_t *a0, int32_t a);\n"
+        f"int32_t {prefix}use_hint(int32_t a, unsigned int hint);\n")
+    corner = "" if decompose_bug else "    *a0 -= (((Q - 1) / 2 - *a0) >> 31) & Q;\n"
+    (d / "rounding.c").write_text(
+        '#include "params.h"\n#include "rounding.h"\n'
+        f"int32_t {prefix}power2round(int32_t *a0, int32_t a) {{\n"
+        "    int32_t a1 = (a + (1 << (D - 1)) - 1) >> D;\n"
+        "    *a0 = a - (a1 << D);\n    return a1;\n}\n"
+        f"int32_t {prefix}decompose(int32_t *a0, int32_t a) {{\n"
+        "    int32_t a1 = (a + 127) >> 7;\n    a1 = (a1 * 1025 + (1 << 21)) >> 22;\n"
+        f"    a1 &= 15;\n    *a0 = a - a1 * 2 * GAMMA2;\n{corner}    return a1;\n}}\n"
+        f"int32_t {prefix}use_hint(int32_t a, unsigned int hint) {{\n"
+        f"    int32_t a0, a1 = {prefix}decompose(&a0, a);\n"
+        "    if (hint == 0)\n        return a1;\n"
+        "    return a0 > 0 ? (a1 + 1) & 15 : (a1 - 1) & 15;\n}\n")
+    (d / "ntt.h").write_text(f"#include <stdint.h>\n#include \"params.h\"\n"
+                             f"void {prefix}ntt(int32_t a[N]);\n"
+                             f"void {prefix}invntt_tomont(int32_t a[N]);\n")
+    (d / "ntt.c").write_text('#include "ntt.h"\n#include "reduce.h"\n'
+                             f"static const int32_t zetas[N] = {{{', '.join(map(str, zetas))}}};\n"
+                             f"void {prefix}ntt(int32_t a[N]) {{ (void)a; (void)zetas; }}\n"
+                             f"void {prefix}invntt_tomont(int32_t a[N]) {{ (void)a; }}\n")
+    (d / "poly.h").write_text("#include <stdint.h>\n#include \"params.h\"\n"
+                              "typedef struct { int32_t coeffs[N]; } poly;\n"
+                              f"void {prefix}poly_reduce(poly *a);\n"
+                              f"void {prefix}poly_pointwise_montgomery(poly *c, const poly *a, "
+                              "const poly *b);\n"
+                              f"int {prefix}poly_chknorm(const poly *a, int32_t B);\n")
+    (d / "poly.c").write_text("")
+    return str(d)
+
+
+def test_source_audit_reads_an_ml_dsa_layout(tmp_path):
+    src = _sa_fake_dsa_library(tmp_path)
+    lay = _sa.detect(src)
+    assert lay["scheme"] == "ML-DSA" and lay["parameter_set"] == "ML-DSA-65"
+    assert lay["prefix"] == "FOO_"
+    # the reference keeps its zeta table static and unprefixed
+    assert lay["symbols"] == {"zetas": "zetas"}
+    assert "-DPQV_SYM_zetas=zetas" in _sa._defines(lay)
+    with pytest.raises(_sa.Unavailable, match="ML-DSA has no role barrett_reduce"):
+        _sa.detect(src, symbols={"barrett_reduce": "f"})
+    import os as _os
+    _os.remove(_os.path.join(src, "rounding.c"))
+    with pytest.raises(_sa.Unavailable, match="ML-DSA source layout.*missing rounding.c"):
+        _sa.detect(src)
+    # a params.h of neither scheme
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "params.h").write_text("#define N 256\n")
+    with pytest.raises(_sa.Unavailable, match="neither"):
+        _sa.detect(str(other))
+
+
+def test_source_audit_judges_ml_dsa_by_its_own_checks():
+    ok = {"checks": {n: {"cases": 1, "wrong": 0, "first": None}
+                     for n in _sa.SCHEMES["ML-DSA"]["checks"]},
+          "controls": {n: True for n in _sa.SCHEMES["ML-DSA"]["checks"]},
+          "model": {"arithmetic_shift": True, "narrowing_wraps": True},
+          "ubsan_report": None}
+    assert _sa.judge("/s", [], ok, "ML-DSA") == ([], [], [])
+    # ML-KEM's checks are not ML-DSA's: judged as ML-KEM, nothing ran
+    assert _sa.judge("/s", [], ok, "ML-KEM")[2]
+    wrong = dict(ok, checks=dict(ok["checks"], decompose={"cases": 8380417, "wrong": 3,
+                                                          "first": 8380416}))
+    findings, _, cannot = _sa.judge("/s", [], wrong, "ML-DSA")
+    assert not cannot and findings == ["source: rounding.c: decompose: 3 of 8380417 wrong, "
+                                       "first at 8380416"]
+    ubsan = dict(ok, ubsan_report="rounding.c:12:9: runtime error: signed integer overflow")
+    findings, _, _ = _sa.judge("/s", [], ubsan, "ML-DSA")
+    assert findings and findings[0].startswith("source: rounding.c:12: UBSan")
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not (_sa_shutil.which("cc") or _sa_shutil.which("gcc")), reason="needs a C compiler")
+def test_source_audit_exhaustive_ml_dsa_and_its_controls(tmp_path):
+    """ML-DSA's exhaustive test: four 2^32-input sweeps (about 40 s), the zeta
+    table and FIPS 204's rounding. A correct library is clean with every
+    control caught; planted bugs in reduce32, a zeta and decompose's q - 1
+    case are each counted, in the file they are in."""
+    cc = _sa_shutil.which("cc") or _sa_shutil.which("gcc")
+    good = _sa_fake_dsa_library(tmp_path / "a")
+    ex = _sa.exhaustive(good, _sa.detect(good), cc)
+    assert "error" not in ex, ex
+    assert set(ex["checks"]) == set(_sa.SCHEMES["ML-DSA"]["checks"])
+    assert all(c["wrong"] == 0 for c in ex["checks"].values()), ex["checks"]
+    assert ex["checks"]["caddq"]["cases"] == 2**32
+    assert ex["checks"]["montgomery_reduce"]["cases"] == 2**32
+    assert all(ex["controls"].values()) and all(ex["model"].values())
+    assert _sa.judge(good, [], ex, "ML-DSA") == ([], [], [])
+    bad = _sa_fake_dsa_library(tmp_path / "b", reduce32_bug=True, zeta_bug=9,
+                               decompose_bug=True)
+    ex = _sa.exhaustive(bad, _sa.detect(bad), cc)
+    wrong = {n: c["wrong"] for n, c in ex["checks"].items() if c["wrong"]}
+    # reduce32's bug also reaches freeze, and decompose's reaches use_hint
+    assert set(wrong) == {"reduce32", "freeze", "zetas", "decompose", "use_hint"}, wrong
+    assert wrong["reduce32"] == 1 and wrong["zetas"] == 1
+    findings, _, cannot = _sa.judge(bad, [], ex, "ML-DSA")
+    assert not cannot and any(f.startswith("source: rounding.c: decompose:") for f in findings)
+    assert any(f.startswith("source: ntt.c: zetas: 1 of 255 wrong, first at 9") for f in findings)
+
+
+def test_source_audit_needs_z3_for_ml_dsa_montgomery(tmp_path, monkeypatch):
+    """ML-DSA's montgomery_reduce is proved with Z3; without it the job says so
+    and decides nothing."""
+    src = _sa_fake_dsa_library(tmp_path)
+    r = _sa.check(src, _sa.detect(src), "montgomery_reduce", "ub", z3=False)
+    assert r["result"] == "ERROR" and "z3 not in PATH" in r["error"]
+    assert _sa.judge(src, [r], {"error": "not run"}, "ML-DSA")[2]
+
+
+def test_source_audit_runs_each_job_with_its_solver(tmp_path, monkeypatch):
+    """Each job runs with the solver its table names, and its result says
+    which ran. A solver the scheme requires (ML-DSA: Kissat and Z3) that is
+    missing is an error; one it does not (ML-KEM: Kissat) gives way to
+    CBMC's MiniSat, and the result says so. The reach run uses the job's
+    solver too, so its expected failure shows that solver can report one."""
+    runs = []
+
+    def cbmc(args, timeout, memory_gb=8):
+        runs.append(args)
+        return {"result": "VERIFIED", "properties": 1, "failed": [], "no_body": [],
+                "seconds": 0.1, "error": None}
+    monkeypatch.setattr(_sa, "_cbmc", cbmc)
+    monkeypatch.setattr(_sa, "_split", lambda args, timeout, memory_gb, profile="ub":
+                        cbmc(args, timeout))
+
+    def solver(args):
+        if "--z3" in args:
+            return "z3"
+        i = args.index("--external-sat-solver") if "--external-sat-solver" in args else None
+        return args[i + 1] if i is not None else "minisat"
+    kem = _sa_fake_library(tmp_path / "kem")
+    r = _sa.check(kem, _sa.detect(kem), "ntt", "ub", kissat=True)
+    assert r["solver"] == "kissat" and solver(runs[-1]) == "kissat"
+    r = _sa.check(kem, _sa.detect(kem), "ntt", "ub", kissat=False)
+    assert r["result"] == "VERIFIED" and r["solver"] == "minisat" and solver(runs[-1]) == "minisat"
+    r = _sa.check(kem, _sa.detect(kem), "ntt", "reach", kissat=True)
+    assert r["solver"] == "kissat" and solver(runs[-1]) == "kissat"
+    r = _sa.check(kem, _sa.detect(kem), "poly_reduce", "ub", kissat=True)
+    assert r["solver"] == "minisat" and solver(runs[-1]) == "minisat"
+    dsa = _sa_fake_dsa_library(tmp_path / "dsa")
+    n = len(runs)
+    r = _sa.check(dsa, _sa.detect(dsa), "invntt_tomont", "ub", kissat=False)
+    assert r["result"] == "ERROR" and "kissat not in PATH" in r["error"] and len(runs) == n
+    r = _sa.check(dsa, _sa.detect(dsa), "invntt_tomont", "ub", kissat=True)
+    assert r["solver"] == "kissat" and solver(runs[-1]) == "kissat"
+    r = _sa.check(dsa, _sa.detect(dsa), "montgomery_reduce", "ub", z3=True)
+    assert r["solver"] == "z3" and solver(runs[-1]) == "z3"
+
+
+def test_source_audit_refuses_ml_dsa_without_its_solvers(tmp_path, monkeypatch):
+    """An ML-DSA audit without Kissat or Z3 decides nothing, and says which
+    is missing and how to get it, before running anything."""
+    dsa = _sa_fake_dsa_library(tmp_path)
+    monkeypatch.setattr(_sa, "tools", lambda: {"cbmc": "5.95.1", "cc": "cc", "cc_path": "cc",
+                                               "kissat": None, "z3": "Z3 version 4.8.12"})
+    monkeypatch.setattr(_sa, "selftest", lambda *a, **k: pytest.fail("ran the self-test"))
+    r = _sa.pqverify_audit_source(dsa)
+    assert r["status"] == "CANNOT VERIFY" and r["checks"] == []
+    assert "kissat" in r["reason"] and "arminbiere/kissat" in r["reason"] and "z3" not in r["reason"]
+    from pq_verify.report import to_json_source_audit
+    row = dict(_sa_check("ntt", "ub"), solver="kissat")
+    doc = to_json_source_audit({"source": dsa, "status": "VERIFIED", "verified": True,
+                                "checks": [row], "exhaustive": _SA_EX_OK, "findings": [],
+                                "notes": [], "reason": None, "artifact": None})
+    assert doc["checks"][0]["solver"] == "kissat"
 
 
 def test_source_audit_detects_the_layout_and_refuses_others(tmp_path):
@@ -9402,6 +9608,30 @@ def test_source_audit_cbmc_selftest_reports_each_planted_defect():
     assert results["selftest_no_body"] == "ERROR"
 
 
+@pytest.mark.skipif(not _sa_shutil.which("cbmc"), reason="needs cbmc")
+def test_source_audit_selftest_catches_a_solver_that_cannot_find_a_failure(tmp_path, monkeypatch):
+    """Each solver a job runs with must report the planted out-of-bounds
+    write through CBMC, and pass selftest_model. One that always answers
+    UNSAT, or none at all, fails its control, so the audit decides nothing."""
+    liar, mute = tmp_path / "liar", tmp_path / "mute"
+    liar.write_text("#!/bin/sh\necho 's UNSATISFIABLE'\nexit 20\n")
+    mute.write_text("#!/bin/sh\nexit 0\n")
+    for f in (liar, mute):
+        f.chmod(0o755)
+    monkeypatch.setitem(_sa.SOLVER_FLAGS, "liar", ["--external-sat-solver", str(liar)])
+    monkeypatch.setitem(_sa.SOLVER_FLAGS, "mute", ["--external-sat-solver", str(mute)])
+    rows = {r["control"]: r for r in _sa.selftest(solvers=["liar", "mute"])}
+    assert not rows["selftest_bounds (liar)"]["ok"]
+    assert rows["selftest_bounds (liar)"]["result"] == "VERIFIED"
+    assert not rows["selftest_bounds (mute)"]["ok"] and not rows["selftest_model (mute)"]["ok"]
+    assert all(rows[c[0]]["ok"] for c in _sa.SELFTEST)
+    present = [n for n in ("kissat", "z3") if _sa_shutil.which(n)]
+    if present:
+        rows = _sa.selftest(solvers=present)
+        assert all(r["ok"] for r in rows), rows
+        assert {r["control"] for r in rows} >= {f"selftest_bounds ({n})" for n in present}
+
+
 def test_source_audit_reports_a_cbmc_that_died_or_ran_out_of_memory(monkeypatch):
     import subprocess as _subprocess
 
@@ -9438,6 +9668,121 @@ def test_source_audit_refuses_a_call_with_no_body(monkeypatch):
     r = run("**** WARNING: no body for function nondet_int16" + passed)
     assert r["result"] == "VERIFIED" and r["no_body"] == []
     assert {"nondet_int", "nondet_int16", "nondet_uint8"} <= _sa._NONDET
+
+
+def test_source_audit_schedules_cbmc_runs_within_memory():
+    """At most `workers` runs at once, their peaks summing within the budget,
+    and a run bigger than the budget alone; results in the tasks' order."""
+    import threading, time as _time
+    lock, running, seen = threading.Lock(), [], []
+    costs = {"a": 10.0, "b": 10.0, "c": 4.0, "d": 1.0, "e": 1.0, "f": 20.0}
+
+    def run(t):
+        with lock:
+            running.append(t)
+            seen.append((sum(costs[x] for x in running), len(running), list(running)))
+        _time.sleep(0.05)
+        with lock:
+            running.remove(t)
+        return t.upper()
+    out = _sa._schedule(list("abcdef"), run, 3, costs.get, 12.0)
+    assert out == list("ABCDEF")
+    assert all(n <= 3 for _, n, _ in seen)
+    assert all(total <= 12.0 or members == ["f"] for total, _, members in seen)
+
+
+def test_source_audit_split_checks_every_property_exactly_once(monkeypatch):
+    """A split job checks its properties in three groups, each its own CBMC
+    run; every property CBMC lists is in exactly one, or the run is refused,
+    and a failure in any group fails the job."""
+    full = {"f.overflow.1": ("arithmetic overflow on signed * in (int64_t)z * (signed long int)a[0]",
+                             "ntt.c", "58"),
+            "f.overflow.2": ("arithmetic overflow on signed - in a - t", "ntt.c", "59"),
+            "s.assertion.1": ("montgomery_reduce contract: input in {-2^31 q, ..., 2^31 q - 1}",
+                              "stubs.c", "11"),
+            "h.assertion.1": ("ntt: every output in (-9q, 9q)", "h_ntt.c", "19")}
+    lean = {k: v for k, v in full.items() if k != "s.assertion.1"}
+    calls, verdicts, bounded = [], {}, set()
+
+    def properties(args, timeout):
+        return dict(lean if "-DPQV_NO_PRECONDITION" in args else full)
+
+    def cbmc(args, timeout, memory_gb=8):
+        chosen = sorted(args[i + 1] for i, a in enumerate(args) if a == "--property")
+        calls.append(("-DPQV_NO_PRECONDITION" in args, chosen))
+        bad = [n for n in chosen if verdicts.get(n) == "FAILED"]
+        return {"result": "FAILED" if bad else "VERIFIED", "properties": len(chosen),
+                "failed": [{"property": n, "class": "undefined behaviour or a false property",
+                            "file": "ntt.c", "line": 1, "text": "x"} for n in bad],
+                "no_body": [], "seconds": 1.0, "error": None}
+    monkeypatch.setattr(_sa, "_properties", properties)
+    monkeypatch.setattr(_sa, "_cbmc", cbmc)
+    monkeypatch.setattr(_sa, "_type_bounded", lambda args, timeout: set(bounded))
+    r = _sa._split(["x.c"], 10, 8)
+    assert r["result"] == "VERIFIED" and r["properties"] == 4 and r["by_types"] == []
+    assert calls == [(True, ["f.overflow.2", "h.assertion.1"]), (False, ["s.assertion.1"]),
+                     (True, ["f.overflow.1"])]
+    # a product its operands' types bound is decided without the solver
+    bounded.add(("ntt.c", "58", full["f.overflow.1"][0]))
+    calls.clear()
+    r = _sa._split(["x.c"], 10, 8)
+    assert r["result"] == "VERIFIED" and r["by_types"] == ["f.overflow.1"]
+    assert [c[1] for c in calls] == [["f.overflow.2", "h.assertion.1"], ["s.assertion.1"]]
+    bounded.clear()
+    # conv adds only conversion checks, in the rest group: the others are ub's
+    calls.clear()
+    r = _sa._split(["x.c"], 10, 8, "conv")
+    assert r["result"] == "VERIFIED" and [c[1] for c in calls] == [["f.overflow.2",
+                                                                    "h.assertion.1"]]
+    verdicts["f.overflow.1"] = "FAILED"
+    r = _sa._split(["x.c"], 10, 8)
+    assert r["result"] == "FAILED" and [f["property"] for f in r["failed"]] == ["f.overflow.1"]
+    # a property only one build has would be checked by no group: refused
+    lean["only.lean"] = ("array bounds", "ntt.c", "60")
+    r = _sa._split(["x.c"], 10, 8)
+    assert r["result"] == "ERROR" and "cover every property" in r["error"]
+    del lean["only.lean"]
+    # a name the lean build gives another property: the names cover, the
+    # properties do not, so it is refused too
+    lean["f.overflow.2"], lean["h.assertion.1"] = lean["h.assertion.1"], lean["f.overflow.2"]
+    r = _sa._split(["x.c"], 10, 8)
+    assert r["result"] == "ERROR" and "cover every property" in r["error"]
+
+
+def test_source_audit_split_reach_needs_its_assertion(monkeypatch):
+    """A split job's reach run checks only its reach assertion; a harness
+    without one cannot show its end is reachable, so the run is an error."""
+    monkeypatch.setattr(_sa, "detect", lambda *a, **k: None)
+    layout = {"scheme": "ML-DSA", "prefix": "P_", "symbols": {"zetas": "zetas"}, "includes": []}
+    listed, calls = {}, []
+    monkeypatch.setattr(_sa, "_properties", lambda args, timeout: dict(listed))
+
+    def cbmc(args, timeout, memory_gb=8):
+        calls.append(sorted(args[i + 1] for i, a in enumerate(args) if a == "--property"))
+        return {"result": "FAILED", "properties": 1, "failed": [], "no_body": [],
+                "seconds": 0.1, "error": None}
+    monkeypatch.setattr(_sa, "_cbmc", cbmc)
+    listed.update({"h.assertion.1": ("ntt: every output in (-9q, 9q)", "h_ntt.c", "19"),
+                   "h.assertion.2": ("reach: the end of the harness is reachable", "h_ntt.c", "21")})
+    r = _sa.check("/lib", layout, "ntt", "reach", kissat=True)
+    assert r["result"] == "FAILED" and calls == [["h.assertion.2"]]
+    del listed["h.assertion.2"]
+    r = _sa.check("/lib", layout, "ntt", "reach", kissat=True)
+    assert r["result"] == "ERROR" and "no reach assertion" in r["error"] and len(calls) == 1
+
+
+@pytest.mark.skipif(not _sa_shutil.which("cbmc"), reason="needs cbmc")
+def test_source_audit_decides_a_product_by_its_operand_types(tmp_path):
+    """From CBMC's own typed program: an int32 by an int32 in int64 cannot
+    overflow; an int64 by an int64 can, and stays a check."""
+    src = tmp_path / "t.c"
+    src.write_text("#include <stdint.h>\nint32_t nondet_int32(void);\n"
+                   "int64_t nondet_int64(void);\nint64_t g, h;\nvoid harness(void) {\n"
+                   "  int32_t x = nondet_int32(), y = nondet_int32();\n"
+                   "  int64_t u = nondet_int64(), v = nondet_int64();\n"
+                   "  g = (int64_t)x * y;\n  h = u * v;\n}\n")
+    found = _sa._type_bounded([str(src), "--function", "harness", "--signed-overflow-check"], 60)
+    assert {line for _, line, _ in found} == {"8"}
 
 
 def test_source_audit_report_counts_only_what_was_decided():

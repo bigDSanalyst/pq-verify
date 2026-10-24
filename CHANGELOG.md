@@ -33,7 +33,7 @@ versioning](https://semver.org/spec/v2.0.0.html).
     `--source-symbol ROLE=NAME`. One whose layout does not fit is CANNOT
     VERIFY, with what it lacks named.
   - Each CBMC run is limited to `--audit-timeout` seconds and 8 GB of address
-    space, its solver included.
+    space, its solver capped the same.
   - A run that calls a function with no body in the files given is CANNOT
     VERIFY, naming it. CBMC takes such a call to do nothing, so an NTT
     defined elsewhere would keep its input's bounds and pass. A self-test
@@ -55,6 +55,51 @@ versioning](https://semver.org/spec/v2.0.0.html).
     a butterfly without its reduction, an int32 overflow, a truncated
     reduction, a wrong zeta, `poly_frommsg` reading bits in the wrong order,
     and the NTT's body hidden, which must be refused.
+- **`--audit-source` reads ML-DSA too** (FIPS 204), in PQClean's
+  `crypto_sign/ml-dsa-*/clean` layout; the scheme is read off `params.h`.
+  - CBMC proves `ntt`, `invntt_tomont`, `poly_pointwise_montgomery`,
+    `poly_reduce` and `poly_chknorm` free of undefined behaviour and int32
+    overflow on every input FIPS 204 gives them, the first four with their
+    output bounds. That `poly_chknorm` decides exactly is not proved: none of
+    the solvers tried (MiniSat, CaDiCaL, Z3) settled that equivalence over 256
+    coefficients in reasonable time.
+    The NTTs and the multiplication are checked against
+    `montgomery_reduce`'s contract.
+  - That contract is proved of the library's C. CBMC, with Z3, proves the
+    bound on every input in {−2³¹q, …, 2³¹q − 1} and that
+    f(a + 2³²) = f(a) + 1; the exhaustive test checks the congruence on every
+    low word. Together they give it on every input.
+  - The exhaustive test also checks `reduce32`, `caddq` and `freeze` on all
+    2³² inputs, the zeta table against FIPS 204, and `power2round`,
+    `decompose` and `use_hint` against FIPS 204's own algorithms on every
+    r in [0, q).
+  - The NTTs' proofs are split by property, each part its own sliced CBMC
+    run, with every property checked against CBMC's own list so none is
+    dropped. A multiplication whose operands' types bound it, such as an
+    int32 by an int32 in int64, is decided from CBMC's typed program. Runs
+    go side by side only as far as the machine's memory holds them.
+  - CBMC's model pin also covers an int64 right shift and a uint64-to-int32
+    narrowing.
+  - **The NTT proofs run with Kissat**, ML-KEM's included, in place of
+    CaDiCaL: on the same six formulas Kissat took 19 minutes where CaDiCaL
+    took 38, in less than half the memory. ML-DSA's audit needs Kissat and Z3 and is CANNOT VERIFY
+    without them; ML-KEM's runs its NTT with CBMC's MiniSat when Kissat is
+    missing. Each check in the report names the solver that ran. CI builds
+    Kissat at the commit of its 4.0.4 release.
+  - The self-test also runs a planted out-of-bounds write through each solver
+    a job uses, Kissat and Z3, which must report it; each harness's reach
+    check runs with the job's own solver. Before, both ran only with
+    MiniSat, so a solver that wrongly answered UNSAT would have gone
+    unnoticed.
+  - On PQClean's ML-DSA-44, 65 and 87 at the pinned commit, every check
+    passes. Its comments on `montgomery_reduce` and `reduce32` are each off
+    by one at one end, as pq-verify's Coq proofs already show; no caller is
+    affected.
+  - CI runs one job per scheme and ML-DSA parameter set, and requires each of
+    12 ML-DSA mutants to be caught. One, `montgomery_reduce` truncating t·q
+    to 32 bits, keeps the bound and the shift property CBMC proves and breaks
+    only the congruence, which the exhaustive test catches: neither half of
+    that proof is enough alone.
 
 ## [2.14.0] — 2026-10-24
 

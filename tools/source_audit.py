@@ -1,15 +1,16 @@
-"""Re-run --audit-source on PQClean's ML-KEM, and require each mutant to be caught.
+"""Re-run --audit-source on PQClean's ML-KEM and ML-DSA, and require each mutant to be caught.
 
-    python3 tools/source_audit.py [--sets 512,768,1024] [--src DIR] [--no-mutants]
+    python3 tools/source_audit.py [--scheme ml-kem|ml-dsa|all] [--sets 512,768]
+                                  [--src DIR] [--no-mutants]
 
-CI runs this (vendor-audits.yml). PQClean is fetched at the commit
-tools/vendor_audits.json pins for the vendor audits, so the source is the
-same every run and a change in a verdict is a change in pq-verify. Each set
-must come out VERIFIED. Then each mutant, one planted bug applied as an exact
-edit to a copy of ML-KEM-768, must fail the check named for it: one that
-passes is a bug class the source audit cannot see. The last hides the NTT's
-body, which CBMC would take to do nothing, and must be refused. Exit status
-0 only if all of this holds.
+CI runs this (vendor-audits.yml), one job per scheme. PQClean is fetched at
+the commit tools/vendor_audits.json pins for the vendor audits, so the source
+is the same every run and a change in a verdict is a change in pq-verify.
+Each set must come out VERIFIED. Then each mutant, one planted bug applied as
+an exact edit to a copy of ML-KEM-768 or ML-DSA-65, must fail the check named
+for it: one that passes is a bug class the source audit cannot see. Each
+scheme's last mutant hides its NTT's body, which CBMC would take to do
+nothing, and must be refused. Exit status 0 only if all of this holds.
 """
 import argparse
 import json
@@ -32,7 +33,7 @@ except ImportError:
 # One deliberate bug each, as an exact edit of PQClean's ML-KEM-768 source,
 # and the check that must catch it: (function, profile) of a CBMC run, or
 # ("exhaustive", check).
-MUTANTS = [
+KEM_MUTANTS = [
     {"name": "poly_frommsg reads and writes past its arrays",
      "file": "poly.c",
      "find": "    for (i = 0; i < KYBER_N / 8; i++) {\n        for (j = 0; j < 8; j++) {\n"
@@ -79,6 +80,83 @@ MUTANTS = [
      "caught_by": ("ntt", "ub"), "refused": True},
 ]
 
+# The same for PQClean's ML-DSA-65. An exhaustive mutant must give wrong
+# results without undefined behaviour: UBSan would stop the run before it
+# reports its counts.
+DSA_MUTANTS = [
+    {"name": "the NTT butterfly without its Montgomery reduction (int32 overflow)",
+     "file": "ntt.c",
+     "find": "t = PQCLEAN_MLDSA65_CLEAN_montgomery_reduce((int64_t)zeta * a[j + len]);",
+     "replace": "t = (int32_t)((int64_t)zeta * a[j + len]);",
+     "caught_by": ("ntt", "ub")},
+    {"name": "invntt_tomont without its final scaling (outputs up to 256q)",
+     "file": "ntt.c",
+     "find": "a[j] = PQCLEAN_MLDSA65_CLEAN_montgomery_reduce((int64_t)f * a[j]);",
+     "replace": "a[j] = a[j] * (f / f);",
+     "caught_by": ("invntt_tomont", "ub")},
+    {"name": "poly_pointwise_montgomery without its reduction",
+     "file": "poly.c",
+     "find": "c->coeffs[i] = PQCLEAN_MLDSA65_CLEAN_montgomery_reduce((int64_t)a->coeffs[i] "
+             "* b->coeffs[i]);",
+     "replace": "c->coeffs[i] = (int32_t)((int64_t)a->coeffs[i] * b->coeffs[i]);",
+     "caught_by": ("poly_pointwise_montgomery", "ub")},
+    {"name": "montgomery_reduce shifts by 31, not 32 (its bound and shift property fail)",
+     "file": "reduce.c",
+     "find": "t = (a - (int64_t)t * Q) >> 32;",
+     "replace": "t = (a - (int64_t)t * Q) >> 31;",
+     "caught_by": ("montgomery_reduce", "ub")},
+    # Its bound and f(a + 2^32) = f(a) + 1 still hold, so CBMC's half of the
+    # proof passes it; only the congruence breaks, which the exhaustive half
+    # checks. Neither half catches every bug alone.
+    {"name": "montgomery_reduce truncates t*q to 32 bits (only its congruence fails)",
+     "file": "reduce.c",
+     "find": "t = (a - (int64_t)t * Q) >> 32;",
+     "replace": "t = (a - (int32_t)((int64_t)t * Q)) >> 32;",
+     "caught_by": ("exhaustive", "montgomery_reduce")},
+    {"name": "reduce32 subtracts multiples of q - 1",
+     "file": "reduce.c",
+     "find": "    t = a - t * Q;",
+     "replace": "    t = a - t * (Q - 1);",
+     "caught_by": ("exhaustive", "reduce32")},
+    {"name": "caddq adds q - 1",
+     "file": "reduce.c",
+     "find": "a += (a >> 31) & Q;",
+     "replace": "a += (a >> 31) & (Q - 1);",
+     "caught_by": ("exhaustive", "caddq")},
+    {"name": "one zeta off by one",
+     "file": "ntt.c",
+     "find": "    0,    25847, -2608894, -518909,",
+     "replace": "    0,    25848, -2608894, -518909,",
+     "caught_by": ("exhaustive", "zetas")},
+    # FIPS 204's Decompose: when r+ - r0 = q - 1, r1 is 0 and r0 one less
+    {"name": "decompose without its q - 1 corner case",
+     "file": "rounding.c",
+     "find": "*a0 -= (((Q - 1) / 2 - *a0) >> 31) & Q;",
+     "replace": "*a0 -= 0;",
+     "caught_by": ("exhaustive", "decompose")},
+    {"name": "use_hint rounds up at r0 = 0",
+     "file": "rounding.c",
+     "find": "    if (a0 > 0) {",
+     "replace": "    if (a0 >= 0) {",
+     "caught_by": ("exhaustive", "use_hint")},
+    {"name": "poly_chknorm reads one coefficient past the end",
+     "file": "poly.c",
+     "find": "    for (i = 0; i < N; ++i) {\n        /* Absolute value */",
+     "replace": "    for (i = 0; i <= N; ++i) {\n        /* Absolute value */",
+     "caught_by": ("poly_chknorm", "ub")},
+    {"name": "ntt's definition is in none of the files compiled",
+     "file": "ntt.c",
+     "find": "void PQCLEAN_MLDSA65_CLEAN_ntt(int32_t a[N]) {",
+     "replace": "void PQCLEAN_MLDSA65_CLEAN_ntt_elsewhere(int32_t a[N]) {",
+     "caught_by": ("ntt", "ub"), "refused": True},
+]
+
+# scheme: (PQClean directory, set names, default sets, the set mutated, mutants)
+SCHEMES = {
+    "ml-kem": ("crypto_kem", "ml-kem-{}", "512,768,1024", "768", KEM_MUTANTS),
+    "ml-dsa": ("crypto_sign", "ml-dsa-{}", "44,65,87", "65", DSA_MUTANTS),
+}
+
 
 def pin():
     """PQClean's url and commit, as the vendor audits pin them."""
@@ -106,7 +184,7 @@ def caught(src, mutant, includes):
         return bool(c and c["wrong"]), (f"exhaustive {what}: {c['wrong']} of {c['cases']} "
                                         f"wrong, first at {c['first']}" if c else
                                         ex.get("error", "did not run"))
-    r = sa.check(src, layout, kind, what, cadical=sa.tools()["cadical"])
+    r = sa.check(src, layout, kind, what)
     if mutant.get("refused"):
         return r["result"] == "ERROR" and bool(r["no_body"]), (
             f"cbmc {kind} {what}: {r['result']}: {(r['error'] or '')[:160]}")
@@ -120,44 +198,63 @@ def caught(src, mutant, includes):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--sets", default="512,768,1024")
+    ap.add_argument("--scheme", choices=("ml-kem", "ml-dsa", "all"), default="all")
+    ap.add_argument("--sets", help="comma-separated, with one --scheme (default: all its sets)")
     ap.add_argument("--src", help="a PQClean checkout to use instead of fetching the pin")
     ap.add_argument("--no-mutants", action="store_true")
     a = ap.parse_args()
+    if a.sets and a.scheme == "all":
+        ap.error("--sets needs one --scheme")
+    # Here every job runs with the solver its table names: none may fall back
+    # to MiniSat, or a timing would be measured with another solver.
+    have = sa.tools()
+    missing = [n for n in ("kissat", "z3") if not have[n]]
+    if missing:
+        print("not in PATH: " + ", ".join(f"{n} ({sa.GET[n]})" for n in missing))
+        return 1
     work = tempfile.mkdtemp(prefix="pqv-source-audit-")
     ok = True
     try:
         root = a.src or os.path.join(work, "pqclean")
         if not a.src:
             print(f"PQClean at {fetch(root)}", flush=True)
-        for n in a.sets.split(","):
-            src = os.path.join(root, "crypto_kem", f"ml-kem-{n}", "clean")
-            print(f"\n== ML-KEM-{n}: {src}", flush=True)
-            r = sa.pqverify_audit_source(src)
-            if r["status"] != "VERIFIED":
-                print(f"   ML-KEM-{n}: expected VERIFIED, got {r['status']}")
-                ok = False
-        if not a.no_mutants:
-            clean = os.path.join(root, "crypto_kem", "ml-kem-768", "clean")
-            for i, m in enumerate(MUTANTS, 1):
-                dst = os.path.join(work, f"mutant{i}")
-                shutil.copytree(clean, dst)
-                path = os.path.join(dst, m["file"])
-                text = open(path).read()
-                if text.count(m["find"]) != 1:
-                    print(f"mutant {i}: its edit does not apply once to {m['file']}")
-                    ok = False
-                    continue
-                open(path, "w").write(text.replace(m["find"], m["replace"]))
-                # the copy is outside PQClean's tree, so name its common/ headers
-                hit, why = caught(dst, m, [os.path.join(root, "common")])
-                print(f"mutant {i} ({m['name']}): {'CAUGHT' if hit else 'MISSED'}: {why}",
-                      flush=True)
-                ok = ok and hit
+        for scheme in (("ml-kem", "ml-dsa") if a.scheme == "all" else (a.scheme,)):
+            ok = run(scheme, root, work, a.sets, a.no_mutants) and ok
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print("\nRESULT", "OK" if ok else "PROBLEMS")
     return 0 if ok else 1
+
+
+def run(scheme, root, work, sets, no_mutants):
+    """One scheme's sets, then its mutants. True if every verdict is the one required."""
+    kind, name, default, mutated, mutants = SCHEMES[scheme]
+    ok = True
+    for n in (sets or default).split(","):
+        src = os.path.join(root, kind, name.format(n), "clean")
+        print(f"\n== {name.format(n).upper()}: {src}", flush=True)
+        r = sa.pqverify_audit_source(src)
+        if r["status"] != "VERIFIED":
+            print(f"   {name.format(n).upper()}: expected VERIFIED, got {r['status']}")
+            ok = False
+    if not no_mutants:
+        clean = os.path.join(root, kind, name.format(mutated), "clean")
+        for i, m in enumerate(mutants, 1):
+            dst = os.path.join(work, f"{scheme}-mutant{i}")
+            shutil.copytree(clean, dst)
+            path = os.path.join(dst, m["file"])
+            text = open(path).read()
+            if text.count(m["find"]) != 1:
+                print(f"{scheme} mutant {i}: its edit does not apply once to {m['file']}")
+                ok = False
+                continue
+            open(path, "w").write(text.replace(m["find"], m["replace"]))
+            # the copy is outside PQClean's tree, so name its common/ headers
+            hit, why = caught(dst, m, [os.path.join(root, "common")])
+            print(f"{scheme} mutant {i} ({m['name']}): {'CAUGHT' if hit else 'MISSED'}: {why}",
+                  flush=True)
+            ok = ok and hit
+    return ok
 
 
 if __name__ == "__main__":
