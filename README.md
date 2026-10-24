@@ -370,6 +370,23 @@ and randomised APIs, is in [ARCHITECTURE.md](ARCHITECTURE.md#how---audit-dsa-rea
 
 ## More audit modes
 
+### C source: CBMC, on every input FIPS 203 allows
+
+`pq-verify --audit-source DIR` checks an ML-KEM library's C source, not its
+binary, and annotates nothing in it. CBMC proves that `poly_reduce`, the NTT,
+the NTT-domain multiplication and `poly_frommsg` have no undefined behaviour
+on any input FIPS 203 allows them. That covers out-of-bounds accesses,
+signed overflow and bad shifts. It also proves the NTT and the multiplication
+never overflow an int16 coefficient. `barrett_reduce` and `montgomery_reduce`
+are tested on every input they accept, and the zeta table against FIPS 203's
+definition. CBMC's own self-test and each check's control must catch a
+planted defect first, or the run is CANNOT VERIFY. So is a run that calls a
+function whose body is not in the source given, which CBMC would take to do
+nothing, and source holding CBMC directives or inline assembly. On PQClean's
+ML-KEM it
+takes 10 to 15 minutes and needs `cbmc` and a C compiler. What it proves and
+what it does not is in [SOURCE-AUDIT.md](SOURCE-AUDIT.md).
+
 ### Accumulated vectors: 10 000 random cases, one digest
 
 Every `--audit-kem`, `--audit-dsa` and `--audit-harness` run also drives
@@ -663,6 +680,9 @@ Third-party audit results, build commands and every planted bug are in
 apt-get install -y coq gcc g++
 pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 ```
+
+**For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler;
+`cadical` is optional and halves the NTT's proof time.
 
 **Optional (1 test each, everything works without them):**
 - `cryptominisat` — the CMS5 speed-comparison benchmark

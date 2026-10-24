@@ -445,10 +445,12 @@ pq_verify/
   hqc.py                   HQC's error-correcting code (standard not final)
   hqc_audit.py             HQC decoder audit
   proofs.py                Runs the Coq proofs (--proofs)
+  source_audit.py          CBMC and exhaustive checks of ML-KEM C source (--audit-source)
   coq/                     NTT.v, Reduce.v: the proofs
   harness/                 C files linked into a test build of a library: deterministic
                            randombytes(), LMS/XMSS adapters, the constant-time shim
-                           (ct/). Never in production
+                           (ct/). Never in production. source/: the source audit's
+                           CBMC harnesses, contracts and exhaustive test
   vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor
@@ -457,7 +459,8 @@ DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
 sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.14.0)
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
-CONSTANT-TIME.md / REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE / CITATION.cff
+CONSTANT-TIME.md / SOURCE-AUDIT.md / REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE /
+CITATION.cff
 ```
 
 The wheel and source distribution are not in the repository: they are built

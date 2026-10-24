@@ -155,8 +155,17 @@ with no axiom and nothing admitted):
 | `pq_verify/coq/Reduce.v` | `montgomery_reduce` (ML-KEM and ML-DSA), `barrett_reduce` and `reduce32` are congruent to their input and within bound for every input in range, with no intermediate overflowing its C type |
 
 These are proofs about the algorithms as written in Coq, not about any
-vendor's compiled code. Everything else is tested, not proved: every vendor
-audit; the inverse NTTs; pq-verify's own SLH-DSA, LMS/HSS, XMSS, FN-DSA,
+vendor's compiled code.
+
+`--audit-source` proves something about a library's own C source: that four
+of its ML-KEM functions have no undefined behaviour or int16 overflow on any
+input FIPS 203 allows them, by CBMC, in C's semantics as CBMC models them. It
+tests two reductions and the zeta table on every input, as compiled. It does
+not prove that the NTT computes FIPS 203's transform, it covers no other
+function, and it does not check strict aliasing
+([SOURCE-AUDIT.md](SOURCE-AUDIT.md)).
+
+Everything else is tested, not proved: every other vendor audit; the inverse NTTs; pq-verify's own SLH-DSA, LMS/HSS, XMSS, FN-DSA,
 Classic McEliece and HQC references; and all hashing, sampling, encoding and
 the FO transform. Each tested reference is held to at least one independent
 source (NIST's ACVP vectors, the submitters' KATs, their decoders' answers).

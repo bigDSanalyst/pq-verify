@@ -5,6 +5,57 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--audit-source DIR`: CBMC and exhaustive checks of an ML-KEM library's C
+  source** ([SOURCE-AUDIT.md](SOURCE-AUDIT.md)). Nothing in the library is
+  annotated: each harness states only what FIPS 203 fixes, and pq-verify
+  reads the library's name prefix off its `reduce.h`.
+  - CBMC proves `poly_reduce`, `ntt`, `poly_basemul_montgomery` and
+    `poly_frommsg` free of undefined behaviour on every input FIPS 203 allows
+    them, each with its output bound. Every loop is unrolled completely.
+  - It also proves `ntt` and `poly_basemul_montgomery` never store a
+    coefficient in an int16 it does not fit. They are checked against
+    contracts for the two reductions.
+  - An exhaustive test proves those contracts of the library's compiled
+    `barrett_reduce` (all 65,536 inputs) and `montgomery_reduce` (all
+    218,169,344 its contract admits), and checks the zeta table against FIPS
+    203's definition.
+  - CBMC's own self-test, a reachability control on each harness and a
+    control on each exhaustive comparison must each catch a planted defect,
+    or the run is CANNOT VERIFY.
+  - CBMC models the two things C leaves implementation-defined that the
+    reductions rely on, a right shift of a negative value and a narrowing
+    conversion, as GCC and Clang do. Its self-test pins that model, and the
+    exhaustive test checks the compiler in use does the same. Either failing
+    is CANNOT VERIFY.
+  - A library that names a role otherwise is given the name with
+    `--source-symbol ROLE=NAME`. One whose layout does not fit is CANNOT
+    VERIFY, with what it lacks named.
+  - Each CBMC run is limited to `--audit-timeout` seconds and 8 GB of address
+    space, its solver included.
+  - A run that calls a function with no body in the files given is CANNOT
+    VERIFY, naming it. CBMC takes such a call to do nothing, so an NTT
+    defined elsewhere would keep its input's bounds and pass. A self-test
+    control checks that CBMC still warns about such calls.
+  - Nothing in the source may change what a harness means. CBMC directives
+    and pragmas, the harnesses' reserved names, and inline assembly with an
+    instruction in it, which CBMC skips without a warning, are each CANNOT
+    VERIFY, with file and line. The screen reads every file the checks
+    compile and every header those include. `params.h` must give FIPS 203's
+    n, q and message length.
+  - Findings carry file and line in the JSON report and in SARIF (rule
+    PQV010).
+  - On PQClean's ML-KEM-512, 768 and 1024 at the vendor audits' pinned
+    commit, every check passes. One note: `barrett_reduce` relies on
+    two's-complement wrapping, implementation-defined in C, for the 2,285
+    inputs with |a| ≥ 31,626.
+  - CI (`vendor-audits.yml`, `tools/source_audit.py`) re-runs the three sets
+    and requires each of seven mutants to be caught: an out-of-bounds write,
+    a butterfly without its reduction, an int32 overflow, a truncated
+    reduction, a wrong zeta, `poly_frommsg` reading bits in the wrong order,
+    and the NTT's body hidden, which must be refused.
+
 ## [2.14.0] — 2026-10-24
 
 A feature release for the research and classical tracks, whose engines now

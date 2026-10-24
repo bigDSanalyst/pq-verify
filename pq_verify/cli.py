@@ -19,6 +19,7 @@ pq-verify command-line interface.
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
     pq-verify --audit-mceliece PATH SET  audit a Classic McEliece library (not FIPS)
     pq-verify --audit-hqc PATH SET       audit an HQC decoder (code layer)
+    pq-verify --audit-source DIR   prove an ML-KEM library's C arithmetic UB-free (CBMC)
     pq-verify --audit-harness CMD SET  audit through a Crucible-protocol harness
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
@@ -238,6 +239,23 @@ def build_parser():
                         "between two codewords up to the radius, ties, Hankel-built "
                         "error patterns, whole received words -- each answer exact. "
                         "The code layer only, not the KEM")
+    p.add_argument("--audit-source", metavar="DIR",
+                   help="from an ML-KEM library's C source: prove with CBMC that "
+                        "poly_reduce, ntt, the NTT-domain multiplication and frommsg "
+                        "have no undefined behaviour or int16 overflow on any input "
+                        "FIPS 203 allows, and test its two reductions on every input. "
+                        "DIR is the reference code's layout (PQClean's "
+                        "crypto_kem/ml-kem-*/clean); nothing in it is annotated. "
+                        "Needs cbmc and a C compiler, 10-15 min on 3 cores "
+                        "(SOURCE-AUDIT.md)")
+    p.add_argument("--source-include", action="append", default=[], metavar="DIR",
+                   help="with --audit-source: another include directory the "
+                        "library's headers need")
+    p.add_argument("--source-symbol", action="append", default=[], metavar="ROLE=NAME",
+                   help="with --audit-source: the library's name for a role it does not "
+                        "call PREFIX+ROLE, e.g. --source-symbol ntt=my_kyber_ntt. Roles: "
+                        "montgomery_reduce, barrett_reduce, zetas, ntt, poly_reduce, "
+                        "poly_basemul_montgomery, poly_frommsg")
     p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
                    help="audit an ML-KEM or ML-DSA implementation in any language "
                         "through a harness speaking Crucible's JSON-line protocol "
@@ -384,10 +402,12 @@ def main(argv=None):
             ("--fresh-key", args.fresh_key,
              args.emit_prompt or args.verify_response),
             ("--fresh-count", args.fresh_count, args.fresh_key),
+            ("--source-include", args.source_include, args.audit_source),
+            ("--source-symbol", args.source_symbol, args.audit_source),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
              or args.audit_fndsa or args.audit_mceliece or args.audit_hqc
-             or args.audit_harness)):
+             or args.audit_harness or args.audit_source)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
@@ -401,6 +421,8 @@ def main(argv=None):
                        "--constant-time": "--audit-kem, --audit-dsa or --audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
+                       "--source-include": "--audit-source",
+                       "--source-symbol": "--audit-source",
                        "--audit-timeout": "an --audit-* task"}.get(
                 _flag, "--audit-dsa" if _flag.startswith("--dsa") else "--audit-kem")
             print(f"  {_flag} does nothing without {_parent}")
@@ -470,7 +492,7 @@ def main(argv=None):
                 "edge_cases", "audit_mceliece", "hqc", "audit_hqc",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
-                "audit_harness",
+                "audit_harness", "audit_source",
                 "audit_hbs", "audit_so")):
             return 0
     hbs_result = None
@@ -499,6 +521,24 @@ def main(argv=None):
         print("\n  PROOFS (pq_verify/coq): every theorem must be closed -- no axioms, "
               "no Admitted")
         proofs_result = pqverify_proofs()
+        ran_task = True
+    source_result = None
+    if getattr(args, "audit_source", None):
+        from .source_audit import pqverify_audit_source, ROLES
+        _symbols = {}
+        for _pair in args.source_symbol:
+            _role, _sep, _name = _pair.partition("=")
+            if not (_sep and _name and _role in ROLES):
+                print(f"  --source-symbol {_pair}: want ROLE=NAME with ROLE one of "
+                      f"{', '.join(ROLES)}")
+                return 2
+            _symbols[_role] = _name
+        print("\n  SOURCE AUDIT (CBMC and exhaustive): no undefined behaviour or "
+              "overflow on any input FIPS 203 allows")
+        _limit = 3600 if args.audit_timeout is None else args.audit_timeout
+        source_result = pqverify_audit_source(args.audit_source,
+                                              includes=args.source_include,
+                                              symbols=_symbols, timeout=_limit or None)
         ran_task = True
     edge_result = None
     if getattr(args, "edge_cases", None):
@@ -1079,6 +1119,19 @@ def main(argv=None):
             json_doc, reported = doc, "--proofs"
         if gate and not proofs_result["verified"]:
             print(f"  FAILING: proofs {proofs_result['status']}")
+            exit_code = 1
+
+    if source_result is not None:
+        from .report import to_json_source_audit
+        doc = to_json_source_audit(source_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-source"
+        if sarif_doc is None:
+            sarif_doc = to_sarif([{"name": "source", "findings": doc["findings"]}],
+                                 tool_version=VERSION, artifact=doc["artifact"])
+        if gate and not doc["verified"]:
+            print(f"  FAILING: source audit {doc['status']}"
+                  + (f" ({doc['reason']})" if doc.get("reason") else ""))
             exit_code = 1
 
     if edge_result is not None:

@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 
 SARIF_VERSION = "2.1.0"
 SARIF_SCHEMA = ("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
@@ -117,6 +118,19 @@ RULES = {
                  "signature is a forgery path."),
         "level": "error",
     },
+    "PQV010": {
+        "name": "SourceDefect",
+        "short": "Undefined behaviour, an overflow or a wrong reduction in the C source",
+        "full": ("Checked from the library's C source: CBMC found an input FIPS 203 "
+                 "allows on which poly_reduce, ntt, the NTT-domain multiplication or "
+                 "frommsg has undefined behaviour (an out-of-bounds access, a signed "
+                 "overflow, an undefined shift), stores a coefficient in a type it "
+                 "does not fit, or breaks its output bound; or the exhaustive test "
+                 "found a wrong result of barrett_reduce or montgomery_reduce, or a "
+                 "zeta that is not FIPS 203's. Each is a defect for some input, "
+                 "found by checking every input, not by sampling."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -131,6 +145,7 @@ _FINDING_MAP = (
     # ("LMS malformed" holds "malformed", which means CannotVerify below).
     ("ML-DSA:",     "PQV008"),
     ("LMS/XMSS:",   "PQV009"),
+    ("source:",     "PQV010"),
     ("cannot verify", "PQV000"),
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
@@ -873,6 +888,54 @@ def to_json_hbs_audit(result, artifact=None, library=None, reason=None):
     return doc
 
 
+def to_json_source_audit(result):
+    """Native schema for --audit-source. A check counts as passed only if it
+    decided: CBMC verified it, its harness's end was reached, or the
+    exhaustive comparison found nothing wrong with its control caught."""
+    doc = _envelope("pq-verify/source-audit-result", result.get("artifact"),
+                    reason="no source directory was read")
+    doc["source"] = result.get("source")
+    doc["status"], doc["verified"] = result["status"], bool(result["verified"])
+    doc["layout"], doc["tools"] = result.get("layout"), result.get("tools")
+    doc["selftest"] = result.get("selftest")
+    checks = result.get("checks") or []
+    doc["checks"] = [dict((k, r.get(k)) for k in ("function", "profile", "result",
+                                                   "properties", "seconds", "contracts",
+                                                   "failed"))
+                     for r in checks]
+    ex = result.get("exhaustive") or {}
+    doc["exhaustive"] = ex or None
+
+    def decided(r):
+        if r["profile"] == "reach":
+            return r["result"] == "FAILED" and [f["class"] for f in r["failed"]] == ["reach"]
+        if r["result"] == "VERIFIED":
+            return True
+        # a conversion only the notes describe (no contracts, nothing undefined)
+        return (r["profile"] == "conv" and r["result"] == "FAILED" and not r.get("contracts")
+                and not any(f["class"].startswith("undefined") for f in r["failed"]))
+    passed = sum(1 for r in checks if decided(r))
+    ex_checks = ex.get("checks") or {}
+    passed += sum(1 for n, c in ex_checks.items()
+                  if not c["wrong"] and (ex.get("controls") or {}).get(n))
+    total = len(checks) + len(ex_checks)
+    findings = list(result.get("findings") or [])
+    if result["status"] == "CANNOT VERIFY":
+        findings.append("cannot verify: " + (result.get("reason") or "unknown"))
+    doc["findings"], doc["notes"] = findings, list(result.get("notes") or [])
+    doc["reason"] = result.get("reason")
+    doc["summary"] = {"checks_passed": passed, "checks_total": total,
+                      "findings": len(findings), "notes": len(doc["notes"])}
+    doc["scope"] = {
+        "complete": result["status"] == "VERIFIED",
+        "statement": ("poly_reduce, ntt, poly_basemul_montgomery and poly_frommsg, by "
+                      "CBMC on every input FIPS 203 allows them; barrett_reduce, "
+                      "montgomery_reduce and the zeta table exhaustively. No other "
+                      "function, no functional equality with FIPS 203, no strict "
+                      "aliasing, no timing (SOURCE-AUDIT.md)")}
+    return doc
+
+
 def to_json_acvp(suites, artifact=None):
     """Native schema for the ACVP suites (pqverify_acvp / _mldsa_ / _slhdsa_).
 
@@ -974,21 +1037,26 @@ def to_sarif(results, tool_version="unknown", source_root=None, artifact=None):
             msg = f"{finding}"
             if symbol:
                 msg += f"  (symbol: {symbol})"
+            uri, region = loc_uri, None
+            # A source finding names its file and line: "source: ntt.c:89: ..."
+            at = re.match(r"source: ([^\s:]+)(?::(\d+))?: ", finding)
+            if at:
+                uri = at.group(1)
+                if at.group(2):
+                    region = {"startLine": int(at.group(2))}
+            physical = {"artifactLocation": {
+                "uri": uri, "uriBaseId": "%SRCROOT%" if source_root else None}}
+            if region:
+                physical["region"] = region
             sarif_results.append({
                 "ruleId": rule_id,
                 "level": RULES[rule_id]["level"],
                 "message": {"text": msg},
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": {
-                            "uri": loc_uri,
-                            "uriBaseId": "%SRCROOT%" if source_root else None,
-                        }
-                    }
-                }],
+                "locations": [{"physicalLocation": physical}],
                 "partialFingerprints": {
                     # stable across runs: same target + same rule = same finding
-                    "pqVerifyFinding/v1": f"{loc_uri}:{rule_id}",
+                    "pqVerifyFinding/v1": f"{uri}:{rule_id}"
+                                          + (f":{region['startLine']}" if region else ""),
                 },
             })
 
