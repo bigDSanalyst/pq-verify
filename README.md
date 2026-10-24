@@ -51,8 +51,9 @@ by NIST and the Canadian Centre for Cyber Security, after an accredited
 laboratory has tested the module. What pq-verify has found in public
 libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
 [LIMITS.md](LIMITS.md); how each requirement maps to a check is in
-[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements). To discuss an
-audit, see [Contact](#contact).
+[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements); and each claim,
+with the command that reproduces it and the CI job that re-runs it, is in
+[EVIDENCE.md](EVIDENCE.md). To discuss an audit, see [Contact](#contact).
 
 ---
 

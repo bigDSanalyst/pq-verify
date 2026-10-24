@@ -2,10 +2,20 @@
 
 Results of pointing pq-verify at post-quantum implementations it did not write.
 
-Every result below was produced by **pq-verify v2.6.4**
-(`pq_verify/core.py`, sha `7b305da30a33`) on 2026-08-08, against the exact
-upstream commits recorded in each section. Every audit is reproducible with the
-commands given; nothing here is asserted from memory.
+Every result below is pinned to the exact upstream commit its section
+records, and each section gives the commands to reproduce it; nothing here is
+asserted from memory.
+- **The tables between `vendor-audits` markers** are written by
+  `tools/vendor_audit.py`. CI's `vendor-audits.yml` rebuilds each of those
+  libraries and re-audits it with the current pq-verify, on every change to
+  the audit code and weekly, and fails if any row's result differs.
+- **The symbol audits, the BoringSSL cross-check and the negative control**
+  in the first sections were produced by pq-verify v2.6.4
+  (`pq_verify/core.py`, sha `7b305da30a33`) on 2026-08-08. CI does not
+  re-run them.
+
+Each claim, with the command that reproduces it and the CI job that re-runs
+it, is in [EVIDENCE.md](EVIDENCE.md).
 
 ---
 

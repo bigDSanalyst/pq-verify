@@ -101,6 +101,20 @@ versioning](https://semver.org/spec/v2.0.0.html).
     only the congruence, which the exhaustive test catches: neither half of
     that proof is enough alone.
 
+### Documentation
+
+- **[EVIDENCE.md](EVIDENCE.md): each claim and how to check it.** Every
+  claim maps to the command that reproduces it, the CI job that re-runs it,
+  what it is pinned to, and what it does not show. The documentation guards
+  (every flag shown exists, every file named exists, every link resolves) now
+  cover it and SOURCE-AUDIT.md too.
+- **AUDITS.md's header was wrong.** It said every result came from pq-verify
+  v2.6.4 on 2026-08-08, but only its first sections did: the symbol audits,
+  the BoringSSL cross-check and the negative control, which CI does not
+  re-run. The pinned vendor tables come from `tools/vendor_audit.py`, which
+  CI re-runs with the current code on every change to the audit code and
+  weekly.
+
 ## [2.14.0] — 2026-10-24
 
 A feature release for the research and classical tracks, whose engines now
