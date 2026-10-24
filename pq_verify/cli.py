@@ -246,11 +246,16 @@ def build_parser():
                         "FIPS 203 allows, and test its two reductions on every input. "
                         "DIR is the reference code's layout (PQClean's "
                         "crypto_kem/ml-kem-*/clean); nothing in it is annotated. "
-                        "Needs cbmc and a C compiler, about 10 min on 3 cores "
+                        "Needs cbmc and a C compiler, 10-15 min on 3 cores "
                         "(SOURCE-AUDIT.md)")
     p.add_argument("--source-include", action="append", default=[], metavar="DIR",
                    help="with --audit-source: another include directory the "
                         "library's headers need")
+    p.add_argument("--source-symbol", action="append", default=[], metavar="ROLE=NAME",
+                   help="with --audit-source: the library's name for a role it does not "
+                        "call PREFIX+ROLE, e.g. --source-symbol ntt=my_kyber_ntt. Roles: "
+                        "montgomery_reduce, barrett_reduce, zetas, ntt, poly_reduce, "
+                        "poly_basemul_montgomery, poly_frommsg")
     p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
                    help="audit an ML-KEM or ML-DSA implementation in any language "
                         "through a harness speaking Crucible's JSON-line protocol "
@@ -398,6 +403,7 @@ def main(argv=None):
              args.emit_prompt or args.verify_response),
             ("--fresh-count", args.fresh_count, args.fresh_key),
             ("--source-include", args.source_include, args.audit_source),
+            ("--source-symbol", args.source_symbol, args.audit_source),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
              or args.audit_fndsa or args.audit_mceliece or args.audit_hqc
@@ -416,6 +422,7 @@ def main(argv=None):
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key",
                        "--source-include": "--audit-source",
+                       "--source-symbol": "--audit-source",
                        "--audit-timeout": "an --audit-* task"}.get(
                 _flag, "--audit-dsa" if _flag.startswith("--dsa") else "--audit-kem")
             print(f"  {_flag} does nothing without {_parent}")
@@ -517,13 +524,21 @@ def main(argv=None):
         ran_task = True
     source_result = None
     if getattr(args, "audit_source", None):
-        from .source_audit import pqverify_audit_source
+        from .source_audit import pqverify_audit_source, ROLES
+        _symbols = {}
+        for _pair in args.source_symbol:
+            _role, _sep, _name = _pair.partition("=")
+            if not (_sep and _name and _role in ROLES):
+                print(f"  --source-symbol {_pair}: want ROLE=NAME with ROLE one of "
+                      f"{', '.join(ROLES)}")
+                return 2
+            _symbols[_role] = _name
         print("\n  SOURCE AUDIT (CBMC and exhaustive): no undefined behaviour or "
               "overflow on any input FIPS 203 allows")
         _limit = 3600 if args.audit_timeout is None else args.audit_timeout
         source_result = pqverify_audit_source(args.audit_source,
                                               includes=args.source_include,
-                                              timeout=_limit or None)
+                                              symbols=_symbols, timeout=_limit or None)
         ran_task = True
     edge_result = None
     if getattr(args, "edge_cases", None):

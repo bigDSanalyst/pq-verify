@@ -11,15 +11,22 @@
  * value wrong, and must count that one: a check that cannot fail would say
  * nothing about the library.
  *
- * Output, one line each: "control NAME ok|FAILED", then
- * "NAME CASES inputs|entries WRONG wrong [first X]". Exit status: 0 all
- * correct, 1 something wrong, 2 a control failed (the run decided nothing).
+ * It also checks that this compiler does what CBMC's model assumes for the
+ * two things C leaves implementation-defined and the reductions rely on: a
+ * right shift of a negative value fills with its sign, and a narrowing
+ * conversion wraps. CBMC's proofs hold for a compiler that does both.
+ *
+ * Output, one line each: "model NAME ok|DIFFERENT", "control NAME ok|FAILED",
+ * then "NAME CASES inputs|entries WRONG wrong [first X]". Exit status: 0 all
+ * correct, 1 something wrong, 2 a control failed or the compiler is not the
+ * model's (the run decided nothing).
  */
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
 #include "pqv_ns.h"
 #include "params.h"
+#include "pqv_fips203.h"
 #include "reduce.h"
 #include "ntt.h"
 
@@ -48,14 +55,14 @@ static void count(tally *t, int64_t at) {
 }
 
 /* The controls: the library's function with one output moved off by one. */
-static int16_t barrett(int16_t a) { return NS(barrett_reduce)(a); }
+static int16_t barrett(int16_t a) { return PQV_SYM_barrett_reduce(a); }
 static int16_t barrett_control(int16_t a) {
-    int16_t r = NS(barrett_reduce)(a);
+    int16_t r = PQV_SYM_barrett_reduce(a);
     return a == 1234 ? (int16_t)(r + 1) : r;
 }
-static int16_t montgomery(int32_t a) { return NS(montgomery_reduce)(a); }
+static int16_t montgomery(int32_t a) { return PQV_SYM_montgomery_reduce(a); }
 static int16_t montgomery_control(int32_t a) {
-    int16_t r = NS(montgomery_reduce)(a);
+    int16_t r = PQV_SYM_montgomery_reduce(a);
     return a == 123456 ? (int16_t)(r + 1) : r;
 }
 
@@ -94,6 +101,18 @@ static tally check_zetas(const int16_t *z) {
     return t;
 }
 
+/* volatile: the compiler must do these at run time, as it does in the library */
+static volatile int32_t negative = -12345;
+static volatile int32_t wide = 40000;
+
+static int model(void) {
+    int shift = (negative >> 31) == -1 && (negative >> 1) == (negative - (negative & 1)) / 2;
+    int wraps = (int16_t)wide == wide - 65536;
+    printf("model arithmetic_shift %s\n", shift ? "ok" : "DIFFERENT");
+    printf("model narrowing_wraps %s\n", wraps ? "ok" : "DIFFERENT");
+    return shift && wraps;
+}
+
 static int control(const char *name, tally ctl, tally real) {
     /* One more wrong than the library has; a library already wrong is a
      * finding either way, so its control decides nothing extra. */
@@ -117,15 +136,16 @@ int main(void) {
 
     int16_t zc[128];
     for (int i = 0; i < 128; i++)
-        zc[i] = NS(zetas)[i];
+        zc[i] = PQV_SYM_zetas[i];
     zc[77] = (int16_t)(zc[77] + 1);
 
+    int model_ok = model();
     tally b = check_barrett(barrett), m = check_montgomery(montgomery, inv16),
-          z = check_zetas(NS(zetas));
+          z = check_zetas(PQV_SYM_zetas);
     int controls_ok = control("barrett_reduce", check_barrett(barrett_control), b)
                     & control("montgomery_reduce", check_montgomery(montgomery_control, inv16), m)
                     & control("zetas", check_zetas(zc), z);
     int wrong = show("barrett_reduce", "inputs", b) | show("montgomery_reduce", "inputs", m)
               | show("zetas", "entries", z);
-    return !controls_ok ? 2 : wrong ? 1 : 0;
+    return !(controls_ok && model_ok) ? 2 : wrong ? 1 : 0;
 }

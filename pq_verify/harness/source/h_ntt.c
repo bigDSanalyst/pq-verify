@@ -3,6 +3,7 @@
  * and the small signed coefficients the library feeds it. */
 #include "pqv_ns.h"
 #include "params.h"
+#include "pqv_fips203.h"
 #include "ntt.h"
 
 void harness(void) {
@@ -11,7 +12,7 @@ void harness(void) {
         r[i] = nondet_int16();
         __CPROVER_assume(r[i] > -KYBER_Q && r[i] < KYBER_Q);
     }
-    NS(ntt)(r);
+    PQV_SYM_ntt(r);
     for (int i = 0; i < KYBER_N; i++)
         __CPROVER_assert(r[i] > -8 * KYBER_Q && r[i] < 8 * KYBER_Q,
                          "ntt: every output coefficient in (-8q, 8q)");

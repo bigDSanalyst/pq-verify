@@ -9197,7 +9197,8 @@ def _sa_check(function, profile, result="VERIFIED", failed=(), contracts=False):
 
 _SA_EX_OK = {"checks": {n: {"cases": 1, "wrong": 0, "first": None}
                         for n in ("barrett_reduce", "montgomery_reduce", "zetas")},
-             "controls": {"barrett_reduce": True, "montgomery_reduce": True, "zetas": True}}
+             "controls": {"barrett_reduce": True, "montgomery_reduce": True, "zetas": True},
+             "model": {"arithmetic_shift": True, "narrowing_wraps": True}}
 
 
 def test_source_audit_judge_decides_each_case():
@@ -9221,10 +9222,16 @@ def test_source_audit_judge_decides_each_case():
     assert cannot
     blind = dict(_SA_EX_OK, controls=dict(_SA_EX_OK["controls"], zetas=False))
     assert _sa.judge("/s", [], blind)[2]
-    wrong = {"checks": dict(_SA_EX_OK["checks"], zetas={"cases": 128, "wrong": 1, "first": 1}),
-             "controls": _SA_EX_OK["controls"]}
+    wrong = dict(_SA_EX_OK, checks=dict(_SA_EX_OK["checks"],
+                                         zetas={"cases": 128, "wrong": 1, "first": 1}))
     findings, _, _ = _sa.judge("/s", [], wrong)
     assert findings == ["source: ntt.c: zetas: 1 of 128 wrong, first at 1"]
+    # a compiler that shifts negatives logically is not the model the proofs are in
+    logical = dict(_SA_EX_OK, model={"arithmetic_shift": False, "narrowing_wraps": True})
+    _, _, cannot = _sa.judge("/s", [], logical)
+    assert cannot and "arithmetic_shift" in cannot[0]
+    _, _, cannot = _sa.judge("/s", [], dict(_SA_EX_OK, model={}))
+    assert cannot
 
 
 def _sa_fake_library(tmp_path, prefix="FOO_", barrett_bug=False, zeta_bug=None):
@@ -9272,6 +9279,24 @@ def test_source_audit_detects_the_layout_and_refuses_others(tmp_path):
     src = _sa_fake_library(tmp_path)
     lay = _sa.detect(src)
     assert lay["prefix"] == "FOO_" and lay["parameter_set"] == "ML-KEM-768"
+    assert lay["symbols"] == {}
+    # a role the library names otherwise: refused until it is named
+    import os as _os
+    ntt_c = _os.path.join(src, "ntt.c")
+    text = open(ntt_c).read()
+    open(ntt_c, "w").write(text.replace("FOO_zetas", "kyber_table"))
+    ntt_h = _os.path.join(src, "ntt.h")
+    header = open(ntt_h).read()
+    open(ntt_h, "w").write(header.replace("FOO_zetas", "kyber_table"))
+    with pytest.raises(_sa.Unavailable, match="zetas.*--source-symbol"):
+        _sa.detect(src)
+    lay = _sa.detect(src, symbols={"zetas": "kyber_table"})
+    assert lay["symbols"] == {"zetas": "kyber_table"}
+    assert "-DPQV_SYM_zetas=kyber_table" in _sa._defines(lay)
+    with pytest.raises(_sa.Unavailable, match="no role"):
+        _sa.detect(src, symbols={"keccak": "f"})
+    open(ntt_c, "w").write(text)
+    open(ntt_h, "w").write(header)
     import os as _os
     _os.remove(_os.path.join(src, "verify.c"))
     with pytest.raises(_sa.Unavailable, match="missing verify.c"):
@@ -9285,6 +9310,55 @@ def test_source_audit_detects_the_layout_and_refuses_others(tmp_path):
 
 
 @pytest.mark.skipif(not (_sa_shutil.which("cc") or _sa_shutil.which("gcc")), reason="needs a C compiler")
+def test_source_audit_refuses_source_that_could_change_what_a_harness_means(tmp_path):
+    """A CBMC directive, a name the harnesses reserve, or inline assembly with
+    an instruction, in a compiled file or any header it includes, is CANNOT
+    VERIFY. Comments, and an empty asm template (a compiler barrier, as in
+    PQClean's compat.h), are not."""
+    import os as _os
+    cc = _sa_shutil.which("cc") or _sa_shutil.which("gcc")
+    src = _sa_fake_library(tmp_path)
+    lay = _sa.detect(src)
+    reduce_c = _os.path.join(src, "reduce.c")
+    clean = open(reduce_c).read()
+    allowed = ("/* asm, __CPROVER_assume(0), nondet_x */\n// PQV_SYM_ntt\n"
+               "static inline void barrier(int b) { __asm__(\"\" : \"+r\"(b) : ); }\n")
+    open(reduce_c, "w").write(allowed + clean)
+    _sa.screen(src, lay, cc)
+    for bad, why in (('#pragma CPROVER check disable "signed-overflow"\n', "CBMC directive"),
+                     ("#define __CPROVER_assert(c, m)\n", "CBMC directive"),
+                     ("#define nondet_int16() 0\n", "harnesses reserve"),
+                     ('static int f(int x) { __asm__("negl %0" : "+r"(x)); return x; }\n',
+                      "inline assembly")):
+        open(reduce_c, "w").write(bad + clean)
+        with pytest.raises(_sa.Unavailable, match=why):
+            _sa.screen(src, lay, cc)
+    # a header the source includes from another directory is screened too
+    inc = tmp_path / "inc"
+    inc.mkdir()
+    (inc / "extra.h").write_text("#define CHECK __CPROVER_assume(0)\n")
+    open(reduce_c, "w").write('#include "extra.h"\n' + clean)
+    lay = _sa.detect(src, [str(inc)])
+    with pytest.raises(_sa.Unavailable, match="extra.h:1 holds"):
+        _sa.screen(src, lay, cc)
+
+
+@pytest.mark.skipif(not (_sa_shutil.which("cc") or _sa_shutil.which("gcc")), reason="needs a C compiler")
+def test_source_audit_holds_the_library_to_fips_203_constants(tmp_path):
+    """The harnesses state their bounds in the library's KYBER_N and KYBER_Q;
+    a params.h with other values is not ML-KEM and must not build."""
+    import os as _os
+    cc = _sa_shutil.which("cc") or _sa_shutil.which("gcc")
+    src = _sa_fake_library(tmp_path)
+    params = _os.path.join(src, "params.h")
+    text = open(params).read()
+    open(params, "w").write(text.replace("KYBER_Q 3329", "KYBER_Q 7681"))
+    ex = _sa.exhaustive(src, _sa.detect(src), cc)
+    assert "not FIPS 203's" in ex["error"]
+    assert _sa.judge(src, [], ex)[2]                      # CANNOT VERIFY
+
+
+@pytest.mark.skipif(not (_sa_shutil.which("cc") or _sa_shutil.which("gcc")), reason="needs a C compiler")
 def test_source_audit_exhaustive_check_and_its_controls(tmp_path):
     cc = _sa_shutil.which("cc") or _sa_shutil.which("gcc")
     (tmp_path / "a").mkdir()
@@ -9295,6 +9369,18 @@ def test_source_audit_exhaustive_check_and_its_controls(tmp_path):
     assert {n: c["wrong"] for n, c in ex["checks"].items()} == {
         "barrett_reduce": 0, "montgomery_reduce": 0, "zetas": 0}
     assert ex["checks"]["montgomery_reduce"]["cases"] == 218169344
+    assert ex["model"] == {"arithmetic_shift": True, "narrowing_wraps": True}
+    (tmp_path / "c").mkdir()        # its reductions and table under names of its own
+    renamed = _sa_fake_library(tmp_path / "c", prefix="kyber_")
+    lay = _sa.detect(renamed)
+    for f in ("reduce.c", "reduce.h", "ntt.c", "ntt.h"):
+        path = _pathlib.Path(renamed) / f
+        path.write_text(path.read_text().replace("kyber_montgomery_reduce", "mont_red")
+                        .replace("kyber_zetas", "zeta_tab"))
+    lay = _sa.detect(renamed, symbols={"montgomery_reduce": "mont_red", "zetas": "zeta_tab"})
+    ex = _sa.exhaustive(renamed, lay, cc)
+    assert {n: c["wrong"] for n, c in ex["checks"].items()} == {
+        "barrett_reduce": 0, "montgomery_reduce": 0, "zetas": 0}
     (tmp_path / "b").mkdir()
     bad = _sa_fake_library(tmp_path / "b", zeta_bug=5, barrett_bug=True)
     ex = _sa.exhaustive(bad, _sa.detect(bad), cc)
@@ -9308,7 +9394,50 @@ def test_source_audit_exhaustive_check_and_its_controls(tmp_path):
 def test_source_audit_cbmc_selftest_reports_each_planted_defect():
     rows = _sa.selftest()
     assert [r["control"] for r in rows] == [c[0] for c in _sa.SELFTEST]
-    assert all(r["caught"] for r in rows), rows
+    assert all(r["ok"] for r in rows), rows
+    # selftest_model must verify; the planted defects must fail; and the call
+    # with no body, which CBMC itself verifies, must be refused
+    results = {r["control"]: r["result"] for r in rows}
+    assert results["selftest_model"] == "VERIFIED"
+    assert results["selftest_no_body"] == "ERROR"
+
+
+def test_source_audit_reports_a_cbmc_that_died_or_ran_out_of_memory(monkeypatch):
+    import subprocess as _subprocess
+
+    def run(out, code):
+        def fake(*a, **k):
+            return _subprocess.CompletedProcess(a[0], code, out, "")
+        monkeypatch.setattr(_sa.subprocess, "run", fake)
+        return _sa._cbmc(["x.c"], 10)
+    r = run("Out of memory\n", 6)
+    assert r["result"] == "ERROR" and "out of memory under the 8 GB limit" in r["error"]
+    r = run("", -9)
+    assert r["result"] == "ERROR" and r["error"] == "killed by signal 9"
+    assert _sa.judge("/s", [dict(r, function="ntt", profile="ub", contracts=True)],
+                     _SA_EX_OK)[2]                        # decided nothing: CANNOT VERIFY
+
+
+def test_source_audit_refuses_a_call_with_no_body(monkeypatch):
+    """CBMC takes a call to a function it has no body for to do nothing, so an
+    NTT whose definition is elsewhere would keep its input's bounds and pass.
+    Only the harnesses' own nondet_ inputs may have no body."""
+    import subprocess as _subprocess
+
+    def run(out):
+        def fake(*a, **k):
+            return _subprocess.CompletedProcess(a[0], 0, out, "")
+        monkeypatch.setattr(_sa.subprocess, "run", fake)
+        return _sa._cbmc(["x.c"], 10)
+    passed = "\n** Results:\n** 0 of 11 failed (1 iterations)\nVERIFICATION SUCCESSFUL\n"
+    r = run("**** WARNING: no body for function PQCLEAN_MLKEM768_CLEAN_ntt" + passed)
+    assert r["result"] == "ERROR" and r["no_body"] == ["PQCLEAN_MLKEM768_CLEAN_ntt"]
+    assert r["error"].startswith("no body for PQCLEAN_MLKEM768_CLEAN_ntt")
+    assert _sa.judge("/s", [dict(r, function="ntt", profile="ub", contracts=True)],
+                     _SA_EX_OK)[2]                        # CANNOT VERIFY, not a pass
+    r = run("**** WARNING: no body for function nondet_int16" + passed)
+    assert r["result"] == "VERIFIED" and r["no_body"] == []
+    assert {"nondet_int", "nondet_int16", "nondet_uint8"} <= _sa._NONDET
 
 
 def test_source_audit_report_counts_only_what_was_decided():
@@ -9339,4 +9468,7 @@ def test_source_audit_cli_gates_a_source_it_cannot_read(tmp_path, capsys):
     assert main(["--audit-source", missing]) == 1
     assert main(["--audit-source", missing, "--no-fail"]) == 0
     assert main(["--source-include", str(tmp_path)]) == 2
+    assert main(["--source-symbol", "ntt=f"]) == 2
+    assert main(["--audit-source", missing, "--source-symbol", "keccak=f"]) == 2
+    assert main(["--audit-source", missing, "--source-symbol", "ntt"]) == 2
     assert "CANNOT VERIFY" in capsys.readouterr().out

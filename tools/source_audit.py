@@ -7,8 +7,9 @@ tools/vendor_audits.json pins for the vendor audits, so the source is the
 same every run and a change in a verdict is a change in pq-verify. Each set
 must come out VERIFIED. Then each mutant, one planted bug applied as an exact
 edit to a copy of ML-KEM-768, must fail the check named for it: one that
-passes is a bug class the source audit cannot see. Exit status 0 only if
-both hold.
+passes is a bug class the source audit cannot see. The last hides the NTT's
+body, which CBMC would take to do nothing, and must be refused. Exit status
+0 only if all of this holds.
 """
 import argparse
 import json
@@ -59,6 +60,23 @@ MUTANTS = [
      "find": "    -1044,  -758,  -359, -1517,",
      "replace": "    -1044,  -757,  -359, -1517,",
      "caught_by": ("exhaustive", "zetas")},
+    # Bounds and safety all hold here: only FIPS 203's bit order is wrong, so
+    # only the harness's postcondition, coefficient 8i+j from bit j of byte i,
+    # can see it.
+    {"name": "poly_frommsg reads each byte's bits in the reverse order",
+     "file": "poly.c",
+     "find": "(msg[i] >> j) & 1);",
+     "replace": "(msg[i] >> (7 - j)) & 1);",
+     "caught_by": ("poly_frommsg", "ub")},
+    # Not a bug in the arithmetic: the name the harness calls has no body in
+    # the files compiled. CBMC would take the call to do nothing, and every
+    # bound the input had would still hold, a vacuous pass. The run must
+    # refuse it instead.
+    {"name": "ntt's definition is in none of the files compiled",
+     "file": "ntt.c",
+     "find": "void PQCLEAN_MLKEM768_CLEAN_ntt(int16_t r[256]) {",
+     "replace": "void PQCLEAN_MLKEM768_CLEAN_ntt_elsewhere(int16_t r[256]) {",
+     "caught_by": ("ntt", "ub"), "refused": True},
 ]
 
 
@@ -89,6 +107,9 @@ def caught(src, mutant, includes):
                                         f"wrong, first at {c['first']}" if c else
                                         ex.get("error", "did not run"))
     r = sa.check(src, layout, kind, what, cadical=sa.tools()["cadical"])
+    if mutant.get("refused"):
+        return r["result"] == "ERROR" and bool(r["no_body"]), (
+            f"cbmc {kind} {what}: {r['result']}: {(r['error'] or '')[:160]}")
     want = "undefined" if what == "ub" else "implementation-defined"
     hit = [f for f in r["failed"] if f["class"].startswith(want)]
     return r["result"] == "FAILED" and bool(hit), (

@@ -380,8 +380,11 @@ signed overflow and bad shifts. It also proves the NTT and the multiplication
 never overflow an int16 coefficient. `barrett_reduce` and `montgomery_reduce`
 are tested on every input they accept, and the zeta table against FIPS 203's
 definition. CBMC's own self-test and each check's control must catch a
-planted defect first, or the run is CANNOT VERIFY. On PQClean's ML-KEM it
-takes about 10 minutes and needs `cbmc` and a C compiler. What it proves and
+planted defect first, or the run is CANNOT VERIFY. So is a run that calls a
+function whose body is not in the source given, which CBMC would take to do
+nothing, and source holding CBMC directives or inline assembly. On PQClean's
+ML-KEM it
+takes 10 to 15 minutes and needs `cbmc` and a C compiler. What it proves and
 what it does not is in [SOURCE-AUDIT.md](SOURCE-AUDIT.md).
 
 ### Accumulated vectors: 10 000 random cases, one digest

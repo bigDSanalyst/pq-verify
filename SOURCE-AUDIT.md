@@ -21,6 +21,45 @@ are found three levels up; give another include directory with
 compiler. CaDiCaL (`apt install cadical`) is optional: with it the NTT's
 proof takes about half as long.
 
+## Names and layout
+
+The harnesses call seven roles: `montgomery_reduce`, `barrett_reduce`,
+`zetas`, `ntt`, `poly_reduce`, `poly_basemul_montgomery` and `poly_frommsg`.
+Each is the library's prefix followed by the role, the prefix read off the
+first of them its headers declare. A library that names one otherwise is
+given the name, with nothing edited:
+
+```sh
+pq-verify --audit-source DIR --source-symbol ntt=my_kyber_ntt \
+    --source-symbol zetas=my_zeta_table
+```
+
+The data must still be the reference code's: a `poly` holding
+`int16_t coeffs[256]`, the constants `KYBER_N`, `KYBER_Q` and
+`KYBER_INDCPA_MSGBYTES` in `params.h` with FIPS 203's values (256, 3329 and
+32, which each harness checks as it compiles), and the headers `params.h`,
+`poly.h`, `ntt.h` and `reduce.h`. The source must be C, not C++. A library
+that does not fit is CANNOT VERIFY, with the role or file it lacks named, and
+never a pass.
+
+Each function's body must be in those files. CBMC takes a call to a function
+it has no body for to do nothing: an NTT defined in some other file would
+keep every bound its input had, and pass. So pq-verify reads CBMC's warning
+for such a call, and the run is CANNOT VERIFY, naming the function. Only the
+harnesses' own inputs, the `nondet_` functions, have no body.
+
+Nor may anything in the source change what a harness means. pq-verify reads
+every file the checks compile, and every header those include outside the
+system's, comments aside. It refuses each of these, naming the file and line:
+- CBMC's own directives, `__CPROVER_…` and `#pragma CPROVER`. An assumption
+  could drop inputs, a pragma turn a check off, a macro redefine an
+  assertion.
+- The harnesses' names, `nondet_…` and `PQV_…`.
+- Inline assembly with an instruction in it, which CBMC skips without a
+  warning. An empty template, such as PQClean's `__asm__("" : "+r"(b))`, is a
+  compiler barrier with no instruction, so skipping it is exact, and it is
+  allowed.
+
 ## What is checked
 
 Measured on PQClean's ML-KEM-768 at the commit `tools/vendor_audits.json`
@@ -32,12 +71,12 @@ CaDiCaL 1.7.3 and the others with CBMC's built-in MiniSat:
 | `poly_reduce` | UB-free; every output in {−(q−1)/2, …, (q−1)/2} | every polynomial: 256 coefficients, each any int16 | verified, 27 properties | 67 s |
 | `ntt` | UB-free; no int16 overflow; every output in (−8q, 8q) | every polynomial with coefficients in (−q, q) | verified, 70 and 72 properties | 190 s and 488 s |
 | `poly_basemul_montgomery` | UB-free; no int16 overflow; every output in (−2q, 2q) | every pair of polynomials with coefficients in (−q, q) | verified, 194 and 201 properties | 382 s and 391 s |
-| `poly_frommsg` | UB-free; coefficient i is (q+1)/2 when bit i of the message is set, else 0 | every 32-byte message | verified, 50 properties | 1 s |
+| `poly_frommsg` | UB-free; coefficient 8i+j is (q+1)/2 when bit j of byte i is set, else 0: FIPS 203's bit order | every 32-byte message | verified, 50 properties | 1 s |
 | `barrett_reduce` | r ≡ a (mod q), r in {−(q−1)/2, …, (q−1)/2} | all 65,536 int16 values | 0 wrong | exhaustive |
 | `montgomery_reduce` | r·2¹⁶ ≡ a (mod q), r in (−q, q) | all 218,169,344 values in {−q·2¹⁵, …, q·2¹⁵ − 1} | 0 wrong | exhaustive |
 | `zetas` | entry i is 17^BitRev7(i)·2¹⁶ mod q, centred | all 128 entries | 0 wrong | exhaustive |
 
-A run takes about 10 minutes on three cores. The three exhaustive checks take
+A run takes 10 to 15 minutes on three cores. The three exhaustive checks take
 under two seconds together, built with `-O2` under UBSan where the compiler
 has it.
 
@@ -72,6 +111,9 @@ reductions' own multiplications.
 A check that cannot fail says nothing, so each one is shown failing first:
 - **CBMC's self-test** (`selftest.c`): an out-of-bounds write, a signed
   overflow and a narrowing that does not fit, each of which CBMC must report.
+  Also a call to a function with no body, which CBMC verifies and pq-verify
+  must refuse: if a later CBMC stopped warning about such calls, this is
+  what would notice.
 - **Reachability**: a false assertion at the end of each harness must fail.
   If it holds, no input reaches the end, the harness's assumptions contradict
   each other, and its passes are vacuous.
@@ -80,6 +122,30 @@ A check that cannot fail says nothing, so each one is shown failing first:
 
 Any of these not catching its defect makes the run CANNOT VERIFY.
 
+## What C leaves to the compiler
+
+Two things the reductions rely on are implementation-defined in C, not
+undefined: a right shift of a negative value, and a conversion to a signed
+type that does not fit. CBMC models the shift as filling with the sign and
+the conversion as wrapping, as GCC and Clang do. Its `--undefined-shift-check`
+reports only shifts that are undefined, by the type's width or more, or by a
+negative amount. It does not report a shift of a negative value, and no CBMC
+option does.
+
+So the model is pinned twice. CBMC's self-test has `selftest_model`, which
+must verify: a negative value shifted right fills with its sign, and a
+narrowed value wraps. The exhaustive test then checks that the compiler in
+use does both. If either fails, the run is CANNOT VERIFY, because the proofs
+hold only for a compiler that does what the model says.
+
+In the functions this audit checks, PQClean shifts a negative value only
+inside the two reductions: `>> 16` in `montgomery_reduce` and `>> 26` in
+`barrett_reduce`. The exhaustive test runs those as compiled. The NTT's shifts
+are of unsigned values, and `poly_frommsg` shifts a byte. Elsewhere,
+`poly_compress`, `poly_tobytes` and `polyvec_compress` shift a coefficient
+right by 15 to add q when it is negative. Those functions are not checked
+here.
+
 ## Verdicts
 
 - **VERIFIED**: every check above passed.
@@ -87,9 +153,14 @@ Any of these not catching its defect makes the run CANNOT VERIFY.
   the NTT-domain multiplication, a broken output bound, a wrong reduction or a
   zeta that is not FIPS 203's. SARIF gives each one's file and line.
 - **CANNOT VERIFY**: `cbmc` or a compiler is missing, the layout is not one
-  pq-verify knows, a self-test or control was not caught, a harness's end was
-  not reached, or a check did not finish within `--audit-timeout` (default
-  3600 s each).
+  pq-verify knows, a function a check calls has no body in the files given,
+  the source holds something that could change what a harness means, a
+  self-test or control was not caught, the compiler does not do what CBMC's
+  model assumes, a harness's end was not reached, or a check did not
+  finish. Each CBMC run is limited to `--audit-timeout` seconds
+  (default 3600) and 8 GB of address space, its solver included, so a run
+  that would hang or exhaust the machine stops instead. One that runs out of
+  either has decided nothing, and the reason is reported.
 
 A value narrowed in a way C leaves implementation-defined, inside a function
 whose results the run checked, is a note, not a finding.
@@ -112,9 +183,10 @@ whose results the run checked, is a note, not a finding.
 
 CI runs `tools/source_audit.py` (in `vendor-audits.yml`). It fetches PQClean
 at the pinned commit, requires ML-KEM-512, 768 and 1024 to be VERIFIED, and
-then applies each mutant below to a copy of ML-KEM-768. Each mutant is one
-deliberate bug, as an exact edit of the source, and must fail the check named
-for it.
+then applies each of the seven mutants below to a copy of ML-KEM-768. Each is
+an exact edit of the source. The first six are one deliberate bug each, and
+must fail the check named for it. The seventh hides a function's body, and
+the run must refuse it rather than pass.
 
 | # | Bug | Caught by | Evidence |
 |---|---|---|---|
@@ -123,6 +195,8 @@ for it.
 | 3 | `basemul` multiplies three factors before reducing | CBMC, UB | signed int32 overflow (line 141), and `montgomery_reduce`'s input contract fails |
 | 4 | `montgomery_reduce` truncates t·q to 16 bits | exhaustive test | 218,106,093 of 218,169,344 inputs wrong |
 | 5 | one zeta off by one | exhaustive test | entry 1 is −757; FIPS 203 gives −758 |
+| 6 | `poly_frommsg` reads each byte's bits in the reverse order | CBMC, the harness's postcondition | coefficient 8i+j must come from bit j of byte i, FIPS 203's order; bounds and safety all still hold |
+| 7 | `ntt`'s definition renamed, so the name the harness calls has no body | the no-body check: refused | CBMC itself verifies this run, since an NTT that does nothing keeps its input's bounds |
 
 There is no strict-aliasing mutant: CBMC cannot check aliasing rules, so such
 a control could never be caught.

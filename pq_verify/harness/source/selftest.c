@@ -27,3 +27,31 @@ void selftest_narrowing(void) {       /* stores more than int16 holds */
     int16_t t = (int16_t)x;
     (void)t;
 }
+
+/* Not a defect: CBMC's model of the two things C leaves to the compiler
+ * that ML-KEM code relies on. A right shift of a negative value fills with
+ * the sign, and a narrowing conversion wraps, as GCC and Clang do. Every
+ * CBMC proof in this audit is in that model, so it must hold here, and the
+ * exhaustive test checks the compiler does the same. */
+void selftest_model(void) {
+    int32_t x = nondet_int();
+    __CPROVER_assume(x < 0);
+    __CPROVER_assert((x >> 31) == -1 && (x >> 1) == (x - (x & 1)) / 2,
+                     "model: a right shift of a negative value fills with its sign");
+    int y = nondet_int();
+    __CPROVER_assume(y > 32767 && y < 65536);
+    __CPROVER_assert((int16_t)y == y - 65536, "model: a narrowing conversion wraps");
+}
+
+/* Not a defect CBMC reports, but one pq-verify must see: a call to a
+ * function whose body is in none of the files compiled. CBMC takes the call
+ * to do nothing and verifies the assertion, so a proof through such a call
+ * is vacuous. pq-verify reads CBMC's warning and refuses the run; if CBMC
+ * stopped printing it, this control is what would notice. */
+void pqv_selftest_undefined(int16_t r[4]);
+
+void selftest_no_body(void) {
+    int16_t r[4] = {0, 0, 0, 0};
+    pqv_selftest_undefined(r);
+    __CPROVER_assert(r[0] == 0, "no body: the call changed nothing");
+}

@@ -2,6 +2,7 @@
  * NTT-domain polynomials with representatives in (-q, q). */
 #include "pqv_ns.h"
 #include "params.h"
+#include "pqv_fips203.h"
 #include "poly.h"
 
 void harness(void) {
@@ -12,7 +13,7 @@ void harness(void) {
         __CPROVER_assume(a.coeffs[i] > -KYBER_Q && a.coeffs[i] < KYBER_Q);
         __CPROVER_assume(b.coeffs[i] > -KYBER_Q && b.coeffs[i] < KYBER_Q);
     }
-    NS(poly_basemul_montgomery)(&r, &a, &b);
+    PQV_SYM_poly_basemul_montgomery(&r, &a, &b);
     for (int i = 0; i < KYBER_N; i++)
         __CPROVER_assert(r.coeffs[i] > -2 * KYBER_Q && r.coeffs[i] < 2 * KYBER_Q,
                          "basemul: every output coefficient in (-2q, 2q)");
