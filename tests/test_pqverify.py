@@ -9141,3 +9141,202 @@ def test_trace_finding_is_for_trace_2_only():
     assert len(traces(67089, 7437, 131267)) == 1                 # t = 2: #E = p - 1
     found = [f["description"] for f in core.audit_curve(eng, 0, 1, 23).findings]   # t = 0
     assert any(d.startswith("Supersingular") for d in found) and not traces(0, 1, 23)
+
+
+# ---- --audit-source: CBMC and exhaustive checks of C source ----------------------------
+# pq_verify/source_audit.py. The CBMC proofs themselves run in CI against the
+# pinned PQClean (tools/cbmc, about 20 min); these test the parsing, the
+# verdicts and the parts that run in seconds, each with a case that must fail.
+
+import shutil as _sa_shutil
+from pq_verify import source_audit as _sa
+
+_SA_FAILED = """\
+/src/ntt.c function PQCLEAN_X_ntt
+[PQCLEAN_X_ntt.overflow.3] line 89 arithmetic overflow on signed type conversion in (int16_t)(zeta * r[j]): FAILURE
+[PQCLEAN_X_ntt.array_bounds.1] line 90 array.r upper bound in r[j + len]: SUCCESS
+
+/src/my dir/reduce.c function PQCLEAN_X_barrett_reduce
+[PQCLEAN_X_barrett_reduce.overflow.7] line 40 arithmetic overflow on signed to unsigned type conversion in (uint16_t)-b: FAILURE
+
+** 2 of 3 failed (2 iterations)
+VERIFICATION FAILED
+"""
+
+_SA_REACHED = """\
+Violated property:
+  file /src/harness/h_ntt.c function harness line 19 thread 0
+  reach: the end of the harness is reachable
+  0 != 0
+
+VERIFICATION FAILED
+"""
+
+
+def test_source_audit_reads_cbmc_failures_with_file_and_line():
+    verdict, props, failed = _sa.parse(_SA_FAILED)
+    assert verdict == "FAILED" and props == 3 and len(failed) == 2
+    assert (failed[0]["file"], failed[0]["line"]) == ("/src/ntt.c", 89)
+    assert failed[0]["class"].startswith("implementation-defined")
+    assert failed[1]["file"] == "/src/my dir/reduce.c"       # a path with a space
+    assert failed[1]["class"].startswith("defined")
+    verdict, _, failed = _sa.parse(_SA_REACHED)
+    assert verdict == "FAILED" and [f["class"] for f in failed] == ["reach"]
+    assert failed[0]["line"] == 19
+    assert _sa.parse("** 0 of 9 failed\nVERIFICATION SUCCESSFUL\n")[0] == "VERIFIED"
+    assert _sa.parse("CONVERSION ERROR\n")[0] == "ERROR"
+    assert _sa.classify("dereference failure: pointer outside object bounds").startswith(
+        "undefined")
+
+
+def _sa_check(function, profile, result="VERIFIED", failed=(), contracts=False):
+    return {"function": function, "profile": profile, "result": result,
+            "failed": [dict(f, **{"class": _sa.classify(f["text"])}) for f in failed],
+            "contracts": contracts, "properties": 1, "seconds": 0.0}
+
+
+_SA_EX_OK = {"checks": {n: {"cases": 1, "wrong": 0, "first": None}
+                        for n in ("barrett_reduce", "montgomery_reduce", "zetas")},
+             "controls": {"barrett_reduce": True, "montgomery_reduce": True, "zetas": True}}
+
+
+def test_source_audit_judge_decides_each_case():
+    reach = _sa_check("ntt", "reach", "FAILED",
+                      [{"file": "h", "line": 1, "text": "reach: the end of the harness is reachable"}])
+    ok = [_sa_check("ntt", "ub"), _sa_check("ntt", "conv", contracts=True), reach]
+    assert _sa.judge("/s", ok, _SA_EX_OK) == ([], [], [])
+    ub = _sa_check("poly_frommsg", "ub", "FAILED",
+                   [{"file": "/s/poly.c", "line": 123, "text": "array.coeffs upper bound"}])
+    findings, _, _ = _sa.judge("/s", [ub], _SA_EX_OK)
+    assert findings and findings[0].startswith("source: poly.c:123: undefined behaviour")
+    narrow = {"file": "/s/ntt.c", "line": 89, "text": "arithmetic overflow on signed type conversion"}
+    findings, notes, _ = _sa.judge("/s", [_sa_check("ntt", "conv", "FAILED", [narrow], True)], _SA_EX_OK)
+    assert findings and not notes            # with the reductions as contracts: an overflow
+    findings, notes, _ = _sa.judge("/s", [_sa_check("poly_reduce", "conv", "FAILED", [narrow])],
+                                   _SA_EX_OK)
+    assert notes and not findings            # in a reduction's own path: a note
+    _, _, cannot = _sa.judge("/s", [_sa_check("ntt", "reach")], _SA_EX_OK)
+    assert cannot and "vacuous" in cannot[0]
+    _, _, cannot = _sa.judge("/s", [_sa_check("ntt", "ub", "TIMEOUT")], _SA_EX_OK)
+    assert cannot
+    blind = dict(_SA_EX_OK, controls=dict(_SA_EX_OK["controls"], zetas=False))
+    assert _sa.judge("/s", [], blind)[2]
+    wrong = {"checks": dict(_SA_EX_OK["checks"], zetas={"cases": 128, "wrong": 1, "first": 1}),
+             "controls": _SA_EX_OK["controls"]}
+    findings, _, _ = _sa.judge("/s", [], wrong)
+    assert findings == ["source: ntt.c: zetas: 1 of 128 wrong, first at 1"]
+
+
+def _sa_fake_library(tmp_path, prefix="FOO_", barrett_bug=False, zeta_bug=None):
+    """A library with PQClean's file layout and reductions, enough for detect()
+    and the exhaustive harness. Its zetas come from FIPS 203's definition."""
+    Q = 3329
+
+    def bitrev7(i):
+        return int(format(i, "07b")[::-1], 2)
+    zetas = []
+    for i in range(128):
+        z = pow(17, bitrev7(i), Q) * 65536 % Q
+        zetas.append(z - Q if z > Q // 2 else z)
+    if zeta_bug is not None:
+        zetas[zeta_bug] += 1
+    d = tmp_path / "lib"
+    d.mkdir()
+    (d / "params.h").write_text("#define KYBER_K 3\n#define KYBER_N 256\n#define KYBER_Q 3329\n"
+                                "#define KYBER_INDCPA_MSGBYTES 32\n")
+    (d / "reduce.h").write_text("#include <stdint.h>\n#define QINV -3327\n"
+                                f"int16_t {prefix}montgomery_reduce(int32_t a);\n"
+                                f"int16_t {prefix}barrett_reduce(int16_t a);\n")
+    bug = " + (a == 7)" if barrett_bug else ""
+    (d / "reduce.c").write_text(
+        '#include "params.h"\n#include "reduce.h"\n'
+        f"int16_t {prefix}montgomery_reduce(int32_t a) {{\n"
+        "    int16_t t = (int16_t)a * QINV;\n"
+        "    return (int16_t)((a - (int32_t)t * KYBER_Q) >> 16);\n}\n"
+        f"int16_t {prefix}barrett_reduce(int16_t a) {{\n"
+        "    const int16_t v = ((1 << 26) + KYBER_Q / 2) / KYBER_Q;\n"
+        "    int16_t t = ((int32_t)v * a + (1 << 25)) >> 26;\n"
+        f"    t *= KYBER_Q;\n    return a - t{bug};\n}}\n")
+    (d / "ntt.h").write_text(f"#include <stdint.h>\nextern const int16_t {prefix}zetas[128];\n"
+                             f"void {prefix}ntt(int16_t r[256]);\n")
+    (d / "ntt.c").write_text('#include "ntt.h"\n'
+                             f"const int16_t {prefix}zetas[128] = {{{', '.join(map(str, zetas))}}};\n")
+    (d / "poly.h").write_text(f"void {prefix}poly_reduce(void);\nvoid {prefix}poly_basemul_montgomery(void);\n"
+                              f"void {prefix}poly_frommsg(void);\n")
+    (d / "poly.c").write_text("")
+    (d / "verify.c").write_text(f"void {prefix}cmov_int16(void);\n")
+    return str(d)
+
+
+def test_source_audit_detects_the_layout_and_refuses_others(tmp_path):
+    src = _sa_fake_library(tmp_path)
+    lay = _sa.detect(src)
+    assert lay["prefix"] == "FOO_" and lay["parameter_set"] == "ML-KEM-768"
+    import os as _os
+    _os.remove(_os.path.join(src, "verify.c"))
+    with pytest.raises(_sa.Unavailable, match="missing verify.c"):
+        _sa.detect(src)
+    other = tmp_path / "other"
+    other.mkdir()
+    with pytest.raises(_sa.Unavailable):
+        _sa.detect(str(other))
+    art = _sa.artifact(src)
+    assert art["bound"] and len(art["sha256"]) == 64 and "reduce.c" in art["files"]
+
+
+@pytest.mark.skipif(not (_sa_shutil.which("cc") or _sa_shutil.which("gcc")), reason="needs a C compiler")
+def test_source_audit_exhaustive_check_and_its_controls(tmp_path):
+    cc = _sa_shutil.which("cc") or _sa_shutil.which("gcc")
+    (tmp_path / "a").mkdir()
+    good = _sa_fake_library(tmp_path / "a")
+    ex = _sa.exhaustive(good, _sa.detect(good), cc)
+    assert all(ex["controls"].values()) and set(ex["controls"]) == {
+        "barrett_reduce", "montgomery_reduce", "zetas"}
+    assert {n: c["wrong"] for n, c in ex["checks"].items()} == {
+        "barrett_reduce": 0, "montgomery_reduce": 0, "zetas": 0}
+    assert ex["checks"]["montgomery_reduce"]["cases"] == 218169344
+    (tmp_path / "b").mkdir()
+    bad = _sa_fake_library(tmp_path / "b", zeta_bug=5, barrett_bug=True)
+    ex = _sa.exhaustive(bad, _sa.detect(bad), cc)
+    assert ex["checks"]["zetas"]["wrong"] == 1 and ex["checks"]["zetas"]["first"] == 5
+    assert ex["checks"]["barrett_reduce"]["wrong"] == 1 and ex["checks"]["barrett_reduce"]["first"] == 7
+    findings, _, cannot = _sa.judge(bad, [], ex)
+    assert not cannot and len(findings) == 2
+
+
+@pytest.mark.skipif(not _sa_shutil.which("cbmc"), reason="needs cbmc")
+def test_source_audit_cbmc_selftest_reports_each_planted_defect():
+    rows = _sa.selftest()
+    assert [r["control"] for r in rows] == [c[0] for c in _sa.SELFTEST]
+    assert all(r["caught"] for r in rows), rows
+
+
+def test_source_audit_report_counts_only_what_was_decided():
+    from pq_verify.report import to_json_source_audit, to_sarif
+    reach = _sa_check("ntt", "reach", "FAILED",
+                      [{"file": "h", "line": 1, "text": "reach: the end of the harness is reachable"}])
+    note = _sa_check("poly_reduce", "conv", "FAILED",
+                     [{"file": "r", "line": 39, "text": "arithmetic overflow on signed type conversion"}])
+    result = {"source": "/s", "status": "FINDINGS PRESENT", "verified": False,
+              "checks": [_sa_check("ntt", "ub"), reach, note, _sa_check("ntt", "conv", "TIMEOUT")],
+              "exhaustive": _SA_EX_OK, "findings": ["source: ntt.c:89: a value does not fit"],
+              "notes": ["n"], "reason": None, "artifact": None}
+    doc = to_json_source_audit(result)
+    assert doc["schema"] == "pq-verify/source-audit-result" and not doc["verified"]
+    assert doc["summary"]["checks_passed"] == 6 and doc["summary"]["checks_total"] == 7
+    sarif = to_sarif([{"name": "source", "findings": doc["findings"]}])
+    hit = sarif["runs"][0]["results"][0]
+    assert hit["ruleId"] == "PQV010"
+    loc = hit["locations"][0]["physicalLocation"]
+    assert loc["artifactLocation"]["uri"] == "ntt.c" and loc["region"]["startLine"] == 89
+    gone = to_json_source_audit(dict(result, status="CANNOT VERIFY", findings=[], reason="r"))
+    assert gone["findings"] == ["cannot verify: r"]
+
+
+def test_source_audit_cli_gates_a_source_it_cannot_read(tmp_path, capsys):
+    from pq_verify.cli import main
+    missing = str(tmp_path / "absent")
+    assert main(["--audit-source", missing]) == 1
+    assert main(["--audit-source", missing, "--no-fail"]) == 0
+    assert main(["--source-include", str(tmp_path)]) == 2
+    assert "CANNOT VERIFY" in capsys.readouterr().out

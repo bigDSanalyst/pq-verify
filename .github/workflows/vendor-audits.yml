@@ -13,6 +13,10 @@ name: Vendor audits (pinned)
 # it. Its mutants sit on the x86-64 code path, which the runner's CPU
 # (AVX2/BMI2) takes; on a CPU without it they would be reported MISSED.
 #
+# The source job proves PQClean's ML-KEM arithmetic with --audit-source (CBMC
+# and exhaustive checks, tools/source_audit.py) at the same pinned commit,
+# and requires each of its mutants to be caught.
+#
 # Runs on changes to the code that decides audit results, and weekly so a
 # toolchain or runner change that alters a result is noticed too.
 
@@ -24,6 +28,7 @@ on:
       - "tools/vendor_audits.json"
       - "tools/harness_audit.py"
       - "tools/harness_audits.json"
+      - "tools/source_audit.py"
       - "tests/data/crucible_ref_harness.py"
       - "tests/data/mldsa_shim.c"
       - "tests/data/hbs_shim.c"
@@ -94,3 +99,24 @@ jobs:
           pip install -c constraints-reference.txt .
       - name: Rebuild Crucible's harnesses at the pinned commit and re-audit through them
         run: python tools/harness_audit.py
+
+  source:
+    name: source audit (CBMC, pinned PQClean)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: System dependencies
+        # CBMC proves the arithmetic; CaDiCaL roughly halves the NTT's solve time
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cbmc cadical
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints-reference.txt .
+      - name: Prove PQClean's ML-KEM-512/768/1024 arithmetic, and catch each mutant
+        run: python tools/source_audit.py
