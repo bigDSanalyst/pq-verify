@@ -445,7 +445,7 @@ pq_verify/
   hqc.py                   HQC's error-correcting code (standard not final)
   hqc_audit.py             HQC decoder audit
   proofs.py                Runs the Coq proofs (--proofs)
-  source_audit.py          CBMC and exhaustive checks of ML-KEM C source (--audit-source)
+  source_audit.py          CBMC and exhaustive checks of ML-KEM and ML-DSA C source (--audit-source)
   coq/                     NTT.v, Reduce.v: the proofs
   harness/                 C files linked into a test build of a library: deterministic
                            randombytes(), LMS/XMSS adapters, the constant-time shim

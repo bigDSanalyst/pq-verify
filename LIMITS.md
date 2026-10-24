@@ -157,11 +157,15 @@ with no axiom and nothing admitted):
 These are proofs about the algorithms as written in Coq, not about any
 vendor's compiled code.
 
-`--audit-source` proves something about a library's own C source: that four
-of its ML-KEM functions have no undefined behaviour or int16 overflow on any
-input FIPS 203 allows them, by CBMC, in C's semantics as CBMC models them. It
-tests two reductions and the zeta table on every input, as compiled. It does
-not prove that the NTT computes FIPS 203's transform, it covers no other
+`--audit-source` proves something about a library's own C source, by CBMC,
+in C's semantics as CBMC models them. For ML-KEM: that four of its
+functions have no undefined behaviour on any input FIPS 203 allows them, and
+that its NTT and NTT-domain multiplication never overflow an int16
+coefficient. For ML-DSA: that six of its functions have no undefined
+behaviour on any input FIPS 204 gives them, and that its NTTs and NTT-domain
+multiplication never overflow an int32 coefficient. It tests the reductions,
+the zeta tables and ML-DSA's rounding on every input, as compiled. It does
+not prove that an NTT computes the standard's transform, it covers no other
 function, and it does not check strict aliasing
 ([SOURCE-AUDIT.md](SOURCE-AUDIT.md)).
 

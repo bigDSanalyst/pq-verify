@@ -370,21 +370,32 @@ and randomised APIs, is in [ARCHITECTURE.md](ARCHITECTURE.md#how---audit-dsa-rea
 
 ## More audit modes
 
-### C source: CBMC, on every input FIPS 203 allows
+### C source: CBMC, on every input FIPS 203 and 204 allow
 
-`pq-verify --audit-source DIR` checks an ML-KEM library's C source, not its
-binary, and annotates nothing in it. CBMC proves that `poly_reduce`, the NTT,
-the NTT-domain multiplication and `poly_frommsg` have no undefined behaviour
-on any input FIPS 203 allows them. That covers out-of-bounds accesses,
-signed overflow and bad shifts. It also proves the NTT and the multiplication
-never overflow an int16 coefficient. `barrett_reduce` and `montgomery_reduce`
-are tested on every input they accept, and the zeta table against FIPS 203's
-definition. CBMC's own self-test and each check's control must catch a
-planted defect first, or the run is CANNOT VERIFY. So is a run that calls a
-function whose body is not in the source given, which CBMC would take to do
-nothing, and source holding CBMC directives or inline assembly. On PQClean's
-ML-KEM it
-takes 10 to 15 minutes and needs `cbmc` and a C compiler. What it proves and
+`pq-verify --audit-source DIR` checks an ML-KEM or ML-DSA library's C source,
+not its binary, and annotates nothing in it.
+- **ML-KEM:** CBMC proves that `poly_reduce`, the NTT, the NTT-domain
+  multiplication and `poly_frommsg` have no undefined behaviour on any input
+  FIPS 203 allows them, and that the NTT and the multiplication never
+  overflow an int16 coefficient. `barrett_reduce` and `montgomery_reduce` are
+  tested on every input they accept, and the zeta table against FIPS 203's
+  definition.
+- **ML-DSA:** CBMC proves the NTT, its inverse, the NTT-domain
+  multiplication, `poly_reduce` and `poly_chknorm` free of undefined
+  behaviour and int32 overflow on every input FIPS 204 gives them, the first
+  four with their output bounds. With an exhaustive test of every low word,
+  it also proves `montgomery_reduce` correct on every input of its contract.
+  `reduce32`, `caddq` and `freeze` are tested on all 2³² inputs, the zeta
+  table against FIPS 204, and `power2round`, `decompose` and `use_hint`
+  against FIPS 204's own algorithms on every r in [0, q).
+
+Undefined behaviour covers out-of-bounds accesses, signed overflow and bad
+shifts. CBMC's own self-test and each check's control must catch a planted
+defect first, or the run is CANNOT VERIFY. So is a run that calls a function
+whose body is not in the source given, which CBMC would take to do nothing,
+and source holding CBMC directives or inline assembly. One of PQClean's
+parameter sets takes about 8 minutes for ML-KEM and 23 for ML-DSA. It needs
+`cbmc` and a C compiler, and for ML-DSA `z3` and Kissat. What it proves and
 what it does not is in [SOURCE-AUDIT.md](SOURCE-AUDIT.md).
 
 ### Accumulated vectors: 10 000 random cases, one digest
@@ -681,8 +692,10 @@ apt-get install -y coq gcc g++
 pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 ```
 
-**For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler;
-`cadical` is optional and halves the NTT's proof time.
+**For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler, and
+for ML-DSA also `z3` and Kissat, which solves the NTT proofs. Ubuntu does not
+package Kissat; [SOURCE-AUDIT.md](SOURCE-AUDIT.md) says how to build it.
+Without it, ML-KEM's NTT runs with CBMC's built-in MiniSat, more slowly.
 
 **Optional (1 test each, everything works without them):**
 - `cryptominisat` — the CMS5 speed-comparison benchmark

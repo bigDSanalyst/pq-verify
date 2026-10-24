@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 int nondet_int(void);
+int64_t nondet_int64(void);
+uint64_t nondet_uint64(void);
 
 void selftest_bounds(void) {          /* writes a[4] of int a[4] */
     int a[4];
@@ -29,10 +31,12 @@ void selftest_narrowing(void) {       /* stores more than int16 holds */
 }
 
 /* Not a defect: CBMC's model of the two things C leaves to the compiler
- * that ML-KEM code relies on. A right shift of a negative value fills with
- * the sign, and a narrowing conversion wraps, as GCC and Clang do. Every
- * CBMC proof in this audit is in that model, so it must hold here, and the
- * exhaustive test checks the compiler does the same. */
+ * that ML-KEM and ML-DSA code relies on. A right shift of a negative value
+ * fills with the sign, and a narrowing conversion wraps, as GCC and Clang do:
+ * in int32 and int16 for ML-KEM, and in int64 and from uint64 to int32 for
+ * ML-DSA's montgomery_reduce. Every CBMC proof in this audit is in that
+ * model, so it must hold here, and the exhaustive tests check the compiler
+ * does the same. */
 void selftest_model(void) {
     int32_t x = nondet_int();
     __CPROVER_assume(x < 0);
@@ -41,6 +45,14 @@ void selftest_model(void) {
     int y = nondet_int();
     __CPROVER_assume(y > 32767 && y < 65536);
     __CPROVER_assert((int16_t)y == y - 65536, "model: a narrowing conversion wraps");
+    int64_t w = nondet_int64();
+    __CPROVER_assume(w < 0);
+    __CPROVER_assert((w >> 63) == -1 && (w >> 32) == (w - (w & 0xFFFFFFFFLL)) / 4294967296LL,
+                     "model: a right shift of a negative int64 fills with its sign");
+    uint64_t u = nondet_uint64();
+    __CPROVER_assume((u & 0xFFFFFFFFULL) >= 0x80000000ULL);
+    __CPROVER_assert((int32_t)u == (int64_t)(u & 0xFFFFFFFFULL) - 4294967296LL,
+                     "model: a narrowing from uint64 to int32 keeps the low 32 bits");
 }
 
 /* Not a defect CBMC reports, but one pq-verify must see: a call to a

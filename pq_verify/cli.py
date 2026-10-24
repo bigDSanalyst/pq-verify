@@ -19,7 +19,7 @@ pq-verify command-line interface.
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
     pq-verify --audit-mceliece PATH SET  audit a Classic McEliece library (not FIPS)
     pq-verify --audit-hqc PATH SET       audit an HQC decoder (code layer)
-    pq-verify --audit-source DIR   prove an ML-KEM library's C arithmetic UB-free (CBMC)
+    pq-verify --audit-source DIR   prove ML-KEM or ML-DSA C arithmetic UB-free (CBMC)
     pq-verify --audit-harness CMD SET  audit through a Crucible-protocol harness
     pq-verify --check-no-harness PATH   fail if PATH is an audit/test build
     pq-verify --emit-prompt SET    write the ACVP questions for SET
@@ -240,22 +240,23 @@ def build_parser():
                         "error patterns, whole received words -- each answer exact. "
                         "The code layer only, not the KEM")
     p.add_argument("--audit-source", metavar="DIR",
-                   help="from an ML-KEM library's C source: prove with CBMC that "
-                        "poly_reduce, ntt, the NTT-domain multiplication and frommsg "
-                        "have no undefined behaviour or int16 overflow on any input "
-                        "FIPS 203 allows, and test its two reductions on every input. "
-                        "DIR is the reference code's layout (PQClean's "
-                        "crypto_kem/ml-kem-*/clean); nothing in it is annotated. "
-                        "Needs cbmc and a C compiler, 10-15 min on 3 cores "
-                        "(SOURCE-AUDIT.md)")
+                   help="from an ML-KEM or ML-DSA library's C source: prove with "
+                        "CBMC that its NTT, NTT-domain multiplication and reductions "
+                        "have no undefined behaviour or overflow on any input FIPS 203 "
+                        "or 204 allows, each output within its bound, and test what "
+                        "can be enumerated on every input: the reductions, the zeta "
+                        "table and, for ML-DSA, the rounding against FIPS 204. DIR is "
+                        "the reference code's layout (PQClean's crypto_kem/ml-kem-*/"
+                        "clean or crypto_sign/ml-dsa-*/clean); nothing in it is "
+                        "annotated. Needs cbmc and a C compiler, and for ML-DSA z3 "
+                        "and kissat (SOURCE-AUDIT.md)")
     p.add_argument("--source-include", action="append", default=[], metavar="DIR",
                    help="with --audit-source: another include directory the "
                         "library's headers need")
     p.add_argument("--source-symbol", action="append", default=[], metavar="ROLE=NAME",
                    help="with --audit-source: the library's name for a role it does not "
-                        "call PREFIX+ROLE, e.g. --source-symbol ntt=my_kyber_ntt. Roles: "
-                        "montgomery_reduce, barrett_reduce, zetas, ntt, poly_reduce, "
-                        "poly_basemul_montgomery, poly_frommsg")
+                        "call PREFIX+ROLE, e.g. --source-symbol ntt=my_kyber_ntt. Each "
+                        "scheme's roles are in SOURCE-AUDIT.md")
     p.add_argument("--audit-harness", nargs=2, metavar=("COMMAND", "PARAM_SET"),
                    help="audit an ML-KEM or ML-DSA implementation in any language "
                         "through a harness speaking Crucible's JSON-line protocol "
@@ -534,7 +535,7 @@ def main(argv=None):
                 return 2
             _symbols[_role] = _name
         print("\n  SOURCE AUDIT (CBMC and exhaustive): no undefined behaviour or "
-              "overflow on any input FIPS 203 allows")
+              "overflow on any input FIPS 203 or 204 allows")
         _limit = 3600 if args.audit_timeout is None else args.audit_timeout
         source_result = pqverify_audit_source(args.audit_source,
                                               includes=args.source_include,
