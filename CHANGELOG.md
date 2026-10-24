@@ -5,7 +5,7 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [2.14.0] — 2026-10-23
+## [2.14.0] — 2026-10-24
 
 A feature release for the research and classical tracks, whose engines now
 decide exactly and certify their answers. DQBF is decided exactly, and each
