@@ -9,9 +9,9 @@ authors:
 # This names the archived Zenodo deposit. It moves when a NEW DEPOSIT EXISTS,
 # not when the package version changes — advertising a DOI that does not
 # resolve to the stated version would be worse than lagging a release behind.
-version: 2.13.0
-doi: "10.5281/zenodo.23484320"
-date-released: 2026-10-19
+version: 2.15.0
+doi: "10.5281/zenodo.23633637"
+date-released: 2026-10-25
 # The all-versions DOI, 10.5281/zenodo.21739510, is deliberately not listed
 # under identifiers: cffconvert takes the first DOI there over `doi` above, so
 # its BibTeX, APA and RIS would print this version beside a DOI that resolves
