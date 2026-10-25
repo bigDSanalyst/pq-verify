@@ -34,8 +34,9 @@ What runs, and what it means:
   exhaustive                  what can be enumerated, compiled from the
                               library's own files: ML-KEM's barrett_reduce and
                               montgomery_reduce and its zeta table; ML-DSA's
-                              montgomery_reduce on every low word, reduce32,
-                              caddq and freeze on all 2^32 inputs,
+                              montgomery_reduce on every low word, caddq on
+                              all 2^32 inputs, reduce32 and freeze on every
+                              input their contract allows (2^32 - 2^22),
                               its zeta table, and power2round, decompose and
                               use_hint against FIPS 204's algorithms on every
                               r in [0, q).

@@ -5,12 +5,27 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.15.0] — 2026-10-25
+
+A feature release: `--audit-source` checks an ML-KEM or ML-DSA library's own
+C source, with nothing in it annotated. CBMC proves the NTTs, the NTT-domain
+multiplication and the polynomial reductions free of undefined behaviour on
+every input the standard allows, each output within its bound, and exhaustive
+tests check what can be enumerated. CBMC's self-test and each solver the
+proofs use must catch planted defects, each harness's end must be shown
+reachable, and each exhaustive comparison must catch its control, or the run
+is CANNOT VERIFY. On PQClean's ML-KEM-512, 768 and 1024 and ML-DSA-44, 65 and
+87 at the pinned commit, every check passes, and CI requires each of 19
+mutants to be caught. EVIDENCE.md maps each claim pq-verify makes to the
+command that reproduces it and the CI job that re-runs it. No pinned vector,
+existing report field, exit code or vendor-library verdict changes.
+
 ### Added
 
 - **`--audit-source DIR`: CBMC and exhaustive checks of an ML-KEM library's C
   source** ([SOURCE-AUDIT.md](SOURCE-AUDIT.md)). Nothing in the library is
   annotated: each harness states only what FIPS 203 fixes, and pq-verify
-  reads the library's name prefix off its `reduce.h`.
+  reads the prefix the library's names carry off its own headers.
   - CBMC proves `poly_reduce`, `ntt`, `poly_basemul_montgomery` and
     `poly_frommsg` free of undefined behaviour on every input FIPS 203 allows
     them, each with its output bound. Every loop is unrolled completely.
@@ -62,17 +77,16 @@ versioning](https://semver.org/spec/v2.0.0.html).
     overflow on every input FIPS 204 gives them, the first four with their
     output bounds. That `poly_chknorm` decides exactly is not proved: none of
     the solvers tried (MiniSat, CaDiCaL, Z3) settled that equivalence over 256
-    coefficients in reasonable time.
-    The NTTs and the multiplication are checked against
-    `montgomery_reduce`'s contract.
+    coefficients in reasonable time. The NTTs and the multiplication are
+    checked against `montgomery_reduce`'s contract.
   - That contract is proved of the library's C. CBMC, with Z3, proves the
     bound on every input in {−2³¹q, …, 2³¹q − 1} and that
     f(a + 2³²) = f(a) + 1; the exhaustive test checks the congruence on every
     low word. Together they give it on every input.
-  - The exhaustive test also checks `reduce32`, `caddq` and `freeze` on all
-    2³² inputs, the zeta table against FIPS 204, and `power2round`,
-    `decompose` and `use_hint` against FIPS 204's own algorithms on every
-    r in [0, q).
+  - The exhaustive test also checks `caddq` on all 2³² inputs and `reduce32`
+    and `freeze` on every input their contract allows (2³² − 2²² of them),
+    the zeta table against FIPS 204, and `power2round`, `decompose` and
+    `use_hint` against FIPS 204's own algorithms on every r in [0, q).
   - The NTTs' proofs are split by property, each part its own sliced CBMC
     run, with every property checked against CBMC's own list so none is
     dropped. A multiplication whose operands' types bound it, such as an
@@ -80,17 +94,6 @@ versioning](https://semver.org/spec/v2.0.0.html).
     go side by side only as far as the machine's memory holds them.
   - CBMC's model pin also covers an int64 right shift and a uint64-to-int32
     narrowing.
-  - **The NTT proofs run with Kissat**, ML-KEM's included, in place of
-    CaDiCaL: on the same six formulas Kissat took 19 minutes where CaDiCaL
-    took 38, in less than half the memory. ML-DSA's audit needs Kissat and Z3 and is CANNOT VERIFY
-    without them; ML-KEM's runs its NTT with CBMC's MiniSat when Kissat is
-    missing. Each check in the report names the solver that ran. CI builds
-    Kissat at the commit of its 4.0.4 release.
-  - The self-test also runs a planted out-of-bounds write through each solver
-    a job uses, Kissat and Z3, which must report it; each harness's reach
-    check runs with the job's own solver. Before, both ran only with
-    MiniSat, so a solver that wrongly answered UNSAT would have gone
-    unnoticed.
   - On PQClean's ML-DSA-44, 65 and 87 at the pinned commit, every check
     passes. Its comments on `montgomery_reduce` and `reduce32` are each off
     by one at one end, as pq-verify's Coq proofs already show; no caller is
@@ -100,6 +103,21 @@ versioning](https://semver.org/spec/v2.0.0.html).
     to 32 bits, keeps the bound and the shift property CBMC proves and breaks
     only the congruence, which the exhaustive test catches: neither half of
     that proof is enough alone.
+- **The source audit's proofs run with Kissat and Z3, and each solver must
+  catch a planted defect.**
+  - The NTT and pointwise proofs, ML-KEM's NTT included, run with Kissat
+    4.0.4: on the same six formulas it took 19 minutes where CaDiCaL took 38,
+    in less than half the memory. `montgomery_reduce`'s proof runs with Z3,
+    and the rest with CBMC's built-in MiniSat.
+  - ML-DSA's audit needs Kissat and Z3, and is CANNOT VERIFY without them,
+    before it runs anything. ML-KEM's runs its NTT with MiniSat when Kissat is
+    missing. Each check in the report names the solver that ran.
+  - The self-test runs a planted out-of-bounds write through Kissat and Z3,
+    and each must report it; each harness's reach check runs with the job's
+    own solver. A solver that cannot find a planted failure, such as one that
+    always answers UNSAT, makes the run CANNOT VERIFY.
+  - CI builds Kissat at the commit of its 4.0.4 release; Ubuntu does not
+    package it.
 
 ### Documentation
 
