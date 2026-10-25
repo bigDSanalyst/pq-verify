@@ -163,6 +163,12 @@ The rounding is checked against FIPS 204's algorithms as written, for γ₂ =
 (q−1)/88 and (q−1)/32 alike, and `decompose` includes its corner case, where
 r⁺ − r₀ = q − 1 and r₁ is 0.
 
+`reduce32` and `freeze` are tested on every a ≤ 2³¹ − 2²² − 1, the inputs
+`reduce32`'s comment allows, and on no others. For each of the 2²² values
+above that, `reduce32`'s first step, `a + (1 << 22)`, overflows an int32,
+which C leaves undefined. The exhaustive test runs under UBSan and stops at
+the first undefined behaviour, so it would abort at a = 2³¹ − 2²².
+
 ## How the pieces fit
 
 **ML-KEM.** `ntt` and `poly_basemul_montgomery` are checked with the two
@@ -248,7 +254,8 @@ A check that cannot fail says nothing, so each one is shown failing first:
   harness's assumptions contradict each other, and its passes are vacuous.
 - **The exhaustive controls**: each comparison is run first on a copy of the
   function or table with one value wrong, and must count it. ML-DSA's run
-  over a window around the planted value, its full domains being 2³².
+  over a window around the planted value, its full domains being up to 2³²
+  values.
 
 Any of these not catching its defect makes the run CANNOT VERIFY.
 
