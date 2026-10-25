@@ -5,6 +5,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **v2.15.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.23633637](https://doi.org/10.5281/zenodo.23633637).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.13.0's.
+
 ## [2.15.0] — 2026-10-25
 
 A feature release: `--audit-source` checks an ML-KEM or ML-DSA library's own
