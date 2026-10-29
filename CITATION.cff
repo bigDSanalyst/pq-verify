@@ -1,9 +1,9 @@
 cff-version: 1.2.0
 message: "If you use pq-verify, please cite it as below."
-title: "pq-verify: Independent verification for ML-KEM / ML-DSA implementations"
+title: "pq-verify: Independent verification for post-quantum cryptography implementations"
 authors:
   - family-names: "Maino"
-    given-names: "Nicholas"
+    given-names: "Nicholas Clifford"
     alias: "iamweare"
     orcid: "https://orcid.org/0009-0007-6650-5879"
 # This names the archived Zenodo deposit. It moves when a NEW DEPOSIT EXISTS,

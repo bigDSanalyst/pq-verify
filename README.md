@@ -719,13 +719,13 @@ MIT. Audits and commercial support: see [Enterprise audits and pre-CMVP readines
 
 Archived on Zenodo with a citable DOI:
 
-> Maino, N. C. (2026). *pq-verify: Independent verification for ML-KEM / ML-DSA
-> implementations* (v2.15.0). Zenodo. https://doi.org/10.5281/zenodo.23633637
+> Maino, N. C. (2026). *pq-verify: Independent verification for post-quantum
+> cryptography implementations* (v2.15.0). Zenodo. https://doi.org/10.5281/zenodo.23633637
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
-  title     = {pq-verify: Independent verification for ML-KEM / ML-DSA implementations},
+  title     = {pq-verify: Independent verification for post-quantum cryptography implementations},
   version   = {2.15.0},
   year      = {2026},
   publisher = {Zenodo},

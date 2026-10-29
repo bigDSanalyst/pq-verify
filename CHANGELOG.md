@@ -16,6 +16,12 @@ versioning](https://semver.org/spec/v2.0.0.html).
   post-quantum documents. Links, the source distribution's manifest and the
   report text that names them follow.
 - **README**: the section on paid audits moves below the technical ones.
+- **The citation's title covers every track**: "pq-verify: Independent
+  verification for post-quantum cryptography implementations", in
+  CITATION.cff, the README's citation and its BibTeX entry, and as the
+  command line's description. v2.15.0's Zenodo record carries the same title
+  and the author's full name, Nicholas Clifford Maino, which CITATION.cff now
+  gives too, so later deposits carry both.
 
 ### Fixed
 

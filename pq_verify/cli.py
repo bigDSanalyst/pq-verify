@@ -130,7 +130,7 @@ def _bind_loaded(artifact, loaded):
 def build_parser():
     p = argparse.ArgumentParser(
         prog="pq-verify",
-        description="Independent verification for ML-KEM / ML-DSA implementations.",
+        description="Independent verification for post-quantum cryptography implementations.",
     )
     p.add_argument("--version", action="version",
                    version=f"pq-verify {__version__}")
