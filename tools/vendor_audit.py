@@ -1108,7 +1108,10 @@ def markdown(rows):
              "| dkCheck | Edge cases | Accumulated | Constant time | Mutants caught | Result |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
-        e = row["expected"]
+        # NIST's vectors are recorded for one parameter set and run in each, so
+        # each count here is over all the sets, as in the ML-DSA table
+        e = {s: [v[0] * len(row["sets"]), v[1] * len(row["sets"])]
+             for s, v in row["expected"].items()}
         ct = row.get("ct", {})
         cp, cq = (sum(v[i] for ps in ct for v in ct[ps].values()) for i in (0, 1))
         nm = len(row.get("mutants", [])) + len(row.get("ct_mutants", []))

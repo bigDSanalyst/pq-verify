@@ -1258,7 +1258,7 @@ def _cubic_jacobi_sum(p):
 
 
 def audit_cubic(lib, primes=None):
-    """The cubic engine (ECC.md): its count of x^3+y^3+z^3 = 0 against a
+    """The cubic engine (docs/ECC.md): its count of x^3+y^3+z^3 = 0 against a
     direct count and, through the Jacobi sum J(chi, chi), its B(a, b);
     against complex multiplication for large primes; its point validation;
     and its scalar multiplication against pq_verify.ec."""
@@ -1418,7 +1418,7 @@ def audit_conformity(lib):
 # ================================================================
 
 def audit_curve(engines, a, b, p):
-    """A curve y^2 = x^3 + ax + b over F_p (ECC.md): nonsingular; its
+    """A curve y^2 = x^3 + ax + b over F_p (docs/ECC.md): nonsingular; its
     j-invariant; its point count, and its twist's, each with a certificate
     checked from the curve; the cubic engine's count of x^3+y^3+z^3 = 0 and
     its point validation; and the conformity gradient on its discriminant
@@ -1464,13 +1464,13 @@ def audit_curve(engines, a, b, p):
     # POINT COUNT, certified, and the twist's
     how = {'naive': 'direct count', 'cm': 'complex multiplication',
            'orders': 'point orders on E and its twist',
-           'sea': 'Schoof\u2013Elkies\u2013Atkin (SEA.md)'}
+           'sea': 'Schoof\u2013Elkies\u2013Atkin (docs/SEA.md)'}
     count = EC.count(E)
     trace = None
     if count is None:
         why = (f'a general curve above 2^{EC.SEA_BITS}' if p.bit_length() > EC.SEA_BITS
                else 'Schoof\u2013Elkies\u2013Atkin left more than one candidate')
-        r.add_skip('Point count', f'{why}: CANNOT VERIFY without a published order (SEA.md)')
+        r.add_skip('Point count', f'{why}: CANNOT VERIFY without a published order (docs/SEA.md)')
     else:
         ok = EC.check_count(E, count)
         trace = count.trace
@@ -2770,7 +2770,7 @@ def audit_freivalds_ntt(lib):
 
 
 # ================================================================
-# CFL FRONT-END (CFL.md; Paper 2, DOI: 10.5281/zenodo.19302050)
+# CFL FRONT-END (docs/CFL.md; Paper 2, DOI: 10.5281/zenodo.19302050)
 # CFL text -> tokens -> AST -> checked properties -> FOL obligations
 #   -> QBF, decided by the DQBF stage -> field router -> engine checks
 # ================================================================
@@ -3044,7 +3044,7 @@ _CFL_BAD_MEANING = {
 
 
 def _cfl_stages(r, spec, engines, registry, names, expected, routes, lib_gf2=None):
-    """The six CFL checks on spec (CFL.md): names maps each stage to its row
+    """The six CFL checks on spec (docs/CFL.md): names maps each stage to its row
     name; expected is the spec's shape; routes maps property keys to engines."""
     from . import cfl as C
     from . import dqbf as D
@@ -3218,7 +3218,7 @@ def _quantified(f):
 
 
 def audit_cfl_frontend(engines):
-    """CFL -> AST -> FOL -> QBF -> field router -> engine dispatch (CFL.md)."""
+    """CFL -> AST -> FOL -> QBF -> field router -> engine dispatch (docs/CFL.md)."""
     r = AuditResult('CFL Front-End')
     _cfl_stages(r, CFL_SPEC, engines, CFL_OBLIGATIONS,
                 names={'lexer': 'CFL lexer', 'parser': 'CFL parser',
@@ -3987,7 +3987,7 @@ def audit_c_cfl(engines):
 
 
 # ================================================================
-# ENGINE 7: the DQBF stage (Phase 4b), decided exactly (DQBF.md)
+# ENGINE 7: the DQBF stage (Phase 4b), decided exactly (docs/DQBF.md)
 # The module format parsed strictly; an XOR matrix decided by affine
 # Skolem functions on the GF(2) engine, one with clauses by universal
 # expansion and CDCL; every answer's certificate checked by a checker
@@ -3997,7 +3997,7 @@ def audit_c_cfl(engines):
 # The Phase 4b module. It is false: c1 and c2 force x2 = k constant,
 # x1 = 1+k+u1 and x3 = k+u2 (x1 sees only u1 and x3 only u2), and then
 # c3 fails at u1=1, u2=0 for k=0 and at u1=0, u2=1 for k=1. Through
-# 2.13.0 the pipeline called it satisfiable (DQBF.md).
+# 2.13.0 the pipeline called it satisfiable (docs/DQBF.md).
 _PHASE4B_MODULE = """
 <module name="ntt_verify">
   <vars>
@@ -4042,7 +4042,7 @@ def _dqbf_planted(seed=42, nu=200, nx=800, ncons=1500):
 
 
 def audit_dqbf_pipeline(engines):
-    """The DQBF stage (DQBF.md): the Phase 4b module parsed strictly and
+    """The DQBF stage (docs/DQBF.md): the Phase 4b module parsed strictly and
     decided exactly, every answer's certificate checked, and the checkers
     shown to reject tampered certificates."""
     import time as _time
@@ -5344,7 +5344,7 @@ def audit_engine6_genus4(lib):
     return r
 
 # ============================================================
-# STACK INTEGRATION 1 — the CFL front end (CFL.md)
+# STACK INTEGRATION 1 — the CFL front end (docs/CFL.md)
 # ============================================================
 # Engine 6's properties go through the same pipeline as the other engines:
 # CFL spec -> lex -> parse (AST) -> FOL -> QBF -> field router -> engine
@@ -5558,7 +5558,7 @@ PAPER7_OBLIGATIONS = {
 
 
 def audit_engine6_cfl(engines):
-    """Engine 6 through the CFL front end (CFL.md): the Paper 7 context
+    """Engine 6 through the CFL front end (docs/CFL.md): the Paper 7 context
     parsed, checked, its obligations decided as QBFs, routed to 'period' by
     their field, and each dispatched to the Engine 6 check that discharges
     it."""

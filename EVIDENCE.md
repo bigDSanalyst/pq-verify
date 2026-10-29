@@ -26,7 +26,7 @@ row whose result differs from the one recorded fails the job.
 
 | Claim | Reproduce | Re-run in CI | Pinned to | Does not show |
 |---|---|---|---|---|
-| pq-verify's own references pass every pinned NIST ACVP vector: ML-KEM 240, ML-DSA 615, SLH-DSA 624, LMS 87, 1,566 in all | `pq-verify --acvp-all`, offline, about a minute | `tests.yml`: each `py3.x` job and `macOS (Apple silicon)`; all four suites must run | the vectors shipped in `pq_verify/vectors/`, checked by `tools/doctor.py` in the `py3.x` jobs; `watch-nist-vectors.yml` checks NIST for changes weekly | anything about another implementation. These are the references every verdict rests on |
+| pq-verify's own references pass every NIST ACVP vector of the default run: ML-KEM 240, ML-DSA 615, SLH-DSA 624, LMS 87, 1,566 in all | `pq-verify --acvp-all`, offline, about a minute | `tests.yml`: each `py3.x` job and `macOS (Apple silicon)`; all four suites must run | the vectors shipped in `pq_verify/vectors/`, checked by `tools/doctor.py` in the `py3.x` jobs; `watch-nist-vectors.yml` checks NIST for changes weekly | anything about another implementation. These are the references every verdict rests on |
 | SLH-DSA signature generation matches NIST byte for byte: 624 signatures | `pq-verify --slhdsa-siggen`, about 30 minutes | `slhdsa-siggen.yml`, weekly and on changes to it | the same vectors | as above |
 | The self-suite: 160 checks, 54 of them on PQC | `pq-verify` | `tests.yml`, `self-suite (base)`, `(dev)` and `(full)`: the total is 160, none fail, every skip names its dependency, and the missing set is exactly the profile's | `constraints-reference.txt` for the reference packages | anything from the other 106 checks (the harness, classical and research engines), which are never PQC evidence |
 | Coq proofs, for every input: FIPS 203's and FIPS 204's forward NTTs equal the CRT map they are defined to compute; `montgomery_reduce`, `barrett_reduce` and `reduce32` are congruent to their input and within bound, with no intermediate overflow | `pq-verify --proofs`, which needs `coqc` | `tests.yml`, `self-suite (full)`, which installs Coq. Every theorem must print "Closed under the global context", and tests plant a wrong NTT spec, a false Montgomery range and an `Admitted` proof, each of which must be refused | `pq_verify/coq/NTT.v`, `Reduce.v` | anything about compiled code: these are the algorithms as written in Coq ([LIMITS.md](LIMITS.md#proofs-and-tests)) |
@@ -76,3 +76,21 @@ python3 tools/source_audit.py --scheme ml-dsa
 
 What pq-verify cannot check is in [LIMITS.md](LIMITS.md), and what it has
 found in public libraries is in [AUDITS.md](AUDITS.md).
+
+## Reproduced outside CI
+
+These runs repeat a CI job on another machine, from a clean clone at the
+commit shown. A run is listed only with its machine, its toolchain and its
+result.
+
+| Date | Command, at commit | Machine | Result |
+|---|---|---|---|
+| 2026-10-29 | `python3 tools/vendor_audit.py --only ML-DSA`, at `f34d06b` | Google Colab: AMD EPYC 7B12, Python 3.13.18, GCC 13.3.0 | exit 0: every ML-DSA row, mutant and constant-time result as AUDITS.md records |
+
+That run rebuilt all six ML-DSA rows from their pinned commits, for all three
+parameter sets. The liboqs rows came out as AUDITS.md records them: 322, 362
+and 384 checks through the OQS API, and 464, 513 and 535 for each
+mldsa-native backend, with each liboqs mutant caught and constant time
+CANNOT VERIFY. A count leaves out the tests a library's API cannot be asked,
+such as the OQS API's missing internal, pre-hash and external-μ entry points;
+AUDITS.md counts them as not applicable, never as passes.

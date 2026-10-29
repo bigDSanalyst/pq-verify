@@ -1,10 +1,10 @@
-"""The CFL front end (CFL.md).
+"""The CFL front end (docs/CFL.md).
 
 A specification in CFL is lexed and parsed strictly, its meaning checked,
 and each required property turned into a first-order obligation. An
 obligation is decided two ways that must agree: evaluated on the finite
 model the specification defines, and encoded as a QBF over that model and
-decided, with a checked certificate, by the DQBF stage (DQBF.md). Each
+decided, with a checked certificate, by the DQBF stage (docs/DQBF.md). Each
 property is routed to an engine by its parsed field, and dispatched to its
 registered check (pq_verify.core).
 """
@@ -223,7 +223,7 @@ class _Parser:
 
 
 def parse(text):
-    """The AST of a CFL specification (CFL.md); CFLError on anything the
+    """The AST of a CFL specification (docs/CFL.md); CFLError on anything the
     grammar does not define, with its line and column."""
     return _Parser(lex(text)).spec()
 
@@ -275,7 +275,7 @@ class Property:
 
 
 def check(spec):
-    """The properties of a parsed specification, checked (CFL.md): unique
+    """The properties of a parsed specification, checked (docs/CFL.md): unique
     names, exactly the attributes type and field, a known field and a type
     its engine decides, and REQUIRE naming only properties its context
     defines. CFLError lists every problem."""
@@ -516,7 +516,7 @@ def model(props, verified):
 
 def to_qbf(f, domain, rels):
     """A closed formula over a finite model as a QBF, written as a DQBF in
-    which each existential depends on the universals before it (CFL.md).
+    which each existential depends on the universals before it (docs/CFL.md).
     Each variable of f's prenex form becomes k bits, k enough for the
     domain; a code past the domain is no element, so universals are
     restricted to the domain and existentials must choose in it. Each

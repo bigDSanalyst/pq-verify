@@ -11,6 +11,35 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.23633637](https://doi.org/10.5281/zenodo.23633637).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.13.0's.
+- **The research and classical engines' documents move into `docs/`**:
+  CFL.md, DQBF.md, ECC.md and SEA.md, with REPINNING.md. The root keeps the
+  post-quantum documents. Links, the source distribution's manifest and the
+  report text that names them follow.
+- **README**: the section on paid audits moves below the technical ones.
+
+### Fixed
+
+- **AUDITS.md's ML-KEM table mixed one parameter set with three.** Its
+  NIST-vector columns showed one set's counts (80 checks), beside edge cases
+  and accumulated checks counted over all three, so each result read
+  80 + 4,320 + 3. NIST's vectors run in every set, and the columns now count
+  all three, as the ML-DSA table's do: 240 + 4,320 + 3 for each library that
+  passes. The summary rows and the README agree: mlkem-native passes
+  240/240, and PQClean 210/240, accepting all 30 of NIST's invalid keys. The
+  recorded counts, which CI checks, are unchanged.
+- **"All 1566 pinned NIST ACVP vectors" left out 624.** SLH-DSA's sigGen
+  vectors are pinned too, and pass, but run only with `--slhdsa-siggen`. The
+  README and EVIDENCE.md now say 1,566 is the default run's count.
+- **AUDITS.md says what its Result columns count**: the conformance checks
+  over all three parameter sets. Constant time is judged beside them, and a
+  row is VERIFIED only if it passes too, where it can be judged.
+
+### Documentation
+
+- **EVIDENCE.md lists runs reproduced outside CI**, each with its commit,
+  machine, toolchain and result. The first is the ML-DSA vendor audits,
+  liboqs included, rerun on a Google Colab machine (AMD EPYC 7B12,
+  Python 3.13.18): every row, mutant and constant-time result as recorded.
 
 ## [2.15.0] — 2026-10-25
 
@@ -157,7 +186,7 @@ library depended on the rebuilt engines.
 ### Added
 
 - **Schoof–Elkies–Atkin point counting** (`pq_verify/sea.py`,
-  [SEA.md](SEA.md)). A general curve (j ≠ 0, 1728) from 2⁶⁴ to 2³²⁰ is now
+  [SEA.md](docs/SEA.md)). A general curve (j ≠ 0, 1728) from 2⁶⁴ to 2³²⁰ is now
   counted, where before it was CANNOT VERIFY. It uses Müller's canonical
   modular polynomials, computed mod p from q-expansions, and Elkies primes.
   For each Elkies prime l, the certificate holds a kernel polynomial and
@@ -167,7 +196,7 @@ library depended on the rebuilt engines.
   candidates left. The check uses nothing from the search.
   - Counted in pure Python, P-256 has its published order (58 s to count,
     14 s to check), and so do secp128r1, brainpoolP160r1, P-192 and P-224.
-  - Elkies' formulas for the canonical polynomial are derived in SEA.md, and
+  - Elkies' formulas for the canonical polynomial are derived in docs/SEA.md, and
     were checked on 647 isogenies against Vélu's formulas.
   - Above 2³²⁰, a general curve is CANNOT VERIFY unless its order is
     published.
@@ -217,7 +246,7 @@ library depended on the rebuilt engines.
   j-invariant, stability-margin and "Cubic analysis" rows passed
   unconditionally. `pq_verify/ec.py` now counts points exactly, each count
   with a certificate that `check_count` verifies from the curve alone
-  ([ECC.md](ECC.md)):
+  ([ECC.md](docs/ECC.md)):
   - complex multiplication for j = 0 and 1728 at any size, which counts
     secp256k1 to its published order in a tenth of a second;
   - exact point orders on the curve and its twist (Mestre's method) for
@@ -256,7 +285,7 @@ library depended on the rebuilt engines.
   whole formula for a field's name, and its dispatch solved five fixed systems
   whatever the specification said. Its six checks counted tokens, contexts
   and formulas. `pq_verify/cfl.py` now implements the language as
-  [CFL.md](CFL.md) defines it:
+  [CFL.md](docs/CFL.md) defines it:
   - a lexer and a recursive-descent parser that report a line and column,
     and a checker that lists every problem;
   - each required property's obligation as a first-order formula with a
@@ -279,7 +308,7 @@ library depended on the rebuilt engines.
   false, and it gave it for the Phase 4b module it checks, which is false
   too, while all seven of its checks passed. `pq_verify/dqbf.py` now decides
   a DQBF exactly, to the
-  specification in [DQBF.md](DQBF.md):
+  specification in [DQBF.md](docs/DQBF.md):
   - an XOR matrix by affine Skolem functions, which are complete there, from
     a linear system over GF(2) solved on `libpqv_gf2`;
   - one with clauses by universal expansion, each constraint instantiated
@@ -418,7 +447,7 @@ library depended on the rebuilt engines.
   that ratio depends on which integers stand for a and b. In its place the
   curve audit checks the embedding degree, SafeCurves' transfer criterion: a
   HIGH finding when the largest prime-order subgroup's k = ord_ℓ(p) is at
-  most (ℓ − 1)/100, checked up to k = 100 (ECC.md). 'B3: Near-singular
+  most (ℓ − 1)/100, checked up to k = 100 (docs/ECC.md). 'B3: Near-singular
   curves' is now 'B3: Small embedding degree': ordinary curves with k = 1, 3,
   4 and 6, each found by search and counted with a certificate at run time,
   and two controls with k in the tens of thousands. The SafeCurves case
@@ -1392,7 +1421,7 @@ verdict, exit code or pinned vector changes. One JSON report label does:
   the 2.8.1 re-pin done by hand) and is refused while the candidate BLOCKs.
   Replayed on history, it BLOCKs the vectors 2.8.0 shipped, which the ACVP
   suite scored 240/240.
-- **`REPINNING.md`** — the procedure from watcher alert to release. The
+- **`docs/REPINNING.md`** — the procedure from watcher alert to release. The
   watcher's issue now names the doctor commands, and CI runs the doctor
   offline on every change.
 

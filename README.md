@@ -15,45 +15,11 @@ You deploy post-quantum cryptography. pq-verify checks that **your** implementat
 
 - **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
 - **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
-- **pq-verify itself**: its reference chain passes all 1566 pinned NIST ACVP vectors (ML-KEM, ML-DSA, SLH-DSA, LMS), and the NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
+- **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
 
 Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: a CMVP certificate is issued by NIST and the Canadian Centre for Cyber Security, after an accredited laboratory has tested the module.
 
 It does not compute PQC. It verifies the implementations that do: liboqs, BoringSSL, OpenSSL+OQS, HSM firmware, or your own code.
-
----
-
-## Enterprise audits and pre-CMVP readiness
-
-pq-verify is open source and free to run yourself. Its maintainer also runs
-audits with it for teams that want the evidence before a certification lab,
-a customer or a deployment sees their code:
-
-- **Library audit**: ML-KEM and ML-DSA libraries through their own entry
-  points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
-  sealed binaries through fresh ACVP questions. Each audit runs the checks
-  that apply: NIST's ACVP vectors, Wycheproof and CCTV edge cases, malformed
-  inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM
-  and, in a build with its own annotations compiled in, ML-DSA.
-- **Pre-CMVP gap assessment**: the ACVP algorithm tests a CMVP submission
-  depends on, run beforehand, with each failure traced to its cause.
-- **Hybrid TLS review**: RFC 10024 groups such as `X25519MLKEM768`, checked
-  from the wire bytes, where ACVP never looks.
-- **Remediation verification**: the same audit re-run on the fixed build,
-  bound to its sha256.
-- **CI integration**: the GitHub Action gates merges on the result, and SARIF
-  2.1.0 carries the findings to GitHub Code Scanning or DefectDojo.
-- **CNSA 2.0**: its post-quantum algorithms, ML-KEM-1024, ML-DSA-87 and
-  LMS/XMSS for firmware signing, are all covered.
-
-The deliverable is evidence, not certification: a CMVP certificate is issued
-by NIST and the Canadian Centre for Cyber Security, after an accredited
-laboratory has tested the module. What pq-verify has found in public
-libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
-[LIMITS.md](LIMITS.md); how each requirement maps to a check is in
-[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements); and each claim,
-with the command that reproduces it and the CI job that re-runs it, is in
-[EVIDENCE.md](EVIDENCE.md). To discuss an audit, see [Contact](#contact).
 
 ---
 
@@ -85,8 +51,9 @@ Every result is **reproducible** — deterministic output, SHA-256 fingerprint, 
   A check whose optional dependency is missing reports `⊘ SKIPPED`, never a
   pass and never a failure
 - **NIST ACVP**, every vector passing: ML-KEM 240/240, ML-DSA 615/615,
-  SLH-DSA 1248/1248 across all 12 parameter sets (sigGen opt-in,
-  `--slhdsa-siggen`), LMS 87/87
+  SLH-DSA 1248/1248 across all 12 parameter sets, LMS 87/87. The default run
+  (`--acvp-all`) checks 1566 of them; SLH-DSA's 624 sigGen vectors run with
+  `--slhdsa-siggen`
 - **LMS/HSS and XMSS/XMSS^MT** (SP 800-208, CNSA 2.0's firmware-signing
   schemes) against every other pinned source, `--lms-xmss`
 - **Proofs for every input** (`pq-verify --proofs`, Coq) of the FIPS 203 and
@@ -346,8 +313,8 @@ per-check output are in [AUDITS.md](AUDITS.md).
 | liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time) and ML-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 9 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,512/1,512 through each backend; every mutant caught |
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
-| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 80/80 each; edge cases 4,320/4,320 |
-| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 10 NIST and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
+| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 240/240; edge cases 4,320/4,320 |
+| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 30 of NIST's invalid keys (15 encapsulation, 15 decapsulation) and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 3 mutants and 6 constant-time controls | 1,506/1,506; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
@@ -707,6 +674,40 @@ Without it, ML-KEM's NTT runs with CBMC's built-in MiniSat, more slowly.
 **Deliberately NOT required** (a deployment advantage):
 - No numpy, scipy, or PyTorch — pure Python + ctypes + inline C
 - No SageMath — the `pqverify_params` lattice estimator is self-contained (ML-KEM's lattice-estimator values are pinned; custom parameters use a calibrated formula, [close but not exact](LIMITS.md#parameter-security))
+
+---
+
+## Enterprise audits and pre-CMVP readiness
+
+pq-verify is open source and free to run yourself. Its maintainer also runs
+audits with it for teams that want the evidence before a certification lab,
+a customer or a deployment sees their code:
+
+- **Library audit**: ML-KEM and ML-DSA libraries through their own entry
+  points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
+  sealed binaries through fresh ACVP questions. Each audit runs the checks
+  that apply: NIST's ACVP vectors, Wycheproof and CCTV edge cases, malformed
+  inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM
+  and, in a build with its own annotations compiled in, ML-DSA.
+- **Pre-CMVP gap assessment**: the ACVP algorithm tests a CMVP submission
+  depends on, run beforehand, with each failure traced to its cause.
+- **Hybrid TLS review**: RFC 10024 groups such as `X25519MLKEM768`, checked
+  from the wire bytes, where ACVP never looks.
+- **Remediation verification**: the same audit re-run on the fixed build,
+  bound to its sha256.
+- **CI integration**: the GitHub Action gates merges on the result, and SARIF
+  2.1.0 carries the findings to GitHub Code Scanning or DefectDojo.
+- **CNSA 2.0**: its post-quantum algorithms, ML-KEM-1024, ML-DSA-87 and
+  LMS/XMSS for firmware signing, are all covered.
+
+The deliverable is evidence, not certification: a CMVP certificate is issued
+by NIST and the Canadian Centre for Cyber Security, after an accredited
+laboratory has tested the module. What pq-verify has found in public
+libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
+[LIMITS.md](LIMITS.md); how each requirement maps to a check is in
+[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements); and each claim,
+with the command that reproduces it and the CI job that re-runs it, is in
+[EVIDENCE.md](EVIDENCE.md). To discuss an audit, see [Contact](#contact).
 
 ---
 

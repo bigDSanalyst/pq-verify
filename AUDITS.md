@@ -32,8 +32,8 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | BoringSSL | ML-KEM-768 | vector cross-check | **25/25 byte-exact** |
 | BoringSSL | ML-KEM-1024 | vector cross-check | **25/25 byte-exact** |
 | *(negative control)* | ML-KEM & ML-DSA | symbol audit | **correctly FAILS** |
-| mlkem-native | ML-KEM-512/768/1024 | full scheme + invalid keys | **80/80 VERIFIED** |
-| PQClean `clean` | ML-KEM-512/768/1024 | full scheme + invalid keys | 70/80 — accepts all 10 invalid keys |
+| mlkem-native | ML-KEM-512/768/1024 | full scheme + invalid keys | **240/240 VERIFIED** |
+| PQClean `clean` | ML-KEM-512/768/1024 | full scheme + invalid keys | 210/240 — accepts all 30 invalid keys, 10 per set |
 | liboqs 0.16.0, `OQS_*` API and each backend | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases + constant time | **4,569/4,569 VERIFIED** per implementation |
 | liboqs 0.16.0, `OQS_*` API | ML-DSA-44/65/87 | full scheme through the public API | **1,068/1,068 VERIFIED** |
 | liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
@@ -282,7 +282,8 @@ code, with the 128 relevant roots of unity being stored in kNTTRoots."*
 `--audit-kem` drives a library's own `keypair_derand` / `enc_derand` / `dec`
 with NIST's ACVP vectors (NIST ACVP-Server `15c0f3d`, `ad33b3d`). Besides the
 byte-exact stages it feeds NIST's **invalid** keys and checks the library
-refuses them (nonzero return) while accepting the valid ones:
+refuses them (nonzero return) while accepting the valid ones. In each
+parameter set:
 
 - `ekCheck`: 5 encapsulation keys with a coefficient ≥ q (FIPS 203 §7.2)
 - `dkCheck`: 5 decapsulation keys with a corrupted H(ek) (FIPS 203 §7.3)
@@ -314,12 +315,17 @@ changed. A test holds this table equal to the pinned file.
 <!-- vendor-audits:begin -->
 | Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Accumulated | Constant time | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | — | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 5/10 | 5/10 | 1,383/4,320 | 3/3 | 6/6 | 3/3 | 70/80 + 1,383/4,320 + 3/3 findings |
-| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
-| liboqs 0.16.0 — mlkem-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
-| liboqs 0.16.0 — mlkem-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 25/25 | 25/25 | 10/10 | 10/10 | 10/10 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 80/80 + 4,320/4,320 + 3/3 **VERIFIED** |
+| mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | — | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 15/30 | 15/30 | 1,383/4,320 | 3/3 | 6/6 | 3/3 | 210/240 + 1,383/4,320 + 3/3 findings |
+| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
+| liboqs 0.16.0 — mlkem-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
+| liboqs 0.16.0 — mlkem-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
 <!-- vendor-audits:end -->
+
+Each count is over all three parameter sets. **Result** adds the NIST
+vectors, the edge cases and the accumulated check. The constant-time checks
+are not in it, but a row is **VERIFIED** only if they pass too, and CI
+requires each mutant to be caught.
 
 Reproduce every row: `python3 tools/vendor_audit.py`.
 
@@ -329,7 +335,8 @@ rejection path. FIPS 203 lets the check run outside `Encaps`/`Decaps` (for
 example once, when a key is received), so this is not by itself a
 non-conformance. It does mean every caller of this API must perform the
 §7.2/§7.3 check itself; a caller that relies on the library does not get one.
-mlkem-native performs both checks inside `enc`/`dec` and rejects all ten.
+mlkem-native performs both checks inside `enc`/`dec` and rejects all ten in
+each set.
 The edge cases confirm it at scale: PQClean accepts all 2,931 invalid
 encapsulation keys and all 6 invalid decapsulation keys, while every one of
 its outputs on valid input is byte-exact; mlkem-native refuses every one.
@@ -402,7 +409,10 @@ API; PQClean has pure ML-DSA only. The "not applicable" column counts
 what each one's API cannot be asked. "Constant time" is
 `--audit-dsa ... --constant-time` ([below](#constant-time---constant-time)):
 only mldsa-native, built with its annotations and pq-verify's shim, can be
-judged; every other build records CANNOT VERIFY, never a pass.
+judged; every other build records CANNOT VERIFY, never a pass. Each count is
+over all three parameter sets. **Result** counts the conformance checks; the
+constant-time checks are not in it, but a row is **VERIFIED** only if they
+pass too, where they can be judged.
 
 **Mutants.** An audit that passes correct libraries has shown half of what
 it must. Each row also carries mutants: a one-line change to the pinned
