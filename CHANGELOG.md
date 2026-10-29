@@ -34,6 +34,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
   over all three parameter sets. Constant time is judged beside them, and a
   row is VERIFIED only if it passes too, where it can be judged.
 
+### Documentation
+
+- **EVIDENCE.md lists runs reproduced outside CI**, each with its commit,
+  machine, toolchain and result. The first is the ML-DSA vendor audits,
+  liboqs included, rerun on a Google Colab machine (AMD EPYC 7B12,
+  Python 3.13.18): every row, mutant and constant-time result as recorded.
+
 ## [2.15.0] — 2026-10-25
 
 A feature release: `--audit-source` checks an ML-KEM or ML-DSA library's own

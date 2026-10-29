@@ -76,3 +76,21 @@ python3 tools/source_audit.py --scheme ml-dsa
 
 What pq-verify cannot check is in [LIMITS.md](LIMITS.md), and what it has
 found in public libraries is in [AUDITS.md](AUDITS.md).
+
+## Reproduced outside CI
+
+These runs repeat a CI job on another machine, from a clean clone at the
+commit shown. A run is listed only with its machine, its toolchain and its
+result.
+
+| Date | Command, at commit | Machine | Result |
+|---|---|---|---|
+| 2026-10-29 | `python3 tools/vendor_audit.py --only ML-DSA`, at `f34d06b` | Google Colab: AMD EPYC 7B12, Python 3.13.18, GCC 13.3.0 | exit 0: every ML-DSA row, mutant and constant-time result as AUDITS.md records |
+
+That run rebuilt all six ML-DSA rows from their pinned commits, for all three
+parameter sets. The liboqs rows came out as AUDITS.md records them: 322, 362
+and 384 checks through the OQS API, and 464, 513 and 535 for each
+mldsa-native backend, with each liboqs mutant caught and constant time
+CANNOT VERIFY. A count leaves out the tests a library's API cannot be asked,
+such as the OQS API's missing internal, pre-hash and external-μ entry points;
+AUDITS.md counts them as not applicable, never as passes.
