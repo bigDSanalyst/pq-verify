@@ -1,6 +1,6 @@
 """Dependency QBF (DQBF), decided exactly, with certificates.
 
-DQBF.md is the specification. A DQBF  forall U  exists x_1(D_1) ... x_m(D_m).
+docs/DQBF.md is the specification. A DQBF  forall U  exists x_1(D_1) ... x_m(D_m).
 phi  is true when there are Skolem functions f_i of the universals in D_i
 that make phi hold for every assignment of U. Two procedures decide it:
 
@@ -171,7 +171,7 @@ def decide(f, gf2=None, max_conflicts=MAX_CONFLICTS):
 
 def skolem_system(f):
     """The linear system over GF(2) whose solutions are the affine Skolem
-    functions of f's XOR constraints (DQBF.md): (unknowns, equations).
+    functions of f's XOR constraints (docs/DQBF.md): (unknowns, equations).
     unknowns[k] is (x, None), x's constant, or (x, u), x's coefficient of
     u; an equation is (frozenset of unknown indices, rhs). The checker
     builds it again from the formula, so it is a function of f alone."""
@@ -374,7 +374,7 @@ def _xor_cnf(vs, parity, fresh):
 
 
 def expand(f):
-    """The universal expansion of f to CNF (DQBF.md): (number of variables,
+    """The universal expansion of f to CNF (docs/DQBF.md): (number of variables,
     clauses, copies). copies[(x, tau)] is the variable for x's Skolem function
     on tau, the bits of x's dependencies in universal order. Each constraint
     is instantiated once per assignment of the universals it reads, which

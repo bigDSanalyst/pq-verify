@@ -86,7 +86,7 @@ jobs:
             2. Read its verdict. Any BLOCK means do not pin; DECIDE on
                \`stable\` means wait (NIST has reverted these files within a day).
             3. When it is all ok: \`python3 tools/doctor.py --candidate --apply\`
-            4. Record the revisions and release, as in REPINNING.md.`;
+            4. Record the revisions and release, as in docs/REPINNING.md.`;
             // A stale bundle re-reports every week until it is re-pinned;
             // keep that to one open issue with a comment per run.
             const title = "NIST ACVP vectors changed upstream — review before re-pinning";

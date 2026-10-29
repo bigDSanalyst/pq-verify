@@ -7413,7 +7413,7 @@ def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
 
 
 # ----------------------------------------------------------------------
-# DQBF (DQBF.md). Through 2.13.0 the pipeline turned clauses into XOR
+# DQBF (docs/DQBF.md). Through 2.13.0 the pipeline turned clauses into XOR
 # equations with unconstrained fresh variables and solved for one
 # assignment of every variable, universals included: it decided neither
 # the clauses nor the quantifiers. pq_verify/dqbf.py decides a DQBF
@@ -7864,7 +7864,7 @@ def test_dqbf_self_suite_without_the_engine_skips_only_the_engine_row():
 
 
 # ----------------------------------------------------------------------
-# CFL front end (CFL.md). Through 2.13.0 its lexer dropped characters it
+# CFL front end (docs/CFL.md). Through 2.13.0 its lexer dropped characters it
 # did not know, its parser ended a CONTEXT at REQUIRE's closing brace, its
 # "prenex" step stopped at the first nested quantifier, its router searched
 # the whole FOL string for a field's name, and its dispatch solved fixed
@@ -8165,7 +8165,7 @@ def test_cfl_benchmark_row_fails_when_the_round_trip_does(monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# Elliptic curves (ECC.md): exact point counts with certificates. The BSGS
+# Elliptic curves (docs/ECC.md): exact point counts with certificates. The BSGS
 # count it replaces did not use the twist, so it could not decide some
 # curves; audit_curve passed its anomalous-trace rows whatever they found,
 # called p > 10^14 "SEA needed" and passed; and the cubic engine's Sol3
@@ -8424,7 +8424,7 @@ def test_curve_audit_checks_the_cubic_engine_where_sol3_overflows():
         assert not core.DEGRADED["skipped_checks"]
 
 
-# ---- Schoof-Elkies-Atkin (SEA.md) ----------------------------------------------------
+# ---- Schoof-Elkies-Atkin (docs/SEA.md) ----------------------------------------------------
 
 def _sea():
     from pq_verify import sea

@@ -1,5 +1,5 @@
 """Schoof-Elkies-Atkin point counting for large prime fields, with Elkies
-primes, and a certificate checked from the curve alone (SEA.md).
+primes, and a certificate checked from the curve alone (docs/SEA.md).
 
 For E: y^2 = x^3 + a x + b over F_p with j(E) != 0, 1728, count(E) finds
 #E(F_p) = p + 1 - t:
@@ -396,7 +396,7 @@ def _isogenous(a, b, p, l, sums, f, j):
     """(A~, B~, p1) for the root f of Psi_l(F, j): the normalized
     l-isogenous curve y^2 = x^3 + A~ x + B~ and p1, the sum of the
     abscissas of the kernel's l - 1 nonzero points; None when degenerate.
-    Derived in SEA.md from Ramanujan's equations."""
+    Derived in docs/SEA.md from Ramanujan's equations."""
     s, _ = _params(l)
     inv = lambda x: pow(x % p, -1, p)
     E4, E6 = -a * inv(3) % p, -b * inv(2) % p
@@ -737,7 +737,7 @@ def count(E, rng=None, log=None, limit=L_MAX, r_max=R_MAX):
 
 
 def check(E, c):
-    """True iff c's 'sea' certificate proves #E(F_p) = c.n (SEA.md)."""
+    """True iff c's 'sea' certificate proves #E(F_p) = c.n (docs/SEA.md)."""
     cert, p, a, b = c.certificate, E.p, E.a, E.b
     if not isinstance(cert, dict) or cert.get("p") != p or a == 0 or b == 0:
         return False

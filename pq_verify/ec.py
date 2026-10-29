@@ -1,5 +1,5 @@
 """Elliptic curves over prime fields, with exact point counts that carry
-certificates (ECC.md).
+certificates (docs/ECC.md).
 
 E: y^2 = x^3 + a x + b over F_p, p > 3 prime. #E(F_p) is found by
 
@@ -9,7 +9,7 @@ E: y^2 = x^3 + a x + b over F_p, p > 3 prime. #E(F_p) is found by
 * baby-step giant-step on E and on its quadratic twist (Mestre), for other
   curves up to 2^64: exact point orders, combined by the Chinese remainder
   theorem, leave one order in the Hasse interval;
-* Schoof-Elkies-Atkin (pq_verify.sea, SEA.md), for other curves above 2^64
+* Schoof-Elkies-Atkin (pq_verify.sea, docs/SEA.md), for other curves above 2^64
   and below 2^SEA_BITS: t modulo Elkies primes, each residue certified by
   a kernel polynomial and Frobenius' eigenvalue on it.
 

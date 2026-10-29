@@ -69,7 +69,7 @@ PQC evidence.
 |---|---|---|---|
 | **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](README.md#draft-track-fn-dsa-fips-206)). Correctness checks for the NTT side-channel countermeasures `--leakage` allocates: a masked NTT (run on each arithmetic share) and a shuffled one (each layer's butterflies in random order) must still compute the FIPS 203/204 transform. Nothing checks them yet |
 | Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
-| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts with certificates ([ECC.md](ECC.md)) and the singular, anomalous and supersingular curves they reveal, SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). Classic McEliece is audited today (`--audit-mceliece`) in exact Python integers: the GF(2) engine holds at most 2048 variables and returns solutions, not the reduced matrix a public key is, so it is not used there yet. HQC's code layer is audited (`--audit-hqc`) by `pq_verify/hqc.py`, also in exact Python: GF(2⁸) tables, Reed–Solomon over it, and a Walsh–Hadamard maximum-likelihood decoder for RM(1,7). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
+| Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts with certificates ([ECC.md](docs/ECC.md)) and the singular, anomalous and supersingular curves they reveal, SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). Classic McEliece is audited today (`--audit-mceliece`) in exact Python integers: the GF(2) engine holds at most 2048 variables and returns solutions, not the reduced matrix a public key is, so it is not used there yet. HQC's code layer is audited (`--audit-hqc`) by `pq_verify/hqc.py`, also in exact Python: GF(2⁸) tables, Reed–Solomon over it, and a Walsh–Hadamard maximum-likelihood decoder for RM(1,7). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
 | Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7 [1]), CFL/DQBF pipeline, conformity gradient | standards constraints as SAT/QBF obligations (the CFL/DQBF pipeline). Engine 6 and the conformity gradient have no PQC target yet |
 
 "Being realigned toward" is a direction, not a capability: until an engine
@@ -138,7 +138,7 @@ no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
 | **GF(2)** | F₂ | AES S-box affine layer, bit-packed Gaussian elimination, **null-space basis** computation (256 vars / 200 eqs → ~56 free; particular solution and basis vectors verified against the system) |
 | **Z₃₃₂₉** | ML-KEM | Kyber NTT butterflies, Montgomery arithmetic, Freivalds verification |
 | **Z₈₃₈₀₄₁₇** | ML-DSA | Dilithium NTT butterflies — the *complete* 8-layer transform, 32-bit Freivalds |
-| **Cubic + ECC** | — | B(a,b) by Cornacchia's algorithm, elliptic-curve point validation; with `pq_verify/ec.py`, point counts that carry certificates ([ECC.md](ECC.md)): complex multiplication for j = 0 and 1728 at any size (secp256k1), point orders on a curve and its twist below 2⁶⁴, Schoof–Elkies–Atkin for other curves up to 2³²⁰ ([SEA.md](SEA.md)), published orders verified |
+| **Cubic + ECC** | — | B(a,b) by Cornacchia's algorithm, elliptic-curve point validation; with `pq_verify/ec.py`, point counts that carry certificates ([ECC.md](docs/ECC.md)): complex multiplication for j = 0 and 1728 at any size (secp256k1), point orders on a curve and its twist below 2⁶⁴, Schoof–Elkies–Atkin for other curves up to 2³²⁰ ([SEA.md](docs/SEA.md)), published orders verified |
 | **Conformity** | — | D(t) stability on curve families — *research framework, not a security check* |
 | **Period / Gauss-Manin** | — | Amari-Schwarzian, ranks 2/4/4/8 — *research framework, not a security check* |
 
@@ -164,13 +164,13 @@ property into a first-order obligation. The obligation is decided twice, as
 a QBF by the DQBF stage and on the specification's model directly, and the
 two must agree. The property is routed by its declared field and dispatched
 to the check registered for it, which must also fail on an instance made
-wrong ([CFL.md](CFL.md)); through 2.13.0 this path dropped what it did not
+wrong ([CFL.md](docs/CFL.md)); through 2.13.0 this path dropped what it did not
 parse, routed by substrings and dispatched fixed systems. The DQBF stage
 decides a module exactly: an XOR matrix by affine Skolem functions, from a
 linear system solved on the GF(2) engine, and one with clauses by universal
 expansion and a CDCL solver while the expansion fits. Every answer carries a
 certificate that a checker apart from the solver verifies
-([DQBF.md](DQBF.md)); through 2.13.0 this path turned clauses into XOR
+([DQBF.md](docs/DQBF.md)); through 2.13.0 this path turned clauses into XOR
 equations that constrained nothing and ignored the quantifiers. Both paths
 are exercised in the self-suite (CFL 6/6, DQBF 7/7).
 
@@ -458,8 +458,10 @@ pyproject.toml             Build config + console-script entry point
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
 sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.15.0)
+docs/                      CFL.md, DQBF.md, ECC.md, SEA.md: the research and classical
+                           engines; REPINNING.md: updating the pinned NIST vectors
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
-CONSTANT-TIME.md / SOURCE-AUDIT.md / REPINNING.md / SECURITY.md / CHANGELOG.md / LICENSE /
+EVIDENCE.md / CONSTANT-TIME.md / SOURCE-AUDIT.md / SECURITY.md / CHANGELOG.md / LICENSE /
 CITATION.cff
 ```
 
