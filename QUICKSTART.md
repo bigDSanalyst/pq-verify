@@ -5,8 +5,9 @@ pip install "pq-verify[full]"
 pq-verify --version
 ```
 
-`[full]` pulls in `kyber-py`, `dilithium-py` and `sympy`, which the ACVP
-suites and the parameter estimator need. Plain `pip install pq-verify` works
+`[full]` pulls in `kyber-py`, `dilithium-py` and `slh-dsa`, the references
+the ACVP suites check against, and `sympy`, for Engine 6's exact-rational
+checks. Plain `pip install pq-verify` works
 too — the checks that need those dependencies then report as **SKIPPED**
 rather than passing or failing, and the run is marked DEGRADED so a CI green
 cannot come from a check that never ran.
