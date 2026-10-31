@@ -638,7 +638,7 @@ Third-party audit results, build commands and every planted bug are in
 
 ## Requirements
 
-**Minimum (core engines + ~149 self-tests):**
+**Minimum (core engines; self-suite checks that need the packages below report as skipped):**
 - Python 3.9+ — **every version of the declared range (3.9, 3.10, 3.11, 3.12,
   3.13) runs the full test suite and all 1566 ACVP vectors in CI.** The floor is
   3.9 rather than 3.8 because `pq-verify[full]` cannot resolve below it:
@@ -653,11 +653,13 @@ Third-party audit results, build commands and every planted bug are in
 **For the full 160/160 self-suite and the 1566/1566 ACVP claim:**
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
 - `dilithium-py` — **required** for `pqverify_mldsa_acvp()` (the 615 ML-DSA vectors)
+- `slh-dsa` — **required** for the 624 SLH-DSA vectors and the live roundtrip (parameters still validate without it)
 - `coq` — required for the Coq certificate verification tests
 - `sympy` — required for the Engine-6 Conjecture 7 exact-rational test (without it that check reports as skipped, not failed)
+- `cryptominisat` — the CMS5 speed-comparison benchmark (without it that check reports as skipped)
 
 ```bash
-apt-get install -y coq gcc g++
+apt-get install -y coq cryptominisat gcc g++
 pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 ```
 
@@ -666,9 +668,7 @@ for ML-DSA also `z3` and Kissat, which solves the NTT proofs. Ubuntu does not
 package Kissat; [SOURCE-AUDIT.md](SOURCE-AUDIT.md) says how to build it.
 Without it, ML-KEM's NTT runs with CBMC's built-in MiniSat, more slowly.
 
-**Optional (1 test each, everything works without them):**
-- `cryptominisat` — the CMS5 speed-comparison benchmark
-- `slh-dsa` — the SLH-DSA ACVP reference and live roundtrip (parameters still validate without it)
+**Optional:**
 - network access — `pqverify_acvp()` fetches NIST vectors from GitHub live; for air-gapped use the pinned vectors are used by default, or pass `vector_dir=` pointing at your own local vector set
 
 **Deliberately NOT required** (a deployment advantage):

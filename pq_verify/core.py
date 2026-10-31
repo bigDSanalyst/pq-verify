@@ -22,7 +22,7 @@ Test Phases:
   Phase 6: Period / Gauss-Manin (Engine 6 — Theorem 1, Obs 4, Conjecture 7)
 
 Colab:
-  Cell 1: !apt-get install -y -qq gcc g++ coq
+  Cell 1: !apt-get install -y -qq gcc g++ coq cryptominisat
           !pip install -q "pq-verify[full]"
   Cell 2: from pq_verify import main, pqverify_acvp_all
   Cell 3: main()                # 160/160

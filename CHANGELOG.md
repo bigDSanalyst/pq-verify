@@ -39,6 +39,25 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - **AUDITS.md says what its Result columns count**: the conformance checks
   over all three parameter sets. Constant time is judged beside them, and a
   row is VERIFIED only if it passes too, where it can be judged.
+- **The demo notebook could not run.** DEMO.ipynb's cells had lost their
+  line breaks, so its install cell was one line the shell could not parse,
+  and its first Python cell a syntax error. The breaks are back, and a test
+  checks that every cell keeps them and that every code cell compiles. Run
+  end to end on Ubuntu 24.04 with pq-verify 2.15.0 from PyPI, the notebook
+  gives what its comments say: 160/160, 1566/1566, 52/52, the reference
+  Kyber verified, and its sabotaged copy rejected by two of the three checks.
+- **The demo's negative control said a KEM test passes on the sabotaged
+  Kyber.** Kyber's own test fails on it, and the cell now says so. The demo
+  also pinned the Action to `@v1`, which the README says not to do, and said
+  pq-verify does not check constant time. It now pins `@v2.15.0` and
+  describes `--constant-time`.
+- **The documented installs for the full self-suite left out
+  CryptoMiniSat.** The README, the demo and core.py's usage notes installed
+  Coq alone, which leaves one check skipped and the run degraded; CI's full
+  profile installs both. The README's minimal install promised about 149
+  checks, where CI's minimal profile runs 139, and QUICKSTART said `[full]`
+  brings `sympy` for the parameter estimator: it is for Engine 6, and
+  `[full]` brings `slh-dsa` too.
 
 ### Documentation
 

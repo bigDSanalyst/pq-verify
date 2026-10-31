@@ -2324,6 +2324,27 @@ def test_documented_python_floor_matches_the_package(doc):
             f"{doc} claims Python {claimed}+, pyproject.toml declares {floor}+")
 
 
+def test_demo_notebook_cells_keep_their_line_breaks():
+    """Jupyter joins a cell's lines with '', so each line but the last must end
+    in a newline. DEMO.ipynb's had lost theirs: its install cell ran two
+    commands as one, and its first Python cell was a syntax error."""
+    import json
+    nb = json.loads(_doc_text("DEMO.ipynb"))
+    for i, cell in enumerate(nb["cells"]):
+        lines = cell["source"]
+        assert all(ln.endswith("\n") for ln in lines[:-1]), f"DEMO.ipynb cell {i}"
+        if cell["cell_type"] != "code":
+            continue
+        # A `!` line, with any lines it continues with a backslash, is a shell
+        # command for IPython; the rest of the cell must be Python.
+        python, shell = [], False
+        for ln in "".join(lines).split("\n"):
+            shell = shell or ln.lstrip().startswith("!")
+            python.append("" if shell else ln)
+            shell = shell and ln.endswith("\\")
+        compile("\n".join(python), f"DEMO.ipynb cell {i}", "exec")
+
+
 @pytest.mark.parametrize("doc", ("README.md", "HYBRID.md"))
 def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented(doc):
     """README and HYBRID.md print the RFC 10024 table; it has to be this table."""
