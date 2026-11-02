@@ -56,7 +56,7 @@ KNOWN_REFERENCE_DEFECTS = {
                     "FIPS 204 Algorithm 21 (HintBitUnpack) requires strictly "
                     "increasing indices, so the signature is malleable"),
         "upstream": ("fixed in GiacomoPope/dilithium-py bd9b552 (2026-06-09, "
-                     "`<` became `<=`); no release contains it yet"),
+                     "`<` became `<=`), released in dilithium-py 1.5.1"),
     },
 }
 

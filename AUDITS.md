@@ -39,9 +39,13 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
 
-No arithmetic discrepancies were found in any implementation. The one finding
-is behavioural: PQClean's ML-KEM API accepts keys NIST marks invalid (see
-[Full-scheme KEM audit](#full-scheme-kem-audit-including-invalid-keys)).
+No arithmetic discrepancies were found in the implementations in this table.
+Its one finding is behavioural: PQClean's ML-KEM API accepts keys NIST marks
+invalid (see [Full-scheme KEM audit](#full-scheme-kem-audit-including-invalid-keys)).
+The audits further down add two more: two key-state defects in
+xmss-reference ([LMS/HSS and XMSS](#lmshss-and-xmss-library-audit-with-mutants)),
+and two defects in the HQC submitters' AVX2 Reed–Muller decoder
+([HQC](#hqc-decoder-audit--standard-not-final-with-mutants)).
 
 The arithmetic result is the expected one. These are mature, widely reviewed
 implementations — `mlkem-native` and `mldsa-native` ship CBMC formal proofs.
