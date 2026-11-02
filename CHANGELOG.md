@@ -58,6 +58,19 @@ versioning](https://semver.org/spec/v2.0.0.html).
   checks, where CI's minimal profile runs 139, and QUICKSTART said `[full]`
   brings `sympy` for the parameter estimator: it is for Engine 6, and
   `[full]` brings `slh-dsa` too.
+- **The README said every audited project verifies clean.** Its audit table
+  names three with findings: PQClean's ML-KEM accepts NIST's invalid keys,
+  xmss-reference has two key-state defects, and the HQC submitters' AVX2
+  Reed–Muller decoder has two defects. The README now says so, and no longer
+  counts the projects ("eight" was out of date). AUDITS.md's summary said
+  its one finding was PQClean's; that holds for its table, and it now points
+  to the other two further down.
+- **dilithium-py's hint fix has been released.** The README said
+  `--edge-cases` reports one finding, a defect "fixed upstream, not yet
+  released". dilithium-py 1.5.1 contains the fix, and with it, the version
+  `pip install "pq-verify[full]"` installs today, the run reports none. CI
+  still pins 1.4.0, where the finding stands; the README and the report's
+  note on the defect now name 1.5.1.
 
 ### Documentation
 

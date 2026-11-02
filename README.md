@@ -85,9 +85,11 @@ and [CCTV](https://github.com/C2SP/CCTV) vectors (`strcmp` traps, unlucky
 sampling, every out-of-range ek coefficient, malformed ML-DSA hints) are pinned
 to exact commits and run by `--audit-kem` and `--audit-dsa` against a vendor
 library, and by
-`pq-verify --edge-cases` against pq-verify's own references. The latter
-currently reports one finding, a known defect in the pinned dilithium-py
-1.4.0 (a repeated hint index is accepted; fixed upstream, not yet released).
+`pq-verify --edge-cases` against pq-verify's own references. With
+dilithium-py 1.4.0, the version CI pins, the latter reports one finding: a
+repeated hint index is accepted. dilithium-py 1.5.1, which
+`pip install "pq-verify[full]"` installs today, fixes it, and the run
+reports none.
 
 To audit a compiled library:
 
@@ -304,9 +306,12 @@ SARIF-to-ASFF conversion step.
 
 ## Independent audits
 
-pq-verify has been run against eight upstream projects — all verify clean, with
-negative controls that correctly fail. Exact commits, build commands and
-per-check output are in [AUDITS.md](AUDITS.md).
+pq-verify has been run against the upstream projects below, with negative
+controls that correctly fail. Three have findings, each named in the table:
+PQClean's ML-KEM accepts NIST's invalid keys, xmss-reference has two
+key-state defects, and the HQC submitters' AVX2 Reed–Muller decoder has two
+defects. The rest verify clean. Exact commits, build commands and per-check
+output are in [AUDITS.md](AUDITS.md).
 
 | Implementation | What was audited | Result |
 |---|---|---|
