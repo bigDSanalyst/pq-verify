@@ -13,6 +13,8 @@ name: Vendor audits (pinned)
 # audited per implementation: its public OQS_* API and each backend behind
 # it. Its mutants sit on the x86-64 code path, which the runner's CPU
 # (AVX2/BMI2) takes; on a CPU without it they would be reported MISSED.
+# Classic McEliece and SLH-DSA have liboqs builds of their own, so their sets
+# do not slow the other rows.
 #
 # The source jobs prove PQClean's ML-KEM and ML-DSA arithmetic with
 # --audit-source (CBMC and exhaustive checks, tools/source_audit.py) at the

@@ -2139,6 +2139,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2188,6 +2192,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2239,6 +2247,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2288,6 +2300,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2339,6 +2355,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2388,6 +2408,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2439,6 +2463,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2488,6 +2516,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2539,6 +2571,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2588,6 +2624,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2639,6 +2679,10 @@
             8,
             8
           ],
+          "preHashVerify": [
+            12,
+            12
+          ],
           "rbgFailure": [
             1,
             1
@@ -2688,6 +2732,10 @@
           "unknownPreHash": [
             8,
             8
+          ],
+          "preHashVerify": [
+            12,
+            12
           ],
           "rbgFailure": [
             1,
@@ -2841,6 +2889,654 @@
           "replace": "\n  return mp_sz;\n",
           "fails": [
             "unknownPreHash"
+          ]
+        },
+        {
+          "name": "HashSLH-DSA verification hashes SHA3-512 as SHA3-384",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_prehash.c",
+          "find": "  mp_sz = hash_slh_dsa_pad(mp, m, m_sz, ctx, ctx_sz, ph);\n  if (mp_sz == 0)\n  {\n    return 0; /* false */\n  }",
+          "replace": "  mp_sz = hash_slh_dsa_pad(mp, m, m_sz, ctx, ctx_sz,\n                           strcmp(ph, \"SHA3-512\") == 0 ? \"SHA3-384\" : ph);\n  if (mp_sz == 0)\n  {\n    return 0; /* false */\n  }",
+          "fails": [
+            "preHashVerify"
+          ]
+        }
+      ]
+    },
+    {
+      "library": "liboqs 0.16.0 — SLH-DSA, OQS API",
+      "url": "https://github.com/open-quantum-safe/liboqs",
+      "commit": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
+      "date": "2026-07-09",
+      "note": "Open Quantum Safe's liboqs. Its SLH-DSA is slhdsa-c, vendored at a0fc1ff (2025-07-22), behind liboqs's own wrappers: per set a pure algorithm and one HashSLH-DSA algorithm per approved hash, 156 in all. Audited through OQS_SIG_slh_dsa_*, randomness through OQS_randombytes_custom_algorithm, the internal interface through the slhdsa-c functions liboqs exports",
+      "build": "liboqs",
+      "sets": [
+        "SLH-DSA-SHA2-128s",
+        "SLH-DSA-SHAKE-128s",
+        "SLH-DSA-SHA2-128f",
+        "SLH-DSA-SHAKE-128f",
+        "SLH-DSA-SHA2-192s",
+        "SLH-DSA-SHAKE-192s",
+        "SLH-DSA-SHA2-192f",
+        "SLH-DSA-SHAKE-192f",
+        "SLH-DSA-SHA2-256s",
+        "SLH-DSA-SHAKE-256s",
+        "SLH-DSA-SHA2-256f",
+        "SLH-DSA-SHAKE-256f"
+      ],
+      "results": {
+        "SLH-DSA-SHA2-128s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-128s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHA2-128f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-128f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHA2-192s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-192s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHA2-192f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-192f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHA2-256s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-256s": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHA2-256f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        },
+        "SLH-DSA-SHAKE-256f": {
+          "keyGenRBG": [
+            22,
+            22
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "preHashVerify": [
+            12,
+            12
+          ],
+          "sizes": [
+            39,
+            39
+          ]
+        }
+      },
+      "not_applicable": {
+        "SLH-DSA-SHA2-128s": 19,
+        "SLH-DSA-SHAKE-128s": 19,
+        "SLH-DSA-SHA2-128f": 19,
+        "SLH-DSA-SHAKE-128f": 19,
+        "SLH-DSA-SHA2-192s": 19,
+        "SLH-DSA-SHAKE-192s": 19,
+        "SLH-DSA-SHA2-192f": 19,
+        "SLH-DSA-SHAKE-192f": 19,
+        "SLH-DSA-SHA2-256s": 19,
+        "SLH-DSA-SHAKE-256s": 19,
+        "SLH-DSA-SHA2-256f": 19,
+        "SLH-DSA-SHAKE-256f": 19
+      },
+      "mutants": [
+        {
+          "name": "pure sign_with_ctx_str drops the context",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/pure/slh_dsa_pure_sha2_128f.c",
+          "find": "\t*signature_len = slh_sign(signature, message, message_len, ctx_str, ctx_str_len,",
+          "replace": "\t*signature_len = slh_sign(signature, message, message_len, NULL, 0,",
+          "fails": [
+            "sigGenPure",
+            "contextLength"
+          ]
+        },
+        {
+          "name": "pure sign (no context) signs with the context \"x\"",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/pure/slh_dsa_pure_sha2_128f.c",
+          "find": "\tconst uint8_t *ctx = NULL;\n\tconst size_t ctxlen = 0;\n\tuint8_t addrnd[16];",
+          "replace": "\tconst uint8_t *ctx = (const uint8_t *)\"x\";\n\tconst size_t ctxlen = 1;\n\tuint8_t addrnd[16];",
+          "fails": [
+            "sigGenPure",
+            "contextLength"
+          ]
+        },
+        {
+          "name": "pure sign_with_ctx_str draws 15 bytes of addrnd, not 16",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/pure/slh_dsa_pure_sha2_128f.c",
+          "find": "\tOQS_randombytes(addrnd, 16);\n\n\t*signature_len = slh_sign(signature, message, message_len, ctx_str, ctx_str_len,",
+          "replace": "\tOQS_randombytes(addrnd, 15);\n\n\t*signature_len = slh_sign(signature, message, message_len, ctx_str, ctx_str_len,",
+          "fails": [
+            "sigGenPure"
+          ]
+        },
+        {
+          "name": "HashSLH-DSA with SHA3-512 verifies as SHA3-384",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/prehash_sha3_512/slh_dsa_sha3_512_prehash_sha2_128f.c",
+          "edits": [
+            {
+              "file": "src/sig/slh_dsa/wrappers/prehash_sha3_512/slh_dsa_sha3_512_prehash_sha2_128f.c",
+              "find": "\tconst char *ph = \"SHA3-512\";\n\tconst uint8_t *ctx_str = NULL;\n\tconst size_t ctx_str_len = 0;\n\n\tint res = hash_slh_verify(",
+              "replace": "\tconst char *ph = \"SHA3-384\";\n\tconst uint8_t *ctx_str = NULL;\n\tconst size_t ctx_str_len = 0;\n\n\tint res = hash_slh_verify("
+            },
+            {
+              "file": "src/sig/slh_dsa/wrappers/prehash_sha3_512/slh_dsa_sha3_512_prehash_sha2_128f.c",
+              "find": "\tconst char *ph = \"SHA3-512\";\n\tint res = hash_slh_verify(",
+              "replace": "\tconst char *ph = \"SHA3-384\";\n\tint res = hash_slh_verify("
+            }
+          ],
+          "fails": [
+            "preHashVerify"
+          ]
+        },
+        {
+          "name": "pure keypair draws no randomness",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/pure/slh_dsa_pure_sha2_128f.c",
+          "find": "static int slh_randombytes(uint8_t *x, size_t xlen) {\n\n\tOQS_randombytes(x, xlen);",
+          "replace": "static int slh_randombytes(uint8_t *x, size_t xlen) {\n\n\t(void)x;\n\t(void)xlen;",
+          "fails": [
+            "keyGenRBG"
+          ]
+        },
+        {
+          "name": "OQS_SIG_new reports a pure signature one byte short",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/sig_slh_dsa.h",
+          "find": "#define OQS_SIG_slh_dsa_pure_sha2_128f_length_signature 17088",
+          "replace": "#define OQS_SIG_slh_dsa_pure_sha2_128f_length_signature 17087",
+          "fails": [
+            "sizes"
+          ]
+        },
+        {
+          "name": "pure verify (no context) accepts any signature",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/wrappers/pure/slh_dsa_pure_sha2_128f.c",
+          "find": "\tint res = slh_verify(message, message_len, signature, signature_len, ctx,\n\t                     ctxlen, public_key, prm);\n\n\tif (res == 0) {",
+          "replace": "\tint res = slh_verify(message, message_len, signature, signature_len, ctx,\n\t                     ctxlen, public_key, prm);\n\n\tif (res < 0) {",
+          "fails": [
+            "sigVerPure"
+          ]
+        },
+        {
+          "name": "liboqs's slhdsa-c copy skips the hypertree root comparison",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "src/sig/slh_dsa/slh_dsa_c/slh_dsa.c",
+          "find": "  return memcmp(node, var->pk_root, prm->n) == 0;",
+          "replace": "  return 1;",
+          "fails": [
+            "sigVerInternal",
+            "sigVerPure",
+            "sigVerPreHash"
           ]
         }
       ]

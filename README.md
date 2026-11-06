@@ -135,6 +135,7 @@ refuses to guess between them, lists them, and audits the one you name:
 pq-verify --audit-kem   liboqs.so ML-KEM-768 --symbol-prefix OQS_KEM_ml_kem_768_ --constant-time
 pq-verify --audit-dsa   liboqs.so ML-DSA-65  --symbol-prefix OQS_SIG_ml_dsa_65_
 pq-verify --audit-fndsa liboqs.so FN-DSA-512 --symbol-prefix OQS_SIG_falcon_512_   # draft track
+pq-verify --audit-slhdsa liboqs.so SLH-DSA-SHA2-128f   # its pure and 12 HashSLH-DSA algorithms
 ```
 
 The public API is what your application calls; a backend's prefix
@@ -316,7 +317,7 @@ output are in [AUDITS.md](AUDITS.md).
 
 | Implementation | What was audited | Result |
 |---|---|---|
-| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time) and ML-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 9 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,512/1,512 through each backend; every mutant caught |
+| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,512/1,512 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 240/240; edge cases 4,320/4,320 |
@@ -324,7 +325,7 @@ output are in [AUDITS.md](AUDITS.md).
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 3 mutants and 6 constant-time controls | 1,506/1,506; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
-| slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash; refusals of over-long contexts, unknown hash names and a failed RBG; 12 mutants | 1,596/1,596; every mutant caught |
+| slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |

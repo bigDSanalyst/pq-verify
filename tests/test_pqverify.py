@@ -5858,13 +5858,15 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
 _SLHDSA_KEEP = []          # ctypes callbacks must outlive the library calls
 _SLHDSA_128F = {"keyGen": (10, 10), "keyGenRBG": (10, 10), "sigGenInternal": (14, 14),
                 "sigGenPure": (14, 14), "sigGenPreHash": (24, 24), "sigVerInternal": (14, 14),
-                "sigVerPure": (14, 14), "sigVerPreHash": (14, 14), "contextLength": (7, 7),
-                "unknownPreHash": (8, 8), "rbgFailure": (1, 1), "sizes": (3, 3)}
+                "sigVerPure": (14, 14), "sigVerPreHash": (14, 14), "preHashVerify": (12, 12),
+                "contextLength": (7, 7), "unknownPreHash": (8, 8), "rbgFailure": (1, 1),
+                "sizes": (3, 3)}
 
 
 def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
                    sign_long_ctx=False, verify_long_ctx=None, sign_unknown_ph=False,
-                   verify_unknown_ph=None, ignore_rbg_failure=False, draws=(48,)):
+                   verify_unknown_ph=None, ignore_rbg_failure=False, draws=(48,),
+                   verify_hash_as=None, shim="slhdsa_shim.c"):
     """The shim, answering NIST's inputs with NIST's answers. Any other input
     gets a stand-in signature, a hash of the public key and of M' as FIPS 205
     builds it, so a signature the audit makes for its edge cases verifies
@@ -5873,7 +5875,9 @@ def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
     256-byte context ("drop" ignores it, "truncate" writes 256 as the byte 0,
     "no-context" reads it as slhdsa-c's internal marker), verify_unknown_ph
     what it does with an unknown hash name ("SHA2-256" uses that instead,
-    "no-hash" leaves out the OID and digest, "empty" leaves M' empty)."""
+    "no-hash" leaves out the OID and digest, "empty" leaves M' empty). shim
+    picks the C side: slhdsa-c's API, or liboqs's (slhdsa_oqs_shim.c).
+    verify_hash_as=(a, b) verifies hash a's signatures as hash b."""
     import ctypes as C, hashlib, shutil, subprocess
     from pq_verify.slhdsa_audit import load_cases, _interface
     if not shutil.which("gcc"):
@@ -5881,7 +5885,7 @@ def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
     root = pathlib.Path(__file__).resolve().parent.parent
     so = tmp_path / f"libslhdsashim{len(list(tmp_path.glob('*.so')))}.so"
     subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so), *flags,
-                    str(root / "tests" / "data" / "slhdsa_shim.c")],
+                    str(root / "tests" / "data" / shim)],
                    check=True, capture_output=True)
     lib = C.CDLL(str(so))
     PS, N, SIG = "SLH-DSA-SHA2-128f", 16, 17088
@@ -5961,6 +5965,8 @@ def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
         ph = ph.decode() if ph else None
         msg, context, key = at(m, ml), at(ctx, cl), at(sk, 4 * N)
         rnd = None if (ignore_addrnd or not addrnd) else at(addrnd, N)
+        if rnd == key[2 * N:3 * N]:
+            rnd = None              # addrnd = PK.seed is FIPS 205's deterministic variant
         out = sigs.get((i, key, msg, context, ph, rnd))
         if out is None:
             mp = mprime(i, msg, context, ph, False)
@@ -5977,6 +5983,8 @@ def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
         if sl != SIG:
             return 0
         ph = ph.decode() if ph else None
+        if verify_hash_as and ph == verify_hash_as[0]:
+            ph = verify_hash_as[1]
         args = (i, at(pk, 2 * N), at(m, ml), at(ctx, cl), ph, at(sig, sl))
         if args in verdicts:
             return int(bool(verdicts[args]))
@@ -6019,6 +6027,9 @@ def test_slhdsa_audit_a_library_giving_nists_answers_verifies(tmp_path):
     ({"ignore_rbg_failure": True}, {"rbgFailure"}, 1),
     ({"draws": (48, 16)}, {"keyGenRBG"}, 10),         # FIPS 205 draws 3n bytes
     ({"draws": (16, 16)}, {"keyGenRBG"}, 10),
+    # NIST holds no valid SHA3-512 pre-hash signature for SLH-DSA-SHA2-128f to
+    # verify: only the round trip sees a verifier hashing it as SHA3-384.
+    ({"verify_hash_as": ("SHA3-512", "SHA3-384")}, {"preHashVerify"}, 1),
 ])
 def test_slhdsa_audit_catches_each_planted_fault(tmp_path, fault, stages, failed):
     r = _slhdsa_audit(_slhdsa_oracle(tmp_path, **fault))
@@ -6044,8 +6055,61 @@ def test_slhdsa_audit_counts_a_missing_interface_as_not_applicable(tmp_path):
     assert r["detail"]["contextLength"] == (4, 4) and "unknownPreHash" not in r["detail"]
     assert r["not_applicable"]["contextLength"][0] == 3       # pre-hash: sign, verify twice
     assert r["not_applicable"]["unknownPreHash"][0] == 8
+    assert r["not_applicable"]["preHashVerify"][0] == 12 and "preHashVerify" not in r["detail"]
     doc = to_json_slhdsa_audit(r, param_set="SLH-DSA-SHA2-128f")
     assert doc["verified"] and not doc["scope"]["complete"]   # what ran passed; not all ran
+
+
+_SLHDSA_OQS_128F = {"keyGenRBG": (22, 22), "sigGenInternal": (14, 14), "sigGenPure": (14, 14),
+                    "sigGenPreHash": (24, 24), "sigVerInternal": (14, 14), "sigVerPure": (14, 14),
+                    "sigVerPreHash": (14, 14), "preHashVerify": (12, 12),
+                    "contextLength": (7, 7), "sizes": (39, 39)}
+
+
+def test_slhdsa_audit_through_liboqs_public_api(tmp_path):
+    """liboqs's API: every NIST case through its own algorithm's entry points,
+    randomness through its RNG hook, sizes through OQS_SIG_new, and what the
+    API cannot express counted, with the reason."""
+    import ctypes
+    so = _slhdsa_oracle(tmp_path, shim="slhdsa_oqs_shim.c")
+    r = _slhdsa_audit(so)
+    assert r["abi"] == "oqs" and r["verified"], r["failures"][:3]
+    assert r["detail"] == _SLHDSA_OQS_128F
+    assert {k: c for k, (c, _why) in r["not_applicable"].items()} == {
+        "keyGen": 10, "unknownPreHash": 8, "rbgFailure": 1}
+    assert "seeded" in r["not_applicable"]["keyGen"][1]
+    assert r["via"]["sigGenPure"] == ("OQS_SIG_slh_dsa_pure_sha2_128f_sign / "
+                                      "OQS_SIG_slh_dsa_pure_sha2_128f_sign_with_ctx_str")
+    assert r["via"]["sigGenInternal"] == "slh_sign_internal"
+    assert ctypes.CDLL(so).pqvtest_rng_is_custom() == 0      # liboqs's RNG handed back
+
+
+@pytest.mark.parametrize("flag, stages, failed", [
+    ("-DPQVTEST_DROP_CTX", {"sigGenPure", "contextLength"}, 13),
+    # The plain entry point signs NIST's empty-context cases, and the
+    # refusal tests' own signatures: both fail, and only those.
+    ("-DPQVTEST_PLAIN_CTX", {"sigGenPure", "contextLength"}, 4),
+    ("-DPQVTEST_SHORT_ADDRND", {"sigGenPure"}, 12),
+    # Signing and verifying alike with the wrong hash: NIST's signing vectors
+    # catch it (its verification vectors hold no valid SHA2-384 case here).
+    ("-DPQVTEST_WRONG_HASH", {"sigGenPreHash"}, 2),
+    ("-DPQVTEST_VERIFY_WRONG_HASH", {"preHashVerify"}, 1),
+    ("-DPQVTEST_NO_KEYPAIR_RNG", {"keyGenRBG"}, 22),
+    ("-DPQVTEST_BAD_SIGLEN", {"sizes"}, 1),
+    ("-DPQVTEST_VERIFY_DROP_CTX", {"sigVerPure", "contextLength"}, None),
+])
+def test_slhdsa_audit_catches_each_liboqs_wrapper_fault(tmp_path, flag, stages, failed):
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path, flags=(flag,), shim="slhdsa_oqs_shim.c"))
+    assert r["abi"] == "oqs"
+    assert {s for s, (p, t) in r["detail"].items() if p < t} == stages
+    assert failed is None or sum(t - p for p, t in r["detail"].values()) == failed
+    assert not r["verified"]
+
+
+def test_slhdsa_audit_names_the_short_draw(tmp_path):
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path, flags=("-DPQVTEST_SHORT_ADDRND",),
+                                     shim="slhdsa_oqs_shim.c"))
+    assert "drew 15 random bytes" in r["failures"][0]["detail"]
 
 
 def test_slhdsa_audit_never_guesses_between_two_signers(tmp_path):

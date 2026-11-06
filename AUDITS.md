@@ -38,7 +38,8 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | liboqs 0.16.0, `OQS_*` API | ML-DSA-44/65/87 | full scheme through the public API | **1,068/1,068 VERIFIED** |
 | liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
-| slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,596/1,596 VERIFIED** |
+| slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,740/1,740 VERIFIED** |
+| liboqs 0.16.0, `OQS_SIG_slh_dsa_*` | SLH-DSA, all 12 sets | full scheme through the public API + refusals | **2,088/2,088 VERIFIED** |
 
 No arithmetic discrepancies were found in the implementations in this table.
 Its one finding is behavioural: PQClean's ML-KEM API accepts keys NIST marks
@@ -221,7 +222,7 @@ implementations; this file audits all but two of them:
 | mlkem-native | ML-KEM | [full scheme](#full-scheme-kem-audit-including-invalid-keys) |
 | mldsa-native | ML-DSA | [full scheme](#full-scheme-ml-dsa-audit-with-mutants) |
 | slhdsa-c | SLH-DSA | [full scheme](#slh-dsa-library-audit-with-mutants) |
-| liboqs | ML-KEM, ML-DSA, FN-DSA, Classic McEliece | [per implementation](#liboqs-0160--full-scheme-per-implementation) |
+| liboqs | ML-KEM, ML-DSA, SLH-DSA, FN-DSA, Classic McEliece | [per implementation](#liboqs-0160--full-scheme-per-implementation) |
 | the HQC submitters' code | HQC | [code layer](#hqc-decoder-audit--standard-not-final-with-mutants) |
 | Thomas Pornin's FN-DSA | FN-DSA | not yet; PQClean's and liboqs's Falcon are |
 | libmceliece | Classic McEliece | not yet; PQClean's and liboqs's are |
@@ -497,6 +498,16 @@ The randomised key must be NIST's, and exactly 3n bytes must be drawn,
 however the requests are split. FIPS 205 passes its randomness as arguments,
 so no randomness harness or special build is needed.
 
+**NIST's verification vectors miss ten of the twelve pre-hash functions.**
+In every parameter set they hold a valid HashSLH-DSA signature for only two
+of the twelve, so a verifier that hashes wrongly for any of the other ten
+passes every NIST sigVer vector: it is never shown a valid signature to
+reject. Signing is covered for all twelve. So for each pre-hash function the
+library's verifier must accept a signature its own signer made with it (the
+"every pre-hash verifies" column); a signer hashing wrongly fails NIST's
+sigGen vectors first. A mutant shows the gap: slhdsa-c verifying SHA3-512
+messages with SHA3-384 passes every NIST vector, and only this check fails.
+
 Beyond NIST's vectors, the library must refuse:
 
 - a 256-byte context (FIPS 205 allows 255), signing and verifying, pure and
@@ -531,20 +542,58 @@ slhdsa-c is pinned at `4745143` (2026-11-04), the commit that makes
 progress with no release yet, and its README does not yet recommend it for
 production use or sensitive data.
 
+**liboqs** (0.16.0, the release the other liboqs rows pin) ships SLH-DSA as
+slhdsa-c behind its own wrappers: per parameter set a pure algorithm,
+`OQS_SIG_slh_dsa_pure_<set>_*`, and one HashSLH-DSA algorithm per approved
+hash, `OQS_SIG_slh_dsa_<hash>_prehash_<set>_*`, 156 in all. Its row audits
+them the way liboqs's users call them:
+
+- NIST's cases with an empty context go through the plain `sign` and
+  `verify`, the rest through `sign_with_ctx_str` and `verify_with_ctx_str`,
+  so both entry points are checked.
+- Randomness reaches key generation and signing through liboqs's own hook,
+  `OQS_randombytes_custom_algorithm`: NIST's seeds, and NIST's addrnd. liboqs
+  signs hedged only, so a deterministic case is served PK.seed as addrnd, which
+  is FIPS 205's deterministic variant. Each signature must draw exactly n
+  bytes.
+- Every algorithm's keypair is checked, NIST's first key through each
+  HashSLH-DSA one, and every algorithm's sizes as `OQS_SIG_new` reports them.
+- The internal interface goes through `slh_sign_internal` and
+  `slh_verify_internal`, which liboqs exports from the same slhdsa-c copy its
+  wrappers call (`src/sig/slh_dsa/patches/internal_api.patch`).
+- Not applicable, with the reason, never passes: seeded key generation
+  (liboqs does not export it), an unknown hash name (each algorithm fixes its
+  hash) and a failing random bit generator (the hook returns void).
+
+liboqs vendors slhdsa-c at `a0fc1ff` (2025-07-22), not the commit the
+slhdsa-c row pins, so its result is its own. Build it with every algorithm
+and the audit picks liboqs's API on its own:
+
+```bash
+git clone https://github.com/open-quantum-safe/liboqs.git
+git -C liboqs checkout 5a1a854b0dc9f2141bdc771c555ee60c37950183
+cmake -S liboqs -B liboqs/build -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_USE_OPENSSL=OFF
+cmake --build liboqs/build -j
+pq-verify --audit-slhdsa liboqs/build/lib/liboqs.so SLH-DSA-SHA2-128f
+```
+
 <!-- vendor-audits-slhdsa:begin -->
-| Library | Commit | Sets | keyGen | keyGen, own RBG | sigGen (internal, pure, pre-hash) | sigVer (internal, pure, pre-hash) | Refused (256-byte context, unknown pre-hash, failed RBG) | Sizes | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| slhdsa-c | [`4745143`](https://github.com/pq-code-package/slhdsa-c/commit/47451432bb04faf8217ffe8a961a75b542bf88e8) (2026-11-04) | all 12 | 120/120 | 120/120 | 168/168, 168/168, 288/288 | 168/168, 168/168, 168/168 | 84/84, 96/96, 12/12 | 36/36 | 0 | 12/12 | 1,596/1,596 **VERIFIED** |
+| Library | Commit | Sets | keyGen | keyGen, own RBG | sigGen (internal, pure, pre-hash) | sigVer (internal, pure, pre-hash) | Every pre-hash verifies | Refused (256-byte context, unknown pre-hash, failed RBG) | Sizes | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| slhdsa-c | [`4745143`](https://github.com/pq-code-package/slhdsa-c/commit/47451432bb04faf8217ffe8a961a75b542bf88e8) (2026-11-04) | all 12 | 120/120 | 120/120 | 168/168, 168/168, 288/288 | 168/168, 168/168, 168/168 | 144/144 | 84/84, 96/96, 12/12 | 36/36 | 0 | 13/13 | 1,740/1,740 **VERIFIED** |
+| liboqs 0.16.0 — SLH-DSA, OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | all 12 | n/a | 264/264 | 168/168, 168/168, 288/288 | 168/168, 168/168, 168/168 | 144/144 | 84/84, n/a, n/a | 468/468 | 228 | 8/8 | 2,088/2,088 **VERIFIED** |
 <!-- vendor-audits-slhdsa:end -->
 
-Every mutant plants one bug in slhdsa-c's source; CI requires the audit to
-fail it in the stages its row names:
+Every mutant plants one bug in its row's source; CI requires the audit to
+fail it in the stages the mutant names. In slhdsa-c:
 
 - verification that skips the hypertree root comparison (every
   verification stage), and a WOTS+ checksum left unshifted (every signing
   and verification stage);
 - signing that ignores `addrnd`, and pure signing that drops the context;
 - HashSLH-DSA writing SHA-384's OID for SHA-256;
+- HashSLH-DSA verification hashing SHA3-512 messages with SHA3-384, which
+  passes every NIST vector;
 - seeded key generation building PK.root on the wrong layer;
 - pure signing, pure verification and HashSLH-DSA each accepting a context
   over 255 bytes;
@@ -553,8 +602,21 @@ fail it in the stages its row names:
 - key generation ignoring a failed random draw, as `slh_keygen` did before
   the pinned commit.
 
-Reproduce every set and mutant: `python3 tools/vendor_audit.py --only SLH-DSA`
-(about 10 minutes). One parameter set by hand:
+In liboqs's wrappers, each for SLH-DSA-SHA2-128f:
+
+- the pure `sign_with_ctx_str` dropping the context, and the plain `sign`
+  signing with one;
+- the pure `sign_with_ctx_str` drawing 15 bytes of addrnd, not 16;
+- the SHA3-512 HashSLH-DSA algorithm verifying as SHA3-384;
+- the pure keypair drawing no randomness;
+- `OQS_SIG_new` reporting a pure signature one byte short;
+- the plain pure `verify` accepting any signature;
+- and, in liboqs's copy of slhdsa-c, verification skipping the hypertree
+  root comparison.
+
+Reproduce every set and mutant of both rows:
+`python3 tools/vendor_audit.py --only SLH-DSA` (about 20 minutes). One
+parameter set of slhdsa-c by hand:
 
 ```bash
 git clone https://github.com/pq-code-package/slhdsa-c.git
