@@ -238,9 +238,14 @@ track there.
 
 memcheck sees secret-dependent branches and memory addresses. It does not
 see instruction timing: a hardware division on a secret, the KyberSlash
-class, is invisible to it, which is why the report lists division
-instructions separately. It sees addresses only of the memory accesses
-Valgrind translates. By default the translator deletes a load whose value is
+class, is invisible to it, which is why the report lists, separately, each
+function with an integer division in it. objdump finds them by the library's
+architecture: the division instructions of x86, x86-64, ARM, AArch64 and
+RISC-V, and the calls it names to the compiler's division routines, which a
+processor without a division instruction uses instead. On any other
+architecture, or without objdump, the report says the list was not made, and
+why, rather than show none. memcheck sees addresses only of the memory
+accesses Valgrind translates. By default the translator deletes a load whose value is
 never used, which control 5 showed: a secret-indexed read that the processor
 still performs, and that still moves cache lines, went unreported. Every
 constant-time run in pq-verify now commits each instruction's result, which

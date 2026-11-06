@@ -92,8 +92,8 @@ electromagnetic or microarchitectural behaviour
 
 Not covered by it at all: SLH-DSA, LMS/HSS, XMSS, FN-DSA, HQC and the hybrid
 groups. Within its scope memcheck cannot see instruction timing (KyberSlash's
-secret division; the library's division instructions are listed for a
-reviewer instead), the values a computation produces (Berzati et al.'s
+secret division; the library's integer divisions are listed for a reviewer
+instead, on x86, ARM and RISC-V), the values a computation produces (Berzati et al.'s
 template attack on ML-DSA's signing-time values,
 [CONSTANT-TIME.md](CONSTANT-TIME.md#5-scope)) or anything below the
 instruction level. It sees only the memory accesses Valgrind translates:

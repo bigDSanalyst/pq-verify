@@ -5262,6 +5262,33 @@ def _actions_files():
     return files
 
 
+def test_readme_documents_every_action_input_and_audit_mode():
+    """The README's table of the Action's inputs fell behind action.yml for
+    releases: it left out the fndsa mode and four inputs. Every input
+    action.yml declares, and every audit mode it dispatches, is in it."""
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    if not (root / "action.yml").exists():
+        pytest.skip("no action.yml in this layout")
+    action = (root / "action.yml").read_text()
+    inputs = set(re.findall(r"^  ([a-z][a-z-]*):$",
+                            action.split("\ninputs:\n")[1].split("\noutputs:\n")[0], re.M))
+    modes = set(re.findall(r"^ {12}([a-z]+)\) ", action, re.M))
+    assert {"audit", "version"} <= inputs and {"kem", "slhdsa", "ntt"} <= modes
+    readme = (root / "README.md").read_text()
+    table = readme.split("| Input | Default | Purpose |\n")[1].split("\n\n")[0]
+    rows = {}
+    for line in table.splitlines()[1:]:
+        cells = line.split(" | ")
+        for name in re.findall(r"`([a-z-]+)`", cells[0]):
+            rows[name] = cells[2]
+    assert inputs - set(rows) == set(), "inputs missing from the README"
+    assert set(rows) - inputs == set(), "README documents inputs action.yml lacks"
+    assert {m for m in modes if f"`{m}`" not in rows["audit"]} == set()
+    comment = re.search(r"audit: dsa\s+# (.+)", readme).group(1)
+    assert set(comment.split(" | ")) == modes
+
+
 def test_every_action_is_pinned_to_a_commit():
     """A tag can be moved to someone else's code; a commit cannot. Every
     action the workflows here and the Action itself use is pinned to a full
@@ -6503,6 +6530,124 @@ def test_constant_time_requested_but_unavailable_fails_the_audit(monkeypatch):
 def test_constant_time_flag_needs_audit_kem():
     code, out = _cli("--constant-time", "--acvp")
     assert code == 2 and "--audit-kem" in out
+
+
+# objdump -d --no-show-raw-insn, as GNU binutils prints each architecture
+_DISASSEMBLY = {
+    62: """
+0000000000001139 <q>:
+    1139:	mov    %edi,%eax
+    113b:	cltd
+    113c:	idiv   %esi
+0000000000001140 <m>:
+    1140:	divl   0x8(%rsp)
+0000000000001150 <wide>:
+    1150:	call   1030 <__udivti3@plt>
+0000000000001160 <fp>:
+    1160:	divsd  %xmm1,%xmm0
+    1164:	ret
+""",
+    183: """
+0000000000000700 <q>:
+ 700:	sdiv	w0, w0, w1
+0000000000000708 <r>:
+ 708:	udiv	x2, x0, x1
+ 70c:	msub	x0, x2, x1, x0
+0000000000000710 <sve>:
+ 710:	udiv	z0.s, p0/m, z0.s, z1.s
+0000000000000718 <fp>:
+ 718:	fdiv	d0, d0, d1
+""",
+    40: """
+000004b0 <q>:
+ 4b0:	push	{r4, lr}
+ 4b4:	bl	520 <__aeabi_idiv@plt>
+000004bc <r>:
+ 4bc:	udiv	r3, r0, r1
+000004c8 <s>:
+ 4c8:	sdivne	r0, r0, r1
+000004cc <add>:
+ 4cc:	add	r0, r0, r1
+00000600 <__aeabi_uidiv>:
+ 600:	subs	r2, r1, #1
+""",
+    243: """
+0000000000000500 <q>:
+ 500:	divuw	a0,a0,a1
+0000000000000508 <r>:
+ 508:	remu	a0,a0,a1
+0000000000000510 <s>:
+ 510:	rem	a0,a0,a1
+0000000000000518 <v>:
+ 518:	vdivu.vv	v1,v2,v3
+0000000000000520 <fp>:
+ 520:	fdiv.d	fa0,fa0,fa1
+ 524:	addw	a0,a0,a1
+""",
+}
+
+
+@pytest.mark.parametrize("machine,want", [
+    (62, {"q", "m", "wide"}),
+    (183, {"q", "r", "sve"}),
+    (40, {"q", "r", "s", "__aeabi_uidiv"}),
+    (243, {"q", "r", "s", "v"}),
+])
+def test_division_list_names_each_architectures_integer_divisions(machine, want):
+    """KyberSlash's class: a division instruction, or a call to the compiler's
+    division routine where the processor has none. Floating-point division is
+    not integer division and is not listed."""
+    from pq_verify.ct_audit import divisions_in
+    assert set(divisions_in(_DISASSEMBLY[machine], machine)) == want
+
+
+def _elf_head(machine, big=False):
+    e = "big" if big else "little"
+    return (b"\x7fELF" + bytes([2, 2 if big else 1, 1]) + bytes(9)
+            + (3).to_bytes(2, e) + machine.to_bytes(2, e))
+
+
+def test_division_list_says_why_it_was_not_made(tmp_path, monkeypatch):
+    """An absent list is never left to read as an empty one."""
+    from pq_verify import ct_audit as C
+    text = tmp_path / "lib.txt"
+    text.write_text("not a library")
+    assert C.division_listing(str(text)) == (None, "not an ELF file")
+    ppc = tmp_path / "ppc.so"
+    ppc.write_bytes(_elf_head(21, big=True))           # PowerPC 64
+    assert C.elf_machine(str(ppc)) == 21
+    divs, why = C.division_listing(str(ppc))
+    assert divs is None and "ELF machine 21" in why
+    head_only = tmp_path / "x86.so"
+    head_only.write_bytes(_elf_head(62))                # a header and no code
+    divs, why = C.division_listing(str(head_only))
+    assert divs is None and why.startswith("objdump")
+    monkeypatch.setattr(C.shutil, "which", lambda name: None)
+    assert C.division_listing(str(head_only)) == (None, "objdump not found")
+    assert C.division_note({"divisions": None, "divisions_not_listed": "objdump not found"}) == (
+        "integer divisions: not listed (objdump not found)")
+    assert C.division_note({"divisions": {}}) == "integer divisions: none in the library's code"
+    assert C.division_note({"divisions": {"r": 1, "q": 2}}) == (
+        "integer divisions (not checked for timing): q, r")
+
+
+def test_division_list_of_a_compiled_library(tmp_path):
+    import shutil, subprocess
+    from pq_verify import ct_audit as C
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if not (cc and shutil.which("objdump")):
+        pytest.skip("needs a C compiler and objdump")
+    src = tmp_path / "d.c"
+    src.write_text("int q(int a, int b) { return a / b; }\n"
+                   "unsigned r(unsigned a, unsigned b) { return a % b; }\n"
+                   "int add(int a, int b) { return a + b; }\n")
+    so = tmp_path / "libd.so"
+    subprocess.run([cc, "-O1", "-fPIC", "-shared", "-o", str(so), str(src)],
+                   check=True, capture_output=True)
+    if C.elf_machine(str(so)) not in C.DIVISION_INSNS:
+        pytest.skip("not an ELF library of an architecture with a known division")
+    divs, why = C.division_listing(str(so))
+    assert why is None and {"q", "r"} <= set(divs) and "add" not in divs
 
 
 def test_ct_vendor_rows_and_mutants_are_well_formed():

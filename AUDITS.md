@@ -1116,7 +1116,7 @@ sees it, though the processor still performs it. Every run commits each
 instruction's result (`--vex-iropt-register-updates=allregs-at-each-insn`),
 and every row below reproduced unchanged with it.
 
-| Library | Sets | ct:encaps | ct:decaps | Division instructions |
+| Library | Sets | ct:encaps | ct:decaps | Integer divisions |
 |---|---|---|---|---|
 | mlkem-native `fc269bc` | 512 / 768 / 1024 | 3/3 | 3/3 | none |
 | PQClean clean `0586a82` | 512 / 768 / 1024 | 3/3 | 3/3 | none |
@@ -1131,7 +1131,7 @@ pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
 | `memcmp` in the FO re-encryption check (`crypto_kem_dec`) | ct:decaps |
 
 Not checked, and said so in every report: instruction timing (KyberSlash's
-secret division is invisible to memcheck; the library's division instructions
+secret division is invisible to memcheck; the library's integer divisions
 are listed instead), key generation, and anything physical.
 
 **Classic McEliece** (not FIPS; `--audit-mceliece ... --constant-time`). The
@@ -1188,7 +1188,7 @@ a hint-weight rejection. The policy judges every searched call outside
 Valgrind, 128 to 896 per set, and memcheck replays the chosen ones. Any other
 build is CANNOT VERIFY.
 
-| Library | Sets | ct:keyGen | ct:sign | Division instructions |
+| Library | Sets | ct:keyGen | ct:sign | Integer divisions |
 |---|---|---|---|---|
 | mldsa-native `159509d`, hooked build | 44 / 65 / 87 | 3/3 | 3/3 | none |
 | every other ML-DSA row above | 44 / 65 / 87 | CANNOT VERIFY | CANNOT VERIFY | — |

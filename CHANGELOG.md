@@ -120,9 +120,28 @@ versioning](https://semver.org/spec/v2.0.0.html).
   `pip install "pq-verify[full]"` installs today, the run reports none. CI
   still pins 1.4.0, where the finding stands; the README and the report's
   note on the defect now name 1.5.1.
+- **The constant-time report's division list missed divisions.** The list,
+  a reviewer's check for the KyberSlash class that memcheck cannot see,
+  matched x86's and ARM's division instructions only: on RISC-V it missed
+  `divu`, `divuw` and the `rem` family, and it missed every call to the
+  compiler's division routines (`__aeabi_idiv`, `__udivdi3`, ...), which
+  stand in for a division instruction where the processor has none. It now
+  matches by the library's architecture (x86, x86-64, ARM, AArch64 and
+  RISC-V) and counts those calls. A list that could not be made (another
+  architecture, no objdump, or objdump failing) printed nothing, as an empty
+  one did; the report now says "none in the library's code", or "not listed"
+  with the reason, which the JSON carries as `divisions_not_listed`.
+  Rebuilt at their pinned commits, mlkem-native, PQClean's ML-KEM and
+  mldsa-native's hooked build still have none, as AUDITS.md records.
 
 ### Documentation
 
+- **The README's Action section lists every mode and input.** It left out
+  the `fndsa` mode and the `slhdsa`, `sarif-file`, `json-file` and `version`
+  inputs, all in v2.15.0. It now lists them, and the `slhdsa` mode, which
+  needs v2.16.0 or later; a test now checks the table against action.yml.
+  Its section on paid audits now says SLH-DSA libraries are audited through
+  their own entry points, as ML-KEM and ML-DSA libraries are.
 - **AUDITS.md records PQClean's retirement.** PQClean is archived at
   `0586a82`, the commit its rows are pinned to. For each maintained
   implementation its notice names, AUDITS.md says whether it is audited

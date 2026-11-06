@@ -776,9 +776,8 @@ def _print_constant_time(ct):
             print(f"        ✗ {f}")
         if len(ct['findings'][op]) > 3:
             print(f"        ... and {len(ct['findings'][op]) - 3} more; see the JSON report")
-    if ct.get('divisions'):
-        print(f"        division instructions (not checked for timing): "
-              f"{', '.join(sorted(ct['divisions']))}")
+    from .ct_audit import division_note
+    print(f"        {division_note(ct)}")
 
 
 def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumulated,
