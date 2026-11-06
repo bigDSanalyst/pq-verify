@@ -54,6 +54,10 @@ from .hybrid import (
 # NIST ACVP vector and Wycheproof's edge cases. See pq_verify.dsa_audit.
 from .dsa_audit import pqverify_audit_dsa
 
+# Third-party SLH-DSA audit (FIPS 205): keygen/sign/verify over every interface
+# against NIST's ACVP vectors. See pq_verify.slhdsa_audit.
+from .slhdsa_audit import pqverify_audit_slhdsa
+
 # Stateful hash-based signatures (SP 800-208): LMS/HSS and XMSS/XMSS^MT.
 from .hbs_suite import pqverify_lms_acvp, pqverify_hbs
 from .hbs_audit import pqverify_audit_hbs
@@ -74,6 +78,7 @@ __all__ = [
     "pqverify_slhdsa_acvp",
     "pqverify_acvp_all",
     "pqverify_audit_dsa",
+    "pqverify_audit_slhdsa",
     "pqverify_lms_acvp",
     "pqverify_hbs",
     "pqverify_audit_hbs",

@@ -5849,6 +5849,261 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
 
 
 # ----------------------------------------------------------------------
+# --audit-slhdsa: a third-party SLH-DSA library (FIPS 205). The shim in
+# tests/data/slhdsa_shim.c has slhdsa-c's API and answers from NIST's own
+# expected results, keyed by its inputs; each fault below plants one bug.
+# The real slhdsa-c, with its mutants, is the vendor-audits CI job's.
+# ----------------------------------------------------------------------
+
+_SLHDSA_KEEP = []          # ctypes callbacks must outlive the library calls
+_SLHDSA_128F = {"keyGen": (10, 10), "keyGenRBG": (10, 10), "sigGenInternal": (14, 14),
+                "sigGenPure": (14, 14), "sigGenPreHash": (24, 24), "sigVerInternal": (14, 14),
+                "sigVerPure": (14, 14), "sigVerPreHash": (14, 14), "contextLength": (7, 7),
+                "unknownPreHash": (8, 8), "rbgFailure": (1, 1), "sizes": (3, 3)}
+
+
+def _slhdsa_oracle(tmp_path, flags=(), accept_all=False, ignore_addrnd=False,
+                   sign_long_ctx=False, verify_long_ctx=None, sign_unknown_ph=False,
+                   verify_unknown_ph=None, ignore_rbg_failure=False, draws=(48,)):
+    """The shim, answering NIST's inputs with NIST's answers. Any other input
+    gets a stand-in signature, a hash of the public key and of M' as FIPS 205
+    builds it, so a signature the audit makes for its edge cases verifies
+    where it belongs and nowhere else. The keyword arguments plant faults:
+    verify_long_ctx is how a verifier without the length check reads a
+    256-byte context ("drop" ignores it, "truncate" writes 256 as the byte 0,
+    "no-context" reads it as slhdsa-c's internal marker), verify_unknown_ph
+    what it does with an unknown hash name ("SHA2-256" uses that instead,
+    "no-hash" leaves out the OID and digest, "empty" leaves M' empty)."""
+    import ctypes as C, hashlib, shutil, subprocess
+    from pq_verify.slhdsa_audit import load_cases, _interface
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    so = tmp_path / f"libslhdsashim{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so), *flags,
+                    str(root / "tests" / "data" / "slhdsa_shim.c")],
+                   check=True, capture_output=True)
+    lib = C.CDLL(str(so))
+    PS, N, SIG = "SLH-DSA-SHA2-128f", 16, 17088
+    h, I = bytes.fromhex, {"Internal": 0, "Pure": 1, "PreHash": 2}
+    approved = {"SHA2-224", "SHA2-256", "SHA2-384", "SHA2-512", "SHA2-512/224", "SHA2-512/256",
+                "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512", "SHAKE-128", "SHAKE-256"}
+    sha256_oid = h("0609608648016503040201")
+    keys = {(h(t["skSeed"]), h(t["skPrf"]), h(t["pkSeed"])): (h(r["sk"]), h(r["pk"]))
+            for _g, t, r in load_cases("keyGen", PS)}
+    sigs, verdicts = {}, {}
+    for g, t, r in load_cases("sigGen", PS):
+        i = I[_interface(g)]
+        rnd = None if g.get("deterministic") else h(t["additionalRandomness"])
+        sigs[(i, h(t["sk"]), h(t["message"]), h(t.get("context", "")),
+              t.get("hashAlg") if i == 2 else None, rnd)] = h(r["signature"])
+    for g, t, r in load_cases("sigVer", PS):
+        i = I[_interface(g)]
+        verdicts[(i, h(t["pk"]), h(t["message"]), h(t.get("context", "")),
+                  t.get("hashAlg") if i == 2 else None, h(t["signature"]))] = r["testPassed"]
+    U8, SZ = C.POINTER(C.c_uint8), C.c_size_t
+    RBG = C.CFUNCTYPE(C.c_int, U8, SZ)
+    at = lambda p, n: C.string_at(p, n) if n else b""  # noqa: E731
+
+    def mprime(i, m, ctx, ph, verifying):
+        """M' (FIPS 205 Algorithms 22-25), with the planted faults; None: refused."""
+        if i == 0:
+            return m
+        if len(ctx) > 255:
+            mode = verify_long_ctx if verifying else ("truncate" if sign_long_ctx else None)
+            if mode is None or (mode == "no-context" and i == 2):
+                return None
+            if mode == "no-context":
+                return m
+            if mode == "drop":
+                ctx = b""
+        head = bytes([i - 1, len(ctx) & 0xFF]) + ctx
+        if i == 1:
+            return head + m
+        if ph not in approved:
+            mode = verify_unknown_ph if verifying else ("no-hash" if sign_unknown_ph else None)
+            if mode is None:
+                return None
+            if mode == "empty":
+                return b""
+            if mode == "no-hash":
+                return head
+            ph = "SHA2-256"
+        tail = sha256_oid if ph == "SHA2-256" else ph.encode()   # a stand-in for the rest
+        return head + tail + hashlib.sha256(m).digest()
+
+    def stand_in(pk, mp):
+        d = hashlib.sha256(b"pqvtest" + pk + mp).digest()
+        return (d * (SIG // len(d) + 1))[:SIG]
+
+    def give(sk, pk, key):
+        C.memmove(sk, key[0], 4 * N)
+        C.memmove(pk, key[1], 2 * N)
+        return 0
+
+    @C.CFUNCTYPE(C.c_int, U8, U8, U8, U8, U8)
+    def kg(sk, pk, a, b, c):
+        key = keys.get((at(a, N), at(b, N), at(c, N)))
+        return -1 if key is None else give(sk, pk, key)
+
+    @C.CFUNCTYPE(C.c_int, U8, U8, RBG)
+    def kgr(sk, pk, rbg):
+        seeds, off = (C.c_uint8 * max(48, sum(draws)))(), 0
+        for n in draws:
+            if rbg(C.cast(C.addressof(seeds) + off, U8), n) != 0 and not ignore_rbg_failure:
+                return -1
+            off += n
+        key = keys.get((bytes(seeds[:N]), bytes(seeds[N:2 * N]), bytes(seeds[2 * N:3 * N])))
+        return (0 if ignore_rbg_failure else -1) if key is None else give(sk, pk, key)
+
+    @C.CFUNCTYPE(SZ, C.c_int, U8, U8, SZ, U8, SZ, C.c_char_p, U8, U8)
+    def sign(i, sig, m, ml, ctx, cl, ph, sk, addrnd):
+        ph = ph.decode() if ph else None
+        msg, context, key = at(m, ml), at(ctx, cl), at(sk, 4 * N)
+        rnd = None if (ignore_addrnd or not addrnd) else at(addrnd, N)
+        out = sigs.get((i, key, msg, context, ph, rnd))
+        if out is None:
+            mp = mprime(i, msg, context, ph, False)
+            if mp is None:
+                return 0
+            out = stand_in(key[2 * N:], mp)       # sk ends with PK.seed || PK.root
+        C.memmove(sig, out, SIG)
+        return SIG
+
+    @C.CFUNCTYPE(C.c_int, C.c_int, U8, SZ, U8, SZ, U8, SZ, C.c_char_p, U8)
+    def ver(i, m, ml, sig, sl, ctx, cl, ph, pk):
+        if accept_all:
+            return 1
+        if sl != SIG:
+            return 0
+        ph = ph.decode() if ph else None
+        args = (i, at(pk, 2 * N), at(m, ml), at(ctx, cl), ph, at(sig, sl))
+        if args in verdicts:
+            return int(bool(verdicts[args]))
+        mp = mprime(i, args[2], args[3], ph, True)
+        return int(mp is not None and args[5] == stand_in(args[1], mp))
+    lib.pqvtest_slhdsa_register(kg, kgr, sign, ver)
+    _SLHDSA_KEEP.extend([lib, kg, kgr, sign, ver])
+    return str(so)
+
+
+def _slhdsa_audit(so, **kw):
+    from pq_verify.slhdsa_audit import pqverify_audit_slhdsa
+    with contextlib.redirect_stdout(io.StringIO()):
+        return pqverify_audit_slhdsa(so, "SLH-DSA-SHA2-128f", verbose=False, **kw)
+
+
+def test_slhdsa_audit_a_library_giving_nists_answers_verifies(tmp_path):
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path))
+    assert r["verified"], r["failures"]
+    assert r["detail"] == _SLHDSA_128F and r["not_applicable_total"] == 0
+    assert (r["via"]["sigGenPure"], r["via"]["sigGenPreHash"]) == ("slh_sign", "hash_slh_sign")
+
+
+@pytest.mark.parametrize("fault, stages, failed", [
+    ({"accept_all": True},
+     {"sigVerInternal", "sigVerPure", "sigVerPreHash", "contextLength", "unknownPreHash"}, None),
+    ({"ignore_addrnd": True}, {"sigGenInternal", "sigGenPure", "sigGenPreHash"}, None),
+    ({"sign_long_ctx": True}, {"contextLength"}, 2),        # pure and pre-hash signing
+    # Each way a verifier can lose the length check is caught by the signature
+    # made for it: the context ignored; 256 written as one byte; 256 read as
+    # "no context", which only the internal signature shows.
+    ({"verify_long_ctx": "drop"}, {"contextLength"}, 2),
+    ({"verify_long_ctx": "truncate"}, {"contextLength"}, 2),
+    ({"verify_long_ctx": "no-context"}, {"contextLength"}, 1),
+    # And each thing a verifier can do with a hash name it does not know.
+    ({"sign_unknown_ph": True}, {"unknownPreHash"}, 2),
+    ({"verify_unknown_ph": "SHA2-256"}, {"unknownPreHash"}, 2),
+    ({"verify_unknown_ph": "no-hash"}, {"unknownPreHash"}, 2),
+    ({"verify_unknown_ph": "empty"}, {"unknownPreHash"}, 2),
+    ({"ignore_rbg_failure": True}, {"rbgFailure"}, 1),
+    ({"draws": (48, 16)}, {"keyGenRBG"}, 10),         # FIPS 205 draws 3n bytes
+    ({"draws": (16, 16)}, {"keyGenRBG"}, 10),
+])
+def test_slhdsa_audit_catches_each_planted_fault(tmp_path, fault, stages, failed):
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path, **fault))
+    assert {s for s, (p, t) in r["detail"].items() if p < t} == stages
+    assert failed is None or sum(t - p for p, t in r["detail"].values()) == failed
+    assert not r["verified"]
+
+
+def test_slhdsa_audit_takes_the_seeds_however_the_draws_are_split(tmp_path):
+    """FIPS 205 Algorithm 21 draws SK.seed, SK.prf and PK.seed as three values;
+    slhdsa-c draws all 3n bytes at once. Either is the same stream."""
+    for draws in ((16, 16, 16), (24, 24)):
+        r = _slhdsa_audit(_slhdsa_oracle(tmp_path, draws=draws))
+        assert r["verified"] and r["detail"]["keyGenRBG"] == (10, 10), draws
+
+
+def test_slhdsa_audit_counts_a_missing_interface_as_not_applicable(tmp_path):
+    from pq_verify.report import to_json_slhdsa_audit
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path, flags=("-DPQVTEST_NO_PREHASH",)))
+    assert "sigGenPreHash" not in r["detail"] and "sigVerPreHash" not in r["detail"]
+    assert r["not_applicable"]["sigGenPreHash"][0] == 24
+    assert r["not_applicable"]["sigVerPreHash"][0] == 14
+    assert r["detail"]["contextLength"] == (4, 4) and "unknownPreHash" not in r["detail"]
+    assert r["not_applicable"]["contextLength"][0] == 3       # pre-hash: sign, verify twice
+    assert r["not_applicable"]["unknownPreHash"][0] == 8
+    doc = to_json_slhdsa_audit(r, param_set="SLH-DSA-SHA2-128f")
+    assert doc["verified"] and not doc["scope"]["complete"]   # what ran passed; not all ran
+
+
+def test_slhdsa_audit_never_guesses_between_two_signers(tmp_path):
+    so = _slhdsa_oracle(tmp_path, flags=("-DPQVTEST_TWO_SIGNERS",))
+    assert _slhdsa_audit(so) is None
+    r = _slhdsa_audit(so, symbols={"sign": "slh_sign"})
+    assert r["verified"] and r["detail"] == _SLHDSA_128F
+
+
+def test_slhdsa_audit_roles_and_parameter_objects():
+    from pq_verify.slhdsa_audit import SETS, param_symbol, resolve_symbols
+    found, ambiguous = resolve_symbols(["slh_sign", "hash_slh_sign", "slh_verify",
+                                        "hash_slh_verify", "slh_sign_internal",
+                                        "slh_keygen", "slh_keygen_internal"])
+    assert (found["sign"], found["sign_prehash"]) == ("slh_sign", "hash_slh_sign")
+    assert (found["verify"], found["verify_prehash"]) == ("slh_verify", "hash_slh_verify")
+    assert (found["keypair"], found["keypair_seed"]) == ("slh_keygen", "slh_keygen_internal")
+    assert not ambiguous
+    assert param_symbol("SLH-DSA-SHAKE-256f") == "slh_dsa_shake_256f" and len(SETS) == 12
+
+
+def test_slhdsa_audit_cli_inputs_and_report(tmp_path):
+    from pq_verify.report import to_json_slhdsa_audit
+    code, out = _cli("--slhdsa-symbol", "sign=x", "--fndsa")
+    assert code == 2 and "--audit-slhdsa" in out
+    so = tmp_path / "x.so"
+    so.write_bytes(b"")
+    code, out = _cli("--audit-slhdsa", str(so), "SLH-DSA-SHA2-129s")
+    assert code == 2 and "unknown parameter set" in out
+    code, out = _cli("--audit-slhdsa", str(so), "SLH-DSA-SHA2-128s", "--slhdsa-symbol", "teleport=x")
+    assert code == 2 and "bad --slhdsa-symbol" in out
+    doc = to_json_slhdsa_audit(None, param_set="SLH-DSA-SHA2-128s", reason="no entry point")
+    assert doc["status"] == "CANNOT VERIFY" and doc["standard"] == "FIPS 205"
+    assert doc["findings"] == ["cannot verify: no entry point"]
+
+
+def test_slhdsa_vendor_rows_and_mutants_are_well_formed_and_published():
+    import re
+    from pq_verify.slhdsa_audit import SETS
+    mod, root = _vendor_audit()
+    rows = mod.load_slhdsa_table()
+    assert {r["build"] for r in rows} == set(mod.SLHDSA_BUILDS)
+    for row in rows:
+        assert re.fullmatch(r"[0-9a-f]{40}", row["commit"]), row["library"]
+        assert set(row["sets"]) <= set(SETS) and row["mutants"]
+        for ps in row["sets"]:
+            assert set(row["results"][ps]) <= set(mod.SLHDSA_STAGES), ps
+        for m in row["mutants"]:
+            assert m["set"] in row["sets"]
+            assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+    text = (root / "AUDITS.md").read_text()
+    published = text.split(mod.SLHDSA_BEGIN, 1)[1].split(mod.SLHDSA_END, 1)[0].strip()
+    assert published == mod.slhdsa_markdown(rows).strip(), (
+        "AUDITS.md is out of date: paste the SLH-DSA table from "
+        "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-slhdsa markers")
+
+
+# ----------------------------------------------------------------------
 # --audit-harness: any implementation behind a Crucible-protocol harness
 # (JSON lines over stdin/stdout). tests/data/crucible_ref_harness.py wraps
 # kyber-py / dilithium-py and plants one fault per argument.

@@ -13,7 +13,7 @@
 
 You deploy post-quantum cryptography. pq-verify checks that **your** implementation computes the standard correctly, three ways:
 
-- **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
+- **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-slhdsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases where they exist, and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
 - **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
 - **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
 
@@ -97,6 +97,7 @@ To audit a compiled library:
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
 pq-verify --audit-kem build/libmlkem768.so ML-KEM-768     # the whole KEM
 pq-verify --audit-dsa build/libmldsa65.so ML-DSA-65       # the whole signature scheme
+pq-verify --audit-slhdsa build/libslhdsa.so SLH-DSA-SHA2-128f   # SLH-DSA, all three interfaces
 pq-verify --audit-hbs build/libhashsigs.so                # LMS/XMSS, via a pqv_hbs adapter
 ```
 
@@ -178,7 +179,7 @@ Every report states its binding as a field, not as prose:
 
 | Path | `artifact` |
 |------|-----------|
-| `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
+| `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-slhdsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
 | `--verify-hybrid` | `none — vendor-supplied transcript` |
 | `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
@@ -323,6 +324,7 @@ output are in [AUDITS.md](AUDITS.md).
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 3 mutants and 6 constant-time controls | 1,506/1,506; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
+| slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash; refusals of over-long contexts, unknown hash names and a failed RBG; 12 mutants | 1,596/1,596; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
@@ -332,7 +334,9 @@ output are in [AUDITS.md](AUDITS.md).
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
 vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
-`--audit-dsa` for ML-DSA. The NTT-level rows check the transform against an
+`--audit-dsa` for ML-DSA. `--audit-slhdsa` does the same for SLH-DSA with
+NIST's vectors and refusal checks of its own; no Wycheproof or CCTV SLH-DSA
+vectors are pinned. The NTT-level rows check the transform against an
 independently computed FIPS reference.
 
 Every pinned library also carries **mutants**, one planted bug each, which CI

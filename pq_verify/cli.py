@@ -16,6 +16,7 @@ pq-verify command-line interface.
     pq-verify --audit-so PATH SYM  audit an NTT in a compiled .so
     pq-verify --audit-dsa PATH SET audit an ML-DSA library (keygen/sign/verify)
     pq-verify --audit-hbs PATH     audit an LMS/XMSS library (pqv_hbs adapter)
+    pq-verify --audit-slhdsa PATH SET audit an SLH-DSA library (FIPS 205)
     pq-verify --audit-fndsa PATH SET  audit an FN-DSA library (FIPS 206 draft track)
     pq-verify --audit-mceliece PATH SET  audit a Classic McEliece library (not FIPS)
     pq-verify --audit-hqc PATH SET       audit an HQC decoder (code layer)
@@ -218,6 +219,13 @@ def build_parser():
                         "optional state functions -- the library's own key state: "
                         "no leaf issued twice, state durable before a signature "
                         "leaves, refusal once the key is exhausted")
+    p.add_argument("--audit-slhdsa", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="audit an SLH-DSA (FIPS 205) library in PATH through its own "
+                        "entry points, e.g. --audit-slhdsa libslhdsa.so "
+                        "SLH-DSA-SHA2-128f: every pinned NIST ACVP keyGen, sigGen and "
+                        "sigVer vector byte-exact over the internal, pure and pre-hash "
+                        "interfaces, key generation through its own random-bit "
+                        "callback, and the inputs FIPS 205 says to refuse")
     p.add_argument("--audit-fndsa", nargs=2, metavar=("PATH", "PARAM_SET"),
                    help="DRAFT TRACK, ahead of FIPS 206: audit an FN-DSA (Falcon) "
                         "library in PATH through its own entry points, e.g. "
@@ -294,6 +302,11 @@ def build_parser():
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
+    p.add_argument("--slhdsa-symbol", action="append", default=[], metavar="ROLE=SYM",
+                   help="with --audit-slhdsa: bind ROLE (keypair_seed, keypair, "
+                        "sign_internal, verify_internal, sign, verify, sign_prehash, "
+                        "verify_prehash, pk_size, sk_size, sig_size, or param for the "
+                        "parameter-set object) to SYM; repeatable")
     p.add_argument("--audit-hbs-full", action="store_true",
                    help="with --audit-hbs: every key generation and signing case up to "
                         "height 16, not a sample")
@@ -307,8 +320,8 @@ def build_parser():
                         "Each audit runs in a child process, so a hang or a crash "
                         "is reported instead of taking pq-verify down with it")
     p.add_argument("--symbol-prefix", metavar="PREFIX",
-                   help="with --audit-kem, --audit-dsa, --audit-fndsa, --audit-mceliece "
-                        "or --audit-hqc: consider only "
+                   help="with --audit-kem, --audit-dsa, --audit-slhdsa, --audit-fndsa, "
+                        "--audit-mceliece or --audit-hqc: consider only "
                         "symbols starting with PREFIX, for a library that exports "
                         "more than one implementation (liboqs: OQS_KEM_ml_kem_768_ "
                         "for its public API, PQCP_MLKEM_NATIVE_MLKEM768_X86_64_ for "
@@ -385,14 +398,15 @@ def main(argv=None):
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--symbol-prefix", args.symbol_prefix,
-             args.audit_kem or args.audit_dsa or args.audit_fndsa or args.audit_mceliece
-             or args.audit_hqc),
+             args.audit_kem or args.audit_dsa or args.audit_slhdsa or args.audit_fndsa
+             or args.audit_mceliece or args.audit_hqc),
             ("--mceliece-symbol", args.mceliece_symbol, args.audit_mceliece),
             ("--hqc-symbol", args.hqc_symbol, args.audit_hqc),
             ("--hqc-profile", args.hqc_profile, args.audit_hqc),
             ("--hqc-seed", args.hqc_seed, args.audit_hqc),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
+            ("--slhdsa-symbol", args.slhdsa_symbol, args.audit_slhdsa),
             ("--constant-time", args.constant_time,
              args.audit_kem or args.audit_dsa or args.audit_mceliece),
             ("--accumulated", args.accumulated is not None,
@@ -407,13 +421,15 @@ def main(argv=None):
             ("--source-symbol", args.source_symbol, args.audit_source),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
-             or args.audit_fndsa or args.audit_mceliece or args.audit_hqc
+             or args.audit_slhdsa or args.audit_fndsa or args.audit_mceliece
+             or args.audit_hqc
              or args.audit_harness or args.audit_source)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
-                       "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-fndsa, "
-                                          "--audit-mceliece or --audit-hqc",
+                       "--slhdsa-symbol": "--audit-slhdsa",
+                       "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-slhdsa, "
+                                          "--audit-fndsa, --audit-mceliece or --audit-hqc",
                        "--mceliece-symbol": "--audit-mceliece",
                        "--hqc-symbol": "--audit-hqc",
                        "--hqc-profile": "--audit-hqc",
@@ -493,6 +509,7 @@ def main(argv=None):
                 "edge_cases", "audit_mceliece", "hqc", "audit_hqc",
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
+                "audit_slhdsa",
                 "audit_harness", "audit_source",
                 "audit_hbs", "audit_so")):
             return 0
@@ -719,6 +736,42 @@ def main(argv=None):
         except OSError as exc:
             fna_reason = f"the dynamic linker could not load it ({exc})"
             print(f"  cannot audit: {fna_reason}")
+    sla_result = sla_ran = sla_reason = sla_artifact = None
+    if getattr(args, "audit_slhdsa", None):
+        from .slhdsa_audit import SETS as _SL_SETS, _ROLES as _SL_ROLES
+        _p, _ps = args.audit_slhdsa
+        if _ps not in _SL_SETS:
+            print(f"  unknown parameter set {_ps!r} for --audit-slhdsa — known: "
+                  f"{', '.join(_SL_SETS)}")
+            return 2
+        _syms = {}
+        for item in args.slhdsa_symbol:
+            role, _, sym = item.partition("=")
+            if role not in (*_SL_ROLES, "param") or not sym:
+                print(f"  bad --slhdsa-symbol {item!r}: use ROLE=SYMBOL with ROLE one "
+                      f"of {', '.join((*_SL_ROLES, 'param'))}")
+                return 2
+            _syms[role] = sym
+        sla_ran = _ps
+        ran_task = True
+        try:
+            sla_artifact = artifact_bound(_p)
+        except OSError as exc:
+            print(f"  cannot audit {_p}: {exc}")
+            return 2
+        print(f"  artifact: {sla_artifact['summary']}")
+        try:
+            sla_result, _loaded, sla_reason = _isolated(
+                args, "pq_verify.slhdsa_audit", "pqverify_audit_slhdsa", _p, _ps,
+                symbols=_syms, prefix=args.symbol_prefix, **_vsrc)
+            _bound = _bind_loaded(sla_artifact, _loaded)
+            sla_reason = sla_reason or _bound
+            if sla_reason:
+                sla_result = None
+                print(f"  cannot verify: {sla_reason}")
+        except OSError as exc:
+            sla_reason = f"the dynamic linker could not load it ({exc})"
+            print(f"  cannot audit: {sla_reason}")
     mca_result = mca_ran = mca_reason = mca_artifact = None
     if getattr(args, "audit_mceliece", None):
         from .mceliece import SETS as _MC_SETS
@@ -1002,6 +1055,30 @@ def main(argv=None):
         elif (gate and getattr(args, "require_full_coverage", False)
               and doc.get("scope") and not doc["scope"]["complete"]):
             print("  FAILING: harness audit scope is partial and "
+                  "--require-full-coverage was set")
+            exit_code = 1
+
+    if sla_ran is not None:
+        from .report import to_json_slhdsa_audit
+        doc = to_json_slhdsa_audit(sla_result, artifact=sla_artifact, param_set=sla_ran,
+                                   library=args.audit_slhdsa[0], reason=sla_reason)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-slhdsa"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_slhdsa[0]}:{sla_ran}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=sla_artifact)
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: SLH-DSA audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print("  FAILING: SLH-DSA audit scope is partial and "
                   "--require-full-coverage was set")
             exit_code = 1
 

@@ -3,10 +3,11 @@
 
   python3 tools/vendor_audit.py              build every row, check its result
   python3 tools/vendor_audit.py --markdown   print the AUDITS.md tables (offline)
-  python3 tools/vendor_audit.py --only ML-DSA   just one scheme (ML-KEM, ML-DSA, LMS/XMSS,
-                                                FN-DSA)
+  python3 tools/vendor_audit.py --only ML-DSA   just one scheme (ML-KEM, ML-DSA, SLH-DSA,
+                                                LMS/XMSS, FN-DSA, McEliece, HQC)
 
-ML-KEM rows are re-run with --audit-kem, ML-DSA rows with --audit-dsa. ML-DSA
+ML-KEM rows are re-run with --audit-kem, ML-DSA rows with --audit-dsa, SLH-DSA
+rows with --audit-slhdsa (all twelve parameter sets, one build). ML-DSA
 libraries are linked with pq-verify's randomness harness
 (pq_verify/harness/pqv_randombytes.c), so their randomised keypair() and
 signature() APIs are audited byte-exactly, not only the seed-taking ones.
@@ -64,6 +65,12 @@ DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa", "liboqs")
 HBS_BEGIN, HBS_END = "<!-- vendor-audits-hbs:begin -->", "<!-- vendor-audits-hbs:end -->"
 HBS_BUILDS = ("hash-sigs", "xmss-reference")
 HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
+SLHDSA_BEGIN, SLHDSA_END = ("<!-- vendor-audits-slhdsa:begin -->",
+                            "<!-- vendor-audits-slhdsa:end -->")
+SLHDSA_BUILDS = ("slhdsa-c",)
+SLHDSA_STAGES = ("keyGen", "keyGenRBG", "sigGenInternal", "sigGenPure", "sigGenPreHash",
+                 "sigVerInternal", "sigVerPure", "sigVerPreHash",
+                 "contextLength", "unknownPreHash", "rbgFailure", "sizes")
 FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audits-fndsa:end -->"
 FNDSA_BUILDS = ("pqclean-falcon", "liboqs")
 FNDSA_STAGES = ("verify", "open", "reject", "keyGen", "sign")
@@ -286,6 +293,25 @@ def load_hqc_table(path=TABLE):
         return json.load(fh).get("hqc_audits", [])
 
 
+def load_slhdsa_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("slhdsa_audits", [])
+
+
+def build_slhdsa(recipe, src, out_dir, tag=""):
+    """Compile an SLH-DSA library: slhdsa-c is one library for all twelve
+    parameter sets, its top-level C files without the test driver. Key
+    generation draws through a callback and signing takes addrnd as an
+    argument, so no randomness harness is linked."""
+    if recipe != "slhdsa-c":
+        raise ValueError(f"unknown SLH-DSA build recipe {recipe!r}")
+    so = Path(out_dir) / f"{recipe}{tag}.so"
+    cmd = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared", "-std=c99",
+           "-o", str(so), *sorted(str(p) for p in Path(src).glob("*.c"))]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
 def build_mceliece(recipe, src, param_set, out_dir, tag=""):
     """Compile one Classic McEliece parameter set. Encapsulation draws its
     error vector from the system RNG: it is audited for validity and
@@ -416,6 +442,17 @@ def audit_fndsa(so, param_set, prefix=None):
     from pq_verify.fndsa_audit import pqverify_audit_fndsa
     with contextlib.redirect_stdout(io.StringIO()):
         r = pqverify_audit_fndsa(so, param_set, verbose=False, prefix=prefix)
+    if r is None:
+        return None
+    return {"results": {k: list(v) for k, v in r["detail"].items()},
+            "not_applicable": r["not_applicable_total"]}
+
+
+def audit_slhdsa(so, param_set, prefix=None):
+    sys.path.insert(0, str(REPO))
+    from pq_verify.slhdsa_audit import pqverify_audit_slhdsa
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_slhdsa(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
     return {"results": {k: list(v) for k, v in r["detail"].items()},
@@ -911,6 +948,73 @@ def check_fndsa(rows, workdir):
     return 0
 
 
+def check_slhdsa(rows, workdir):
+    """SLH-DSA (FIPS 205): each row's sets as recorded, and every mutant failed
+    in the stages it names. A row's library is built once for all its sets."""
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        try:
+            if not (src / ".git").exists():
+                fetch(row["url"], row["commit"], src)
+        except Exception as e:
+            print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: fetch failed: {e}")
+            return 2
+        try:
+            so = build_slhdsa(row["build"], src, workdir)
+        except subprocess.CalledProcessError as e:
+            print(f"  ERROR  {row['library']} @ {row['commit'][:7]}: build failed\n"
+                  f"{e.stderr.decode()[-2000:]}")
+            return 2
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps}"
+            got = audit_slhdsa(so, ps, prefix_for(row, ps))
+            want = {"results": row["results"][ps],
+                    "not_applicable": row["not_applicable"][ps]}
+            if got == want:
+                p, t = total(got["results"])
+                print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, as recorded")
+                continue
+            failures += 1
+            print(f"  DIFF   {label}")
+            if got is None:
+                print("         pq-verify could not audit it (entry points not resolved)")
+                continue
+            for s in sorted(set(got["results"]) | set(want["results"])):
+                if got["results"].get(s) != want["results"].get(s):
+                    print(f"         {s:15s} recorded {want['results'].get(s)}  "
+                          f"now {got['results'].get(s)}")
+            if got["not_applicable"] != want["not_applicable"]:
+                print(f"         not applicable recorded {want['not_applicable']}  "
+                      f"now {got['not_applicable']}")
+        for i, m in enumerate(row.get("mutants", [])):
+            label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so_m = build_slhdsa(row["build"], msrc, workdir, tag=f"-slhmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got = audit_slhdsa(so_m, m["set"], prefix_for(row, m["set"], m))
+            missed = [f"{st} {p}/{t}" for st in m["fails"]
+                      for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
+                      if not (t and p < t)]
+            if got is not None and not missed:
+                bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
+                print(f"  caught {label}: fails {', '.join(bad)}")
+                continue
+            failures += 1
+            print(f"  MISSED {label}: the audit did not fail "
+                  + (", ".join(missed) if got else "(could not audit it)")
+                  + ". pq-verify cannot see this bug class.")
+    if failures:
+        print(f"\n  {failures} SLH-DSA row(s) or mutant(s) differ. Fix the regression, "
+              f"or, if intended, update tools/vendor_audits.json and AUDITS.md in "
+              f"the same PR and say why.")
+        return 1
+    return 0
+
+
 def check_mceliece(rows, workdir):
     """Classic McEliece (not a FIPS standard): each row's sets as recorded,
     and every mutant failed in the stages it names."""
@@ -1216,6 +1320,35 @@ def fndsa_markdown(rows):
     return "\n".join(lines)
 
 
+def slhdsa_markdown(rows):
+    lines = ["| Library | Commit | Sets | keyGen | keyGen, own RBG | sigGen (internal, pure, "
+             "pre-hash) | sigVer (internal, pure, pre-hash) | Refused (256-byte context, "
+             "unknown pre-hash, failed RBG) | Sizes | Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        def cell(*stages):
+            out = []
+            for stage in stages:
+                p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
+                t = sum(row["results"][ps].get(stage, [0, 0])[1] for ps in row["sets"])
+                out.append(f"{p:,}/{t:,}" if t else "n/a")
+            return ", ".join(out)
+        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
+                for i in (0, 1))
+        na = sum(row["not_applicable"][ps] for ps in row["sets"])
+        muts = row.get("mutants", [])
+        lines.append(" | ".join([
+            f"| {row['library']}",
+            f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
+            f"all {len(row['sets'])}", cell("keyGen"), cell("keyGenRBG"),
+            cell("sigGenInternal", "sigGenPure", "sigGenPreHash"),
+            cell("sigVerInternal", "sigVerPure", "sigVerPreHash"),
+            cell("contextLength", "unknownPreHash", "rbgFailure"), cell("sizes"), f"{na:,}",
+            f"{len(muts)}/{len(muts)}" if muts else "—",
+            f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))
+    return "\n".join(lines)
+
+
 def mceliece_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen (regenerated) | encaps | decaps (crafted) "
              "| padding | Constant time | Mutants caught | Result |",
@@ -1270,11 +1403,12 @@ def main(argv=None):
                     help="print the AUDITS.md table from the pinned rows; no build")
     ap.add_argument("--workdir", help="where to fetch and build (default: a "
                                       "temporary directory, removed afterwards)")
-    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "LMS/XMSS", "FN-DSA", "McEliece",
-                                       "HQC"),
+    ap.add_argument("--only", choices=("ML-KEM", "ML-DSA", "SLH-DSA", "LMS/XMSS", "FN-DSA",
+                                       "McEliece", "HQC"),
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
     rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
+    slhdsa_rows = load_slhdsa_table()
     fndsa_rows = load_fndsa_table()
     mce_rows = load_mceliece_table()
     hqc_rows = load_hqc_table()
@@ -1282,6 +1416,8 @@ def main(argv=None):
         print(markdown(rows))
         print()
         print(dsa_markdown(dsa_rows))
+        print()
+        print(slhdsa_markdown(slhdsa_rows))
         print()
         print(hbs_markdown(hbs_rows))
         print()
@@ -1300,6 +1436,8 @@ def main(argv=None):
         if a.only in (None, "ML-DSA"):
             code = max(code, check_dsa(dsa_rows, work))
             code = max(code, check_ct_dsa(dsa_rows, work))
+        if a.only in (None, "SLH-DSA"):
+            code = max(code, check_slhdsa(slhdsa_rows, work))
         if a.only in (None, "LMS/XMSS"):
             code = max(code, check_hbs(hbs_rows, work))
         if a.only in (None, "FN-DSA"):

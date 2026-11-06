@@ -2075,6 +2075,777 @@
       }
     }
   ],
+  "slhdsa_audits": [
+    {
+      "library": "slhdsa-c",
+      "url": "https://github.com/pq-code-package/slhdsa-c",
+      "commit": "47451432bb04faf8217ffe8a961a75b542bf88e8",
+      "date": "2026-11-04",
+      "note": "PQ Code Package, the SLH-DSA implementation PQClean's retirement notice names; no release yet, and its README advises against production use. One library for all twelve parameter sets; FIPS 205 internal, pure and pre-hash API",
+      "build": "slhdsa-c",
+      "sets": [
+        "SLH-DSA-SHA2-128s",
+        "SLH-DSA-SHAKE-128s",
+        "SLH-DSA-SHA2-128f",
+        "SLH-DSA-SHAKE-128f",
+        "SLH-DSA-SHA2-192s",
+        "SLH-DSA-SHAKE-192s",
+        "SLH-DSA-SHA2-192f",
+        "SLH-DSA-SHAKE-192f",
+        "SLH-DSA-SHA2-256s",
+        "SLH-DSA-SHAKE-256s",
+        "SLH-DSA-SHA2-256f",
+        "SLH-DSA-SHAKE-256f"
+      ],
+      "results": {
+        "SLH-DSA-SHA2-128s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-128s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHA2-128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-128f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHA2-192s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-192s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHA2-192f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-192f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHA2-256s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-256s": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHA2-256f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        },
+        "SLH-DSA-SHAKE-256f": {
+          "keyGen": [
+            10,
+            10
+          ],
+          "keyGenRBG": [
+            10,
+            10
+          ],
+          "sigGenPure": [
+            14,
+            14
+          ],
+          "sigGenPreHash": [
+            24,
+            24
+          ],
+          "sigGenInternal": [
+            14,
+            14
+          ],
+          "sigVerPure": [
+            14,
+            14
+          ],
+          "sigVerPreHash": [
+            14,
+            14
+          ],
+          "sigVerInternal": [
+            14,
+            14
+          ],
+          "contextLength": [
+            7,
+            7
+          ],
+          "unknownPreHash": [
+            8,
+            8
+          ],
+          "rbgFailure": [
+            1,
+            1
+          ],
+          "sizes": [
+            3,
+            3
+          ]
+        }
+      },
+      "not_applicable": {
+        "SLH-DSA-SHA2-128s": 0,
+        "SLH-DSA-SHAKE-128s": 0,
+        "SLH-DSA-SHA2-128f": 0,
+        "SLH-DSA-SHAKE-128f": 0,
+        "SLH-DSA-SHA2-192s": 0,
+        "SLH-DSA-SHAKE-192s": 0,
+        "SLH-DSA-SHA2-192f": 0,
+        "SLH-DSA-SHAKE-192f": 0,
+        "SLH-DSA-SHA2-256s": 0,
+        "SLH-DSA-SHAKE-256s": 0,
+        "SLH-DSA-SHA2-256f": 0,
+        "SLH-DSA-SHAKE-256f": 0
+      },
+      "mutants": [
+        {
+          "name": "verify skips the hypertree root comparison",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "return memcmp(node, var->pk_root, prm->n) == 0;",
+          "replace": "return 1;",
+          "fails": [
+            "sigVerInternal",
+            "sigVerPure",
+            "sigVerPreHash"
+          ]
+        },
+        {
+          "name": "slh_sign_internal ignores addrnd",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  uint8_t digest[SLH_MAX_M];\n  size_t sig_sz;\n\n  /* set up secret key etc */\n  prm->mk_var(&var, NULL, sk, prm);\n\n  if (addrnd != NULL)",
+          "replace": "  uint8_t digest[SLH_MAX_M];\n  size_t sig_sz;\n\n  /* set up secret key etc */\n  prm->mk_var(&var, NULL, sk, prm);\n\n  if (0)",
+          "fails": [
+            "sigGenInternal",
+            "sigGenPreHash"
+          ]
+        },
+        {
+          "name": "pure signing drops the context",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  if (ctx_sz > 255)\n  {\n    return 0;\n  }\n",
+          "replace": "  if (ctx_sz > 255)\n  {\n    return 0;\n  }\n  ctx_sz = 0;\n",
+          "fails": [
+            "sigGenPure"
+          ]
+        },
+        {
+          "name": "pure signing accepts a context over 255 bytes",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  if (ctx_sz > 255)\n  {\n    return 0;\n  }\n",
+          "replace": "",
+          "fails": [
+            "contextLength"
+          ]
+        },
+        {
+          "name": "key generation ignores a failed random draw",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  if (rbg(sk, 3 * n) != 0)\n  {\n    /* Zeroize sk */\n    memset(sk, 0x00, 4 * n);\n    return -1;\n  }",
+          "replace": "  (void)rbg(sk, 3 * n);",
+          "fails": [
+            "rbgFailure"
+          ]
+        },
+        {
+          "name": "HashSLH-DSA writes SHA-384's OID for SHA-256",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_prehash.c",
+          "find": "0x65, 0x03, 0x04, 0x02, 0x01};",
+          "replace": "0x65, 0x03, 0x04, 0x02, 0x02};",
+          "fails": [
+            "sigGenPreHash",
+            "sigVerPreHash"
+          ]
+        },
+        {
+          "name": "seeded key generation builds PK.root on the wrong layer",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  adrs_set_layer_address(&var, prm->d - 1);\n  memcpy(pk, pk_seed, n);",
+          "replace": "  adrs_set_layer_address(&var, prm->d - 2);\n  memcpy(pk, pk_seed, n);",
+          "fails": [
+            "keyGen"
+          ]
+        },
+        {
+          "name": "WOTS+ checksum not shifted",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  csum <<= (8 - ((len2 * prm->lg_w) & 7)) & 7;",
+          "replace": "",
+          "fails": [
+            "sigGenInternal",
+            "sigGenPure",
+            "sigGenPreHash",
+            "sigVerInternal",
+            "sigVerPure",
+            "sigVerPreHash"
+          ]
+        },
+        {
+          "name": "pure verification accepts a context over 255 bytes",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_dsa.c",
+          "find": "  if (ctx_sz > 255)\n  {\n    return 0; /* false */\n  }\n\n",
+          "replace": "",
+          "fails": [
+            "contextLength"
+          ]
+        },
+        {
+          "name": "HashSLH-DSA accepts a context over 255 bytes",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_prehash.c",
+          "find": "  if (ctx_sz > 255)\n  {\n    return 0;\n  }\n\n  mp[0] = 1;",
+          "replace": "  mp[0] = 1;",
+          "fails": [
+            "contextLength"
+          ]
+        },
+        {
+          "name": "HashSLH-DSA verification ignores an unknown hash name",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_prehash.c",
+          "find": "  mp_sz = hash_slh_dsa_pad(mp, m, m_sz, ctx, ctx_sz, ph);\n  if (mp_sz == 0)\n  {\n    return 0; /* false */\n  }\n",
+          "replace": "  mp_sz = hash_slh_dsa_pad(mp, m, m_sz, ctx, ctx_sz, ph);\n",
+          "fails": [
+            "unknownPreHash"
+          ]
+        },
+        {
+          "name": "an unknown hash name formats M' with no OID or digest",
+          "set": "SLH-DSA-SHA2-128f",
+          "file": "slh_prehash.c",
+          "find": "  else\n  {\n    return 0;\n  }\n\n  return mp_sz;\n",
+          "replace": "\n  return mp_sz;\n",
+          "fails": [
+            "unknownPreHash"
+          ]
+        }
+      ]
+    }
+  ],
   "hbs_audits": [
     {
       "library": "cisco/hash-sigs",
