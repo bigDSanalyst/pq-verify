@@ -222,6 +222,7 @@ something, so re-pinning is a deliberate, reviewed act rather than a live depend
 | `pqverify_scan(target)` | Auto-discover + audit NTT functions |
 | `pqverify_audit_kem(path, set)` | A vendor's own ML-KEM keygen/encaps/decaps vs NIST + Wycheproof/CCTV |
 | `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface |
+| `pqverify_audit_slhdsa(path, set)` | A vendor's own SLH-DSA keygen/sign/verify vs NIST, every FIPS 205 interface, + the inputs FIPS 205 refuses |
 | `pqverify_audit_hbs(path)` | A vendor's own LMS/HSS or XMSS library (pqv_hbs adapter) vs every pinned vector + malformed signatures, and its own key-state handling: no leaf issued twice, state durable before release, refusal once exhausted |
 | `pqverify_leakage()` | Per-layer protection-allocation table |
 | `emit_prompt(set)` | Write the ACVP question set for a parameter set (no answers) |

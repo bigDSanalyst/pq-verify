@@ -5,6 +5,37 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`pq-verify --audit-slhdsa PATH SET`: an SLH-DSA library (FIPS 205),
+  through its own entry points** (`--slhdsa-symbol ROLE=SYMBOL`,
+  `--symbol-prefix`; `pqverify_audit_slhdsa` in the Python API).
+  - Every pinned NIST ACVP SLH-DSA vector for the set (ACVP-Server
+    `112690e`). keyGen runs seeded, and again through the library's own
+    random-bit-generator callback: NIST's seeds are served as one stream,
+    and exactly 3n bytes must be drawn, however the requests are split.
+    sigGen and sigVer run over the internal, pure and pre-hash interfaces,
+    each through the library's entry point for it, byte-exact.
+  - The library must refuse a 256-byte context and an unknown pre-hash name,
+    signing and verifying, and fail key generation when its generator
+    fails. Each refused verification is offered a signature that one way of
+    losing the check would accept, after the library has accepted it where
+    it belongs, so a refusal is evidence and not a call that would have
+    failed anyway.
+  - A case the API cannot express is not applicable, never a pass, and an
+    ambiguous entry point is never guessed. JSON
+    (`pq-verify/slhdsa-audit-result`) and SARIF reports are bound to the
+    library's sha256.
+- **slhdsa-c, the SLH-DSA implementation PQClean's retirement notice names,
+  is pinned and re-audited in CI** (`4745143`, 2026-11-04), all twelve
+  parameter sets: 1,596/1,596, and twelve planted bugs caught. One makes
+  pure verification accept a 256-byte context, which slhdsa-c reads as "no
+  context"; only an internal signature shows it.
+- **The GitHub Action's `audit` input takes `slhdsa`**, with `param-set`.
+  The Action installs the latest PyPI release by default, which has no
+  `--audit-slhdsa` until the next release; until then an `slhdsa` audit
+  fails with exit 2 and no report.
+
 ### Changed
 
 - **v2.15.0 has its own Zenodo deposit**,
@@ -74,6 +105,10 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- **AUDITS.md records PQClean's retirement.** PQClean is archived at
+  `0586a82`, the commit its rows are pinned to. For each maintained
+  implementation its notice names, AUDITS.md says whether it is audited
+  here: all but Thomas Pornin's FN-DSA and libmceliece are.
 - **EVIDENCE.md lists runs reproduced outside CI**, each with its commit,
   machine, toolchain and result. The first is the ML-DSA vendor audits,
   liboqs included, rerun on a Google Colab machine (AMD EPYC 7B12,

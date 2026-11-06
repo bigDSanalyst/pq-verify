@@ -38,6 +38,7 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | liboqs 0.16.0, `OQS_*` API | ML-DSA-44/65/87 | full scheme through the public API | **1,068/1,068 VERIFIED** |
 | liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
+| slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,596/1,596 VERIFIED** |
 
 No arithmetic discrepancies were found in the implementations in this table.
 Its one finding is behavioural: PQClean's ML-KEM API accepts keys NIST marks
@@ -211,7 +212,21 @@ defect was found in liboqs):
 
 ## PQClean
 
-PQClean @ `0586a82` (2026-08-04).
+PQClean @ `0586a82` (2026-08-04), its last commit: PQClean is retired and
+archived read-only. Its README's retirement notice points to maintained
+implementations; this file audits all but two of them:
+
+| Named in the notice | Scheme | Audited here |
+|---|---|---|
+| mlkem-native | ML-KEM | [full scheme](#full-scheme-kem-audit-including-invalid-keys) |
+| mldsa-native | ML-DSA | [full scheme](#full-scheme-ml-dsa-audit-with-mutants) |
+| slhdsa-c | SLH-DSA | [full scheme](#slh-dsa-library-audit-with-mutants) |
+| liboqs | ML-KEM, ML-DSA, FN-DSA, Classic McEliece | [per implementation](#liboqs-0160--full-scheme-per-implementation) |
+| the HQC submitters' code | HQC | [code layer](#hqc-decoder-audit--standard-not-final-with-mutants) |
+| Thomas Pornin's FN-DSA | FN-DSA | not yet; PQClean's and liboqs's Falcon are |
+| libmceliece | Classic McEliece | not yet; PQClean's and liboqs's are |
+
+PQClean's own rows stay: they record what its final code does.
 
 ```
 PQCLEAN_MLKEM768_CLEAN_ntt   -> 3/3 VERIFIED   [7-layer incomplete]
@@ -458,6 +473,98 @@ Without the harness, randomised APIs are reported not applicable and the
 seed-taking ones (`keypair_internal`, `signature_internal`) are audited.
 Never link the harness into a production build: it is deterministic by
 design.
+
+---
+
+## SLH-DSA library audit, with mutants
+
+`--audit-slhdsa PATH SET` audits an SLH-DSA library (FIPS 205) through its
+own entry points, with every NIST ACVP SLH-DSA vector for the parameter set
+(ACVP-Server `112690e`: 10 keyGen, 52 sigGen and 42 sigVer cases per set,
+1,248 over the twelve).
+
+Each FIPS 205 interface is a separate stage, and each case goes through the
+library's entry point for it: **internal** (Algorithms 19 and 20), **pure**
+(22 and 24, with a context) and **pre-hash** HashSLH-DSA (23 and 25, over all
+twelve approved hashes). For NIST's cases pq-verify builds no M′, so its
+vectors check the library's own encoding of the domain separator, the context
+length and the hash's OID.
+
+Key generation is checked twice: seeded (NIST's SK.seed, SK.prf and PK.seed
+passed to `slh_keygen_internal`), and randomised, with the same seeds served
+as one stream through the random-bit-generator callback `slh_keygen` takes.
+The randomised key must be NIST's, and exactly 3n bytes must be drawn,
+however the requests are split. FIPS 205 passes its randomness as arguments,
+so no randomness harness or special build is needed.
+
+Beyond NIST's vectors, the library must refuse:
+
+- a 256-byte context (FIPS 205 allows 255), signing and verifying, pure and
+  pre-hash;
+- a hash function it does not know (`MD5`, and the empty name), signing and
+  verifying;
+- to return a key when its random bit generator fails (Algorithm 21).
+
+Its size functions, where it has them, must give FIPS 205's sizes (Table 2).
+
+A refused verification shows nothing if the call would have failed anyway.
+So each one is offered a signature that one way of losing the check would
+accept, after the library has accepted that signature where it belongs:
+
+| Verifying with | A verifier that | Accepts |
+|---|---|---|
+| a 256-byte context | ignores the context | a signature made with an empty context |
+| | keeps the length in one byte (256 → 0) | a pure signature over ctx ‖ M with an empty context; an internal signature over 1 ‖ 0 ‖ ctx ‖ OID ‖ SHA-256(M) |
+| | reads 256 as "no context" | an internal signature over M |
+| an unknown hash name | uses a default hash | a SHA2-256 signature |
+| | formats M′ with no OID or digest | an internal signature over 1 ‖ 0 |
+| | ignores the error | an internal signature over the empty message |
+
+The "no context" row comes from slhdsa-c itself: it marks its internal calls
+with a context length of 256 (`SLH_CTX_SZ_NO_CONTEXT`), so a pure verifier
+without the length check would treat a 256-byte context as none. The mutant
+that removes that check is caught by the internal signature and by nothing
+else.
+
+slhdsa-c is pinned at `4745143` (2026-11-04), the commit that makes
+`slh_keygen` check its random bit generator's return value. It is work in
+progress with no release yet, and its README does not yet recommend it for
+production use or sensitive data.
+
+<!-- vendor-audits-slhdsa:begin -->
+| Library | Commit | Sets | keyGen | keyGen, own RBG | sigGen (internal, pure, pre-hash) | sigVer (internal, pure, pre-hash) | Refused (256-byte context, unknown pre-hash, failed RBG) | Sizes | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| slhdsa-c | [`4745143`](https://github.com/pq-code-package/slhdsa-c/commit/47451432bb04faf8217ffe8a961a75b542bf88e8) (2026-11-04) | all 12 | 120/120 | 120/120 | 168/168, 168/168, 288/288 | 168/168, 168/168, 168/168 | 84/84, 96/96, 12/12 | 36/36 | 0 | 12/12 | 1,596/1,596 **VERIFIED** |
+<!-- vendor-audits-slhdsa:end -->
+
+Every mutant plants one bug in slhdsa-c's source; CI requires the audit to
+fail it in the stages its row names:
+
+- verification that skips the hypertree root comparison (every
+  verification stage), and a WOTS+ checksum left unshifted (every signing
+  and verification stage);
+- signing that ignores `addrnd`, and pure signing that drops the context;
+- HashSLH-DSA writing SHA-384's OID for SHA-256;
+- seeded key generation building PK.root on the wrong layer;
+- pure signing, pure verification and HashSLH-DSA each accepting a context
+  over 255 bytes;
+- HashSLH-DSA verification ignoring an unknown hash name, and an unknown
+  name formatting M′ with no OID or digest;
+- key generation ignoring a failed random draw, as `slh_keygen` did before
+  the pinned commit.
+
+Reproduce every set and mutant: `python3 tools/vendor_audit.py --only SLH-DSA`
+(about 10 minutes). One parameter set by hand:
+
+```bash
+git clone https://github.com/pq-code-package/slhdsa-c.git
+git -C slhdsa-c checkout 47451432bb04faf8217ffe8a961a75b542bf88e8
+gcc -O2 -fPIC -shared -std=c99 -o libslhdsa.so slhdsa-c/*.c
+pq-verify --audit-slhdsa ./libslhdsa.so SLH-DSA-SHA2-128f
+```
+
+A pass says the library computes FIPS 205 exactly on NIST's inputs and
+refuses the inputs above. It is not a side-channel review.
 
 ---
 
