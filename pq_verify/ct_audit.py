@@ -22,8 +22,10 @@ What is not, and why -- each reported as not applicable, never passed:
     MLK_CT_TESTING_DECLASSIFY); a black-box check cannot.
   * Variable-latency instructions. Memcheck tracks branches and addresses,
     not instruction timing, so a secret division (KyberSlash) is invisible to
-    it. The report lists every division instruction in the library, with
-    its function, for a reviewer to look at -- a listing, not a verdict.
+    it. The report lists every function of the library with an integer
+    division in it (an instruction, or a call to the compiler's division
+    routine), for a reviewer to look at -- a listing, not a verdict -- or
+    says why it could not make the list.
   * Power, EM and microarchitectural effects beyond branches and addresses.
     This is a software check on one compiled binary, not a lab measurement.
 
@@ -221,28 +223,94 @@ def _attribute(errors, lib):
     return found
 
 
-def divisions(lib):
-    """{function: count} of division instructions in the library's code
-    (objdump). Not a verdict: memcheck cannot see instruction timing, and a
-    division on public data is harmless. A reviewer's list."""
-    if not shutil.which("objdump"):
+# Integer division, by ELF machine, as objdump prints it. A hardware division
+# takes time that depends on its operands on many cores (KyberSlash).
+DIVISION_INSNS = {
+    3: r"i?div[bwlq]?",                                   # x86
+    62: r"i?div[bwlq]?",                                  # x86-64
+    40: r"[su]div(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)?",  # ARM
+    183: r"[su]div",                                      # AArch64
+    243: r"(?:div|rem)u?w?|v(?:div|rem)u?\.v[vx]",        # RISC-V
+}
+# Where the processor has no division (ARM without one, RISC-V without M,
+# 64-bit division on 32-bit x86), the compiler calls a division routine of its
+# runtime instead: a loop whose time depends on the operands just the same.
+# Listed are the calls objdump names and a routine linked into the library.
+DIVISION_ROUTINE = r"__aeabi_u?[il]div(?:mod)?|__u?(?:div|mod)[sdt]i3|__u?divmod[sdt]i4"
+
+
+def elf_machine(lib):
+    """The ELF machine number of lib, or None when it is not an ELF file."""
+    try:
+        with open(lib, "rb") as f:
+            head = f.read(20)
+    except OSError:
         return None
-    p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
-                       capture_output=True, text=True)
+    if len(head) < 20 or head[:4] != b"\x7fELF" or head[5] not in (1, 2):
+        return None
+    return int.from_bytes(head[18:20], "little" if head[5] == 1 else "big")
+
+
+def divisions_in(disassembly, machine):
+    """{function: count} of the integer divisions in objdump -d output for
+    that ELF machine: division instructions and calls to a division routine."""
+    insn = re.compile(r"\s(?:%s)\s" % DIVISION_INSNS[machine])
+    call = re.compile(r"<(?:%s)(?:@plt)?>" % DIVISION_ROUTINE)
+    routine = re.compile(r"(?:%s)$" % DIVISION_ROUTINE)
     out, fn = {}, "?"
-    for line in p.stdout.splitlines():
+    for line in disassembly.splitlines():
         m = re.match(r"^[0-9a-f]+ <(.+)>:$", line)
         if m:
             fn = m.group(1)
-            continue
-        if re.search(r"\s(i?div[bwlq]?|udiv|sdiv)\s", line):
+            if routine.match(fn):
+                out[fn] = 1
+        elif insn.search(line) or call.search(line):
             out[fn] = out.get(fn, 0) + 1
     return out
 
 
+def division_listing(lib):
+    """({function: count}, None): every function of the library with an
+    integer division in it (objdump). (None, why) when no list could be made,
+    so that an absent list is never read as an empty one. Not a verdict:
+    memcheck cannot see instruction timing, and a division on public data is
+    harmless. A reviewer's list."""
+    machine = elf_machine(lib)
+    if machine is None:
+        return None, "not an ELF file"
+    if machine not in DIVISION_INSNS:
+        return None, (f"pq-verify does not know the division instructions of "
+                      f"this architecture (ELF machine {machine})")
+    if not shutil.which("objdump"):
+        return None, "objdump not found"
+    p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
+                       capture_output=True, text=True)
+    if p.returncode != 0 or "Disassembly of section" not in p.stdout:
+        why = (p.stderr.strip().splitlines() or ["no code"])[-1]
+        return None, f"objdump could not disassemble it: {why}"
+    return divisions_in(p.stdout, machine), None
+
+
+def division_note(ct):
+    """The report's line on a constant-time result's division list."""
+    divs = ct.get("divisions")
+    if divs:
+        return f"integer divisions (not checked for timing): {', '.join(sorted(divs))}"
+    if divs is None:
+        return f"integer divisions: not listed ({ct.get('divisions_not_listed') or 'no list made'})"
+    return "integer divisions: none in the library's code"
+
+
+def division_fields(lib):
+    """The division list's two keys in a constant-time result."""
+    divs, why = division_listing(lib)
+    return {"divisions": divs, "divisions_not_listed": why}
+
+
 def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
     """{'stages': {op: (passed, 1)}, 'leaks': {op: [...]}, 'not_applicable':
-    {...}, 'divisions': {...}, 'selftest': bool} -- or raises Unavailable."""
+    {...}, 'divisions': {...} or None, 'divisions_not_listed': why or None,
+    'selftest': bool} -- or raises Unavailable."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -267,7 +335,7 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
                     "keyGen": "the public matrix seed is derived from the secret seed "
                               "and rejection-sampled; libraries declassify it "
                               "internally, which a black-box check cannot"},
-                "divisions": divisions(lib), "iterations": iterations,
+                **division_fields(lib), "iterations": iterations,
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:
@@ -433,7 +501,8 @@ def run_mceliece(lib, param_set, enc, dec, material, timeout=1800):
     """Classic McEliece Encaps and Decaps under memcheck. `material` is
     [(pk, sk, ct)] made by the library itself. -> {'stages': {op: (p, 1)},
     'leaks': {op: [...]}, 'sampling': {op: [...]}, 'not_applicable': {...},
-    'divisions', 'selftest', 'tool'} -- or raises Unavailable."""
+    'divisions', 'divisions_not_listed', 'selftest', 'tool'} -- or raises
+    Unavailable."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -477,7 +546,7 @@ def run_mceliece(lib, param_set, enc, dec, material, timeout=1800):
                               "submitters declassify those comparisons, which a "
                               "black-box check cannot tell from a leak, and it takes "
                               "minutes per key under memcheck"},
-                "divisions": divisions(lib), "keys": len(material),
+                **division_fields(lib), "keys": len(material),
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:

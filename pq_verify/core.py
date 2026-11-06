@@ -7680,9 +7680,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 for lk in ct_res['leaks'][op][:3]:
                     print(f"        \u2717 {lk['kind']} in {lk['function']} "
                           f"({lk['count']} report(s))")
-            if ct_res.get('divisions'):
-                print(f"        division instructions (not checked for timing): "
-                      f"{', '.join(sorted(ct_res['divisions']))}")
+            print(f"        {_ct.division_note(ct_res)}")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")

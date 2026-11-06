@@ -598,7 +598,10 @@ def check_ct_dsa(rows, workdir):
                       if any(x in y for y in texts)]
             if m.get("silent") and any((r.get("leaks") or {}).values()):
                 wrong.append("memcheck reported it, so the control does not test the policy")
-            wrong += [f"no division instruction listed in {x}" for x in m.get("divisions", [])
+            wrong += [f"no division listed in {x}"
+                      + (f" (not listed: {r['divisions_not_listed']})"
+                         if r.get("divisions_not_listed") else "")
+                      for x in m.get("divisions", [])
                       if not any(x in f for f in (r.get("divisions") or {}))]
             if not wrong:
                 seen = "; ".join(texts[:2]) or "divisions listed in " + ", ".join(

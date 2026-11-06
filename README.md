@@ -235,7 +235,7 @@ that did not verify — including one that could not run.
 ```yaml
 - uses: bigDSanalyst/pq-verify@v2.15.0
   with:
-    audit: dsa                       # kem | dsa | hbs | ntt
+    audit: dsa                       # kem | dsa | slhdsa | fndsa | hbs | ntt
     library: build/libmldsa65.so
     param-set: ML-DSA-65
 ```
@@ -249,13 +249,16 @@ reference chain:
 
 | Input | Default | Purpose |
 |---|---|---|
-| `audit` | — | `kem`, `dsa`, `hbs` (pqv_hbs adapter) or `ntt` |
+| `audit` | — | `kem`, `dsa`, `slhdsa` (v2.16.0 and later), `fndsa` (FIPS 206 draft track), `hbs` (pqv_hbs adapter) or `ntt` |
 | `library` | — | the compiled `.so` to audit |
-| `param-set` | — | with `kem`/`dsa`: e.g. `ML-KEM-768`, `ML-DSA-65` |
+| `param-set` | — | with `kem`, `dsa`, `slhdsa` or `fndsa`: e.g. `ML-KEM-768`, `ML-DSA-65`, `SLH-DSA-SHA2-128f`, `FN-DSA-512` |
 | `symbol` | — | with `ntt`: the exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
 | `acvp` | `true` | run ACVP suites; `live` fetches NIST's current vectors |
+| `slhdsa` | `false` | `siggen` adds SLH-DSA's 624 sigGen vectors to the ACVP suites (about 30 minutes) |
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
+| `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
+| `version` | latest release | the pq-verify to install: a release such as `2.15.0`, or `git:<ref>` to install a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -575,7 +578,7 @@ Clangover class (a compiler-introduced branch on a secret bit) and
 cache-timing table lookups; three such leaks planted in PQClean, each leaving
 every output correct, are caught in CI. It does **not** see instruction
 timing -- KyberSlash's secret division -- so the report lists the library's
-division instructions for a reviewer instead; it cannot check key generation
+integer divisions for a reviewer instead; it cannot check key generation
 (the public matrix seed is derived from the secret seed); and it measures
 nothing physical. The report records exactly that scope, and without the flag
 claims nothing ([the report fields](ARCHITECTURE.md#side-channel-report-fields)).
@@ -693,9 +696,9 @@ pq-verify is open source and free to run yourself. Its maintainer also runs
 audits with it for teams that want the evidence before a certification lab,
 a customer or a deployment sees their code:
 
-- **Library audit**: ML-KEM and ML-DSA libraries through their own entry
-  points, LMS/HSS and XMSS through a small adapter, and SLH-DSA, HSMs and
-  sealed binaries through fresh ACVP questions. Each audit runs the checks
+- **Library audit**: ML-KEM, ML-DSA and SLH-DSA libraries through their own
+  entry points, LMS/HSS and XMSS through a small adapter, and HSMs and sealed
+  binaries through fresh ACVP questions. Each audit runs the checks
   that apply: NIST's ACVP vectors, Wycheproof and CCTV edge cases, malformed
   inputs, key-state handling for LMS and XMSS, and constant time for ML-KEM
   and, in a build with its own annotations compiled in, ML-DSA.
