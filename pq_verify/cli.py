@@ -221,7 +221,8 @@ def build_parser():
                         "leaves, refusal once the key is exhausted")
     p.add_argument("--audit-slhdsa", nargs=2, metavar=("PATH", "PARAM_SET"),
                    help="audit an SLH-DSA (FIPS 205) library in PATH through its own "
-                        "entry points, e.g. --audit-slhdsa libslhdsa.so "
+                        "entry points (slhdsa-c's API, or liboqs's OQS_SIG_slh_dsa_*), "
+                        "e.g. --audit-slhdsa libslhdsa.so "
                         "SLH-DSA-SHA2-128f: every pinned NIST ACVP keyGen, sigGen and "
                         "sigVer vector byte-exact over the internal, pure and pre-hash "
                         "interfaces, key generation through its own random-bit "

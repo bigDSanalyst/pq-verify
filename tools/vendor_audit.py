@@ -7,7 +7,9 @@
                                                 LMS/XMSS, FN-DSA, McEliece, HQC)
 
 ML-KEM rows are re-run with --audit-kem, ML-DSA rows with --audit-dsa, SLH-DSA
-rows with --audit-slhdsa (all twelve parameter sets, one build). ML-DSA
+rows with --audit-slhdsa (all twelve parameter sets, one build: slhdsa-c's
+own, or liboqs with its 156 SLH-DSA algorithms, audited through its OQS API
+with randomness from liboqs's RNG hook). ML-DSA
 libraries are linked with pq-verify's randomness harness
 (pq_verify/harness/pqv_randombytes.c), so their randomised keypair() and
 signature() APIs are audited byte-exactly, not only the seed-taking ones.
@@ -67,9 +69,9 @@ HBS_BUILDS = ("hash-sigs", "xmss-reference")
 HBS_ADAPTERS = REPO / "pq_verify" / "harness" / "hbs"
 SLHDSA_BEGIN, SLHDSA_END = ("<!-- vendor-audits-slhdsa:begin -->",
                             "<!-- vendor-audits-slhdsa:end -->")
-SLHDSA_BUILDS = ("slhdsa-c",)
+SLHDSA_BUILDS = ("slhdsa-c", "liboqs")
 SLHDSA_STAGES = ("keyGen", "keyGenRBG", "sigGenInternal", "sigGenPure", "sigGenPreHash",
-                 "sigVerInternal", "sigVerPure", "sigVerPreHash",
+                 "sigVerInternal", "sigVerPure", "sigVerPreHash", "preHashVerify",
                  "contextLength", "unknownPreHash", "rbgFailure", "sizes")
 FNDSA_BEGIN, FNDSA_END = "<!-- vendor-audits-fndsa:begin -->", "<!-- vendor-audits-fndsa:end -->"
 FNDSA_BUILDS = ("pqclean-falcon", "liboqs")
@@ -119,12 +121,16 @@ _LIBOQS_BUILT = {}
 _LIBOQS_MUTANTS = itertools.count()
 
 
-def build_liboqs(src, out_dir, tag="", algs=LIBOQS_ALGS, generic=False):
+def build_liboqs(src, out_dir, tag="", algs=LIBOQS_ALGS, generic=False, config=None):
     """The pinned tree is built once per configuration and shared by every row
     and set. A mutant (tag) is always rebuilt, to a path of its own: every
     liboqs row mutates the same tree path and numbers its mutants from 0, so a
-    cache keyed on either would hand one row's mutant to another."""
-    config = ("" if algs == LIBOQS_ALGS else "-mce") + ("-generic" if generic else "")
+    cache keyed on either would hand one row's mutant to another. `config`
+    names a configuration with its own algorithm list (default: "-mce" for
+    any list but the default one)."""
+    if config is None:
+        config = "" if algs == LIBOQS_ALGS else "-mce"
+    config += "-generic" if generic else ""
     key = (str(src), config)
     if not tag and key in _LIBOQS_BUILT:
         return _LIBOQS_BUILT[key]
@@ -298,11 +304,22 @@ def load_slhdsa_table(path=TABLE):
         return json.load(fh).get("slhdsa_audits", [])
 
 
-def build_slhdsa(recipe, src, out_dir, tag=""):
+def build_slhdsa(recipe, src, out_dir, tag="", param_set=None):
     """Compile an SLH-DSA library: slhdsa-c is one library for all twelve
     parameter sets, its top-level C files without the test driver. Key
     generation draws through a callback and signing takes addrnd as an
-    argument, so no randomness harness is linked."""
+    argument, so no randomness harness is linked. liboqs: its distribution
+    build with every SLH-DSA algorithm (12 pure, 144 HashSLH-DSA), apart from
+    the other liboqs rows; a mutant's build only the algorithms of its set.
+    liboqs's RNG hook supplies the randomness."""
+    if recipe == "liboqs":
+        sys.path.insert(0, str(REPO))
+        from pq_verify.slhdsa_audit import SETS, oqs_algorithms, oqs_token
+        sets = [param_set] if tag and param_set else list(SETS)
+        algs = ";".join("SIG_" + prefix[len("OQS_SIG_"):-1]
+                        for ps in sets for prefix, _name, _ph in oqs_algorithms(ps))
+        config = "-slh" + (f"-{oqs_token(param_set)}" if tag and param_set else "")
+        return build_liboqs(src, out_dir, tag, algs=algs, config=config)
     if recipe != "slhdsa-c":
         raise ValueError(f"unknown SLH-DSA build recipe {recipe!r}")
     so = Path(out_dir) / f"{recipe}{tag}.so"
@@ -991,7 +1008,8 @@ def check_slhdsa(rows, workdir):
             label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
             try:
                 msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
-                so_m = build_slhdsa(row["build"], msrc, workdir, tag=f"-slhmut{i}")
+                so_m = build_slhdsa(row["build"], msrc, workdir, tag=f"-slhmut{i}",
+                                    param_set=m["set"])
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
@@ -1322,9 +1340,10 @@ def fndsa_markdown(rows):
 
 def slhdsa_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | keyGen, own RBG | sigGen (internal, pure, "
-             "pre-hash) | sigVer (internal, pure, pre-hash) | Refused (256-byte context, "
-             "unknown pre-hash, failed RBG) | Sizes | Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "pre-hash) | sigVer (internal, pure, pre-hash) | Every pre-hash verifies | "
+             "Refused (256-byte context, unknown pre-hash, failed RBG) | Sizes | "
+             "Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(*stages):
             out = []
@@ -1342,7 +1361,7 @@ def slhdsa_markdown(rows):
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             f"all {len(row['sets'])}", cell("keyGen"), cell("keyGenRBG"),
             cell("sigGenInternal", "sigGenPure", "sigGenPreHash"),
-            cell("sigVerInternal", "sigVerPure", "sigVerPreHash"),
+            cell("sigVerInternal", "sigVerPure", "sigVerPreHash"), cell("preHashVerify"),
             cell("contextLength", "unknownPreHash", "rbgFailure"), cell("sizes"), f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t else 'findings'} |"]))

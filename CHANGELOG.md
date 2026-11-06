@@ -16,21 +16,36 @@ versioning](https://semver.org/spec/v2.0.0.html).
     and exactly 3n bytes must be drawn, however the requests are split.
     sigGen and sigVer run over the internal, pure and pre-hash interfaces,
     each through the library's entry point for it, byte-exact.
+  - Each of the twelve pre-hash functions' verifiers must accept a
+    signature the library made with it. NIST's sigVer vectors hold a valid
+    pre-hash signature for only two of the twelve per parameter set, so a
+    verifier hashing wrongly for the other ten passes them all.
   - The library must refuse a 256-byte context and an unknown pre-hash name,
     signing and verifying, and fail key generation when its generator
     fails. Each refused verification is offered a signature that one way of
     losing the check would accept, after the library has accepted it where
     it belongs, so a refusal is evidence and not a call that would have
     failed anyway.
+  - liboqs's SLH-DSA is audited through its public API: the pure algorithm
+    and the twelve HashSLH-DSA algorithms for the set (`OQS_SIG_slh_dsa_*`),
+    with randomness through liboqs's own RNG hook, sizes through
+    `OQS_SIG_new`, and the internal interface through the slhdsa-c functions
+    liboqs exports. The convention is chosen from the library's exports.
   - A case the API cannot express is not applicable, never a pass, and an
     ambiguous entry point is never guessed. JSON
     (`pq-verify/slhdsa-audit-result`) and SARIF reports are bound to the
     library's sha256.
 - **slhdsa-c, the SLH-DSA implementation PQClean's retirement notice names,
   is pinned and re-audited in CI** (`4745143`, 2026-11-04), all twelve
-  parameter sets: 1,596/1,596, and twelve planted bugs caught. One makes
+  parameter sets: 1,740/1,740, and thirteen planted bugs caught. One makes
   pure verification accept a 256-byte context, which slhdsa-c reads as "no
-  context"; only an internal signature shows it.
+  context"; only an internal signature shows it. Another verifies SHA3-512
+  messages with SHA3-384 and passes every NIST vector; only the pre-hash
+  round trip fails it.
+- **liboqs 0.16.0's SLH-DSA is pinned and re-audited in CI**, all twelve
+  parameter sets through its public API: 2,088/2,088, and eight planted bugs
+  caught, seven in liboqs's wrappers and one in its copy of slhdsa-c (which
+  it vendors at `a0fc1ff`, 2025-07-22).
 - **The GitHub Action's `audit` input takes `slhdsa`**, with `param-set`.
   The Action installs the latest PyPI release by default, which has no
   `--audit-slhdsa` until the next release; until then an `slhdsa` audit
