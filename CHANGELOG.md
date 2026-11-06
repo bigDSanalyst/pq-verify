@@ -5,6 +5,22 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.16.0] — 2026-11-06
+
+A feature release: `--audit-slhdsa` audits an SLH-DSA library (FIPS 205)
+through its own entry points. Every pinned NIST ACVP vector runs over the
+internal, pure and pre-hash interfaces, and key generation runs seeded and
+through the library's own random-bit generator. Each refusal is offered a
+signature that one way of losing the check would accept, and each of the
+twelve pre-hash verifiers must accept a signature made with it, which NIST's
+vectors check for only two of the twelve. slhdsa-c, the implementation
+PQClean's retirement notice names, passes 1,740/1,740, and liboqs 0.16.0's
+SLH-DSA, through its public API, 2,088/2,088; both are pinned in CI with 21
+planted bugs, each caught. The Action takes `audit: slhdsa`. The
+constant-time report's division list now covers RISC-V and calls to the
+compiler's division routines, and says when it could not be made. No pinned
+vector, exit code or vendor-library verdict changes.
+
 ### Added
 
 - **`pq-verify --audit-slhdsa PATH SET`: an SLH-DSA library (FIPS 205),
@@ -47,9 +63,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   caught, seven in liboqs's wrappers and one in its copy of slhdsa-c (which
   it vendors at `a0fc1ff`, 2025-07-22).
 - **The GitHub Action's `audit` input takes `slhdsa`**, with `param-set`.
-  The Action installs the latest PyPI release by default, which has no
-  `--audit-slhdsa` until the next release; until then an `slhdsa` audit
-  fails with exit 2 and no report.
+  It needs pq-verify 2.16.0 or later: with `version` set to an older
+  release, an `slhdsa` audit fails with exit 2 and no report.
 
 ### Changed
 
