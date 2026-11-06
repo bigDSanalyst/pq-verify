@@ -56,6 +56,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **CI's macOS job runs on `macos-15`.** GitHub retired the `macos-14` image
+  on 2026-11-02; since then the job was cancelled before any runner took it, so
+  nothing ran on macOS.
 - **AUDITS.md's ML-KEM table mixed one parameter set with three.** Its
   NIST-vector columns showed one set's counts (80 checks), beside edge cases
   and accumulated checks counted over all three, so each result read
