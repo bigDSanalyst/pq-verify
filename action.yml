@@ -24,7 +24,11 @@ inputs:
   library:
     description: >
       Path to the compiled shared object to audit (e.g. build/libmldsa65.so).
-      The audit loads and runs it in a child process.
+      The audit loads and runs it in a child process, with this job's
+      permissions and any secrets in its environment: audit only a build you
+      would already run in this job, and never a pull request's build under
+      pull_request_target. The child is not a sandbox, and a library written
+      to deceive the audit can make it report a pass (LIMITS.md).
     required: false
     default: ''
   param-set:
@@ -69,9 +73,13 @@ inputs:
     default: 'pq-verify.json'
   version:
     description: >
-      Which pq-verify to install. A bare version (e.g. '2.16.0') installs that
-      release from PyPI. Prefix with 'git:' to install a ref from source (e.g.
-      'git:main'). Default is the latest PyPI release.
+      Which pq-verify to install. Empty (the default) installs the release
+      this copy of the Action belongs to, from PyPI, so a workflow pinned to a
+      release of the Action keeps that release's pq-verify. 'latest' installs
+      the newest release on PyPI at every run, so the code that audits your
+      library can change without your workflow changing. A bare version
+      (e.g. '2.16.0') installs that release. Prefix with 'git:' to install a ref from source (e.g.
+      'git:main').
     required: false
     default: ''
 
@@ -119,11 +127,24 @@ runs:
       run: |
         set -euo pipefail
         python -m pip install --quiet --upgrade pip
+        OWN=""
+        if [ -z "$PQV_VERSION" ]; then
+          # The release this copy of the Action belongs to, read from its own
+          # pyproject.toml: a workflow that pins a release of the Action gets
+          # that release's pq-verify, not whatever is newest on PyPI that day.
+          OWN=$(python -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' \
+                "$GITHUB_ACTION_PATH/pyproject.toml")
+          PQV_VERSION="$OWN"
+        fi
         case "$PQV_VERSION" in
-          git:*) python -m pip install --quiet \
-                   "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${PQV_VERSION#git:}" ;;
-          "")    python -m pip install --quiet "pq-verify[full]" ;;
-          *)     python -m pip install --quiet "pq-verify[full]==${PQV_VERSION}" ;;
+          git:*)  python -m pip install --quiet \
+                    "pq-verify[full] @ git+https://github.com/bigDSanalyst/pq-verify.git@${PQV_VERSION#git:}" ;;
+          latest) python -m pip install --quiet "pq-verify[full]" ;;
+          *)      python -m pip install --quiet "pq-verify[full]==${PQV_VERSION}" || {
+                    if [ -n "$OWN" ]; then
+                      echo "::error::pq-verify $OWN, the release this copy of the Action belongs to, could not be installed from PyPI. Set 'version' to 'latest', a released version, or 'git:<ref>'."
+                    fi
+                    exit 1; } ;;
         esac
         pq-verify --version
 

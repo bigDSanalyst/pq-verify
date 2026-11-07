@@ -2,19 +2,23 @@
 pq_verify.isolate — run a vendor audit in a child process.
 
 Every --audit-* path loads the vendor's library and calls into it. Done in
-pq-verify's own process, three things go wrong:
+pq-verify's own process, two things go wrong:
 
   * a crash (SIGSEGV on an edge-case vector, an abort in an assertion) kills
     pq-verify with it, so no report is written and CI sees a bare signal;
-  * a hang never ends, and CI times out with nothing to say why;
-  * the library shares memory with the code that decides its verdict.
+  * a hang never ends, and CI times out with nothing to say why.
 
 Here the audit runs in a fresh interpreter (multiprocessing "spawn": no state
 inherited from the parent beyond what is passed). Its printed output is relayed
-line by line, so progress still streams. The parent keeps the verdict logic;
-the child only computes and sends its result back. A crash or a timeout becomes
-a reported outcome -- with the signal, or the limit that was hit -- rather than
+line by line, so progress still streams. A crash or a timeout becomes a
+reported outcome -- with the signal, or the limit that was hit -- rather than
 a missing report.
+
+This is not a sandbox. The child runs the whole audit, scoring included, in
+the same process as the library, and the parent takes the result the child
+sends back. So a library that corrupts memory, or is built to deceive the
+audit, can change its own verdict, and it runs with the user's privileges.
+SECURITY.md says to audit a binary you do not trust in a container or a VM.
 
 The child also records which shared objects the audit mapped into the process
 (/proc/self/maps, before and after the call), hashed, so the report binds the
