@@ -30,7 +30,7 @@ Layers of an audit:
 | Layer | Question answered | How |
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
-| **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
+| **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 (keyGen and sigVer) + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
 | **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](LIMITS.md#parameter-security)) |
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
@@ -38,7 +38,9 @@ Plus per-layer algebraic protection allocation: which NTT layers are worth
 masking, computed from the transform's structure. That is a design input, not
 a measurement — see [Scope](#scope).
 
-Every result is **reproducible** — deterministic output, SHA-256 fingerprint, re-runnable by your own auditors.
+Every result is **reproducible**: the vectors are pinned by SHA-256, a report
+on a library names that file by its SHA-256, and your own auditors can re-run
+it.
 
 ---
 
@@ -192,11 +194,16 @@ vector was ever driven through it). In SARIF the hash is emitted as the run's
 `artifacts[].hashes.sha-256`, which is where a security platform already looks
 for "this exact file was analysed".
 
-**Isolation and what actually ran.** Each `--audit-*` runs in a child process
-(`--audit-timeout`, default one hour). A library that crashes on a test vector
-or hangs is reported — `CANNOT VERIFY`, with the signal or the limit — instead
-of taking pq-verify and its report down with it, and the code under audit does
-not share memory with the code that decides its verdict. The child records
+**Isolation and what actually ran.** Each `--audit-*` that loads a library
+runs it in a child process (`--audit-timeout`, default one hour). A library
+that crashes on a test vector or hangs is reported — `CANNOT VERIFY`, with the
+signal or the limit — instead of taking pq-verify and its report down with it.
+The child is **not a sandbox**: it scores the results in the same process as
+the library, with your user's privileges, so a library that corrupts memory or
+is built to deceive the audit can change its own verdict. A harness
+(`--audit-harness`) is a process of its own, with your user's privileges too.
+Audit a binary you do not trust in a container or a VM
+([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)). The child records
 every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
 sha256), so the binding covers the vendor library *and* what it pulled in — a
 libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
@@ -258,7 +265,7 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | latest release | the pq-verify to install: a release such as `2.16.0`, or `git:<ref>` to install a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (in releases after v2.16.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI, a version such as `2.16.0` installs that release, and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -309,7 +316,7 @@ SARIF-to-ASFF conversion step.
 
 ---
 
-## Independent audits
+## Implementations pq-verify has audited
 
 pq-verify has been run against the upstream projects below, with negative
 controls that correctly fail. Three have findings, each named in the table:
@@ -328,7 +335,7 @@ output are in [AUDITS.md](AUDITS.md).
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, and every pre-hash function's verifier (NIST's vectors check three of twelve), + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 4 mutants and 6 constant-time controls | 1,542/1,542; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
-| Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness: NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 1,489 / 1,500 / 1,766; ML-DSA 422 / 462 / 484; every mutant caught |
+| Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness (no external μ or 256-byte contexts, which the harness protocol cannot carry): NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 4,755/4,755; ML-DSA 1,368/1,368; every mutant caught |
 | slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
@@ -593,15 +600,21 @@ claims nothing ([the report fields](ARCHITECTURE.md#side-channel-report-fields))
 and signing**, where it needs more: Sign branches on secret-derived values by
 design, at points where FIPS 204 lets a value be public. pq-verify therefore
 judges a build with the library's own declarations of what is public compiled
-in, through a shim that logs each one with its call site. Every memcheck report
-fails; every declassification must be at a known site, in its place in the
-attempt, with the value the public key and signature determine. Six controls
-planted in mldsa-native (a branch on a coefficient's sign, declassifications too
-early or of the wrong value, a secret table read, a hardware division) give
-exactly their specified results in CI. A build without those declarations is
-CANNOT VERIFY. [CONSTANT-TIME.md](CONSTANT-TIME.md) is the specification, with
-its scope: it does not see the values a computation produces, the leak Berzati
-et al. exploited on ML-DSA's signing.
+in, through a shim that logs each one with its call site. memcheck and the log
+each cover what the other cannot see. memcheck still reports a branch or
+address on any value derived from a secret the library has not declared public,
+however plausible its declarations are. A declaration blinds memcheck to what
+it releases, so the log judges each one: it must be at a known site, of its
+length, in its place in the attempt, and equal to the value the public key and
+signature determine wherever they determine it. Where they determine nothing,
+as for a rejection flag, the value cannot be checked against them; its site,
+length and place still are. Six controls planted in mldsa-native (a branch on a
+coefficient's sign, declassifications too early or of the wrong value, a secret
+table read, a hardware division) give exactly their specified results in CI. A
+build without those declarations is CANNOT VERIFY.
+[CONSTANT-TIME.md](CONSTANT-TIME.md) is the specification, with its scope: it
+does not see the values a computation produces, the leak Berzati et al.
+exploited on ML-DSA's signing.
 `--leakage` is not an exception: it is a design input computed from the NTT's
 structure, not an observation of execution.
 

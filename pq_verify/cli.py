@@ -317,9 +317,11 @@ def build_parser():
                         "-- test scaffolding that must never ship")
     p.add_argument("--audit-timeout", metavar="SECONDS", type=int,
                    help="with --audit-*: give up on the library after SECONDS "
-                        "(default 3600; 6 h with --audit-hbs-full; 0 = never). "
-                        "Each audit runs in a child process, so a hang or a crash "
-                        "is reported instead of taking pq-verify down with it")
+                        "(default 3600; 6 h with --audit-hbs-full; 0 = never); with "
+                        "--audit-harness, on any one answer (default 60). Each "
+                        "audit of a library runs in a child process, so a hang or "
+                        "a crash is reported instead of taking pq-verify down with "
+                        "it. The child is not a sandbox (SECURITY.md)")
     p.add_argument("--symbol-prefix", metavar="PREFIX",
                    help="with --audit-kem, --audit-dsa, --audit-slhdsa, --audit-fndsa, "
                         "--audit-mceliece or --audit-hqc: consider only "

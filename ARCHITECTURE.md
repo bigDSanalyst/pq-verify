@@ -277,8 +277,9 @@ accept a signature the library made with each of the twelve.
 
 ## What a result is bound to, in depth
 
-The binding table and the isolation guarantees are in the
-[README](README.md#what-a-result-is-bound-to). The rest:
+The binding table, and what running each audit in a child process does and
+does not protect, are in the [README](README.md#what-a-result-is-bound-to).
+The rest:
 
 The audit assumes the library is not adversarial toward the audit itself: a
 binary built to recognise pq-verify could behave differently under test. That
