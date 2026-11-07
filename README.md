@@ -93,7 +93,8 @@ installs today, the latter reports no finding. dilithium-py 1.4.0 accepts a
 repeated hint index; with it installed, the run reports that, as a known
 defect of 1.4.0.
 
-To audit a compiled library:
+To audit a compiled library (this runs the library's code as your user, so
+audit a binary you do not trust in a container or a VM):
 
 ```bash
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
@@ -257,7 +258,7 @@ reference chain:
 | Input | Default | Purpose |
 |---|---|---|
 | `audit` | — | `kem`, `dsa`, `slhdsa` (v2.16.0 and later), `fndsa` (FIPS 206 draft track), `hbs` (pqv_hbs adapter) or `ntt` |
-| `library` | — | the compiled `.so` to audit |
+| `library` | — | the compiled `.so` to audit. It runs inside the job, with the job's permissions and secrets |
 | `param-set` | — | with `kem`, `dsa`, `slhdsa` or `fndsa`: e.g. `ML-KEM-768`, `ML-DSA-65`, `SLH-DSA-SHA2-128f`, `FN-DSA-512` |
 | `symbol` | — | with `ntt`: the exported NTT symbol (`nm -D lib.so \| grep -i ntt`) |
 | `acvp` | `true` | run ACVP suites; `live` fetches NIST's current vectors |
@@ -265,7 +266,7 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (in releases after v2.16.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI, a version such as `2.16.0` installs that release, and `git:<ref>` installs a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (in releases after v2.16.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.16.0` installs that release; and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -274,7 +275,14 @@ So is every action in this repository's own workflows, and a zizmor job fails
 CI on any workflow finding.
 Pin the Action itself to a full release tag, as the examples above do, or to a
 commit SHA. Do not use `@v1`: it marks the first upload and does not move to
-new releases.
+new releases. Until you move to a release after v2.16.0, also set `version`
+(for example `version: '2.16.0'`): earlier releases of the Action install the
+newest pq-verify otherwise.
+
+The library runs inside the job, with the job's permissions and any secrets in
+its environment, and it can make the audit report a pass it did not earn
+([LIMITS.md](LIMITS.md#what-a-pass-is-about)). Audit only a build the job would
+run anyway, and never a pull request's build under `pull_request_target`.
 
 **Exit status** of the CLI, since 2.10.0: `0` verified, `1` a task found
 problems or could not verify, `2` bad input. Gating is the default;

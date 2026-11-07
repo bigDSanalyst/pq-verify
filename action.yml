@@ -24,7 +24,11 @@ inputs:
   library:
     description: >
       Path to the compiled shared object to audit (e.g. build/libmldsa65.so).
-      The audit loads and runs it in a child process.
+      The audit loads and runs it in a child process, with this job's
+      permissions and any secrets in its environment: audit only a build you
+      would already run in this job, and never a pull request's build under
+      pull_request_target. The child is not a sandbox, and a library written
+      to deceive the audit can make it report a pass (LIMITS.md).
     required: false
     default: ''
   param-set:
@@ -72,8 +76,9 @@ inputs:
       Which pq-verify to install. Empty (the default) installs the release
       this copy of the Action belongs to, from PyPI, so a workflow pinned to a
       release of the Action keeps that release's pq-verify. 'latest' installs
-      the newest release on PyPI. A bare version (e.g. '2.16.0') installs that
-      release. Prefix with 'git:' to install a ref from source (e.g.
+      the newest release on PyPI at every run, so the code that audits your
+      library can change without your workflow changing. A bare version
+      (e.g. '2.16.0') installs that release. Prefix with 'git:' to install a ref from source (e.g.
       'git:main').
     required: false
     default: ''

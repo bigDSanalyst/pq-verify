@@ -89,9 +89,15 @@ versioning](https://semver.org/spec/v2.0.0.html).
   `version` empty it installed the newest release on PyPI, so a workflow
   pinned to `@v2.16.0` ran whichever pq-verify was newest that day. It now
   reads the version from its own `pyproject.toml`, so a workflow pinned to a
-  release of the Action runs that release's pq-verify. `version: latest`
-  keeps the old behaviour. If the Action's own release cannot be installed,
-  the step fails and says how to choose another.
+  release of the Action runs that release's pq-verify. If the Action's own
+  release cannot be installed, the step fails and says how to choose another.
+  - **This starts with the first release after v2.16.0.** v2.16.0's Action,
+    and every earlier one, still installs the newest release. Until you move
+    to a later release, set `version` explicitly, for example
+    `version: '2.16.0'`.
+  - `version: latest` keeps the old behaviour, and its description now says
+    what that costs: the code that audits your library can change at any run
+    without your workflow changing.
 
 ### Fixed
 
@@ -105,6 +111,17 @@ versioning](https://semver.org/spec/v2.0.0.html).
   SECURITY.md's list of the audits that run the vendor's code now names all
   nine, and `--audit-timeout`'s help says that with `--audit-harness` it
   limits each answer (default 60 seconds), not the whole audit.
+  - The same warning now stands where an auditor starts: in the README above
+    the first audit command, and in the Action's `library` input and the
+    README's CI section. In CI the library runs with the job's permissions
+    and secrets, so never audit a pull request's build under
+    `pull_request_target`.
+  - LIMITS.md says what this means for a result: a library written to
+    deceive the audit can make it report a pass, in the JSON and the SARIF
+    alike, and a container does not prevent that, since it protects the
+    machine, not the verdict. What helps: `--audit-harness`, which scores in
+    pq-verify's own process; a build from source you reviewed; or the
+    prompt/response path, which runs none of the vendor's code.
 - **The README's Bouncy Castle row read like failures.** "422 / 462 / 484"
   were three parameter sets' counts, where every other row's "/" means
   passed out of total. The row and AUDITS.md's summary now give the sums,

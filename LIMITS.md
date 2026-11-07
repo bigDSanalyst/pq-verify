@@ -14,6 +14,18 @@ produced it says, and nothing on this page.
   audited. That is the limit of any black-box test. The answers are a build
   you control, and the prompt/response path below
   ([ARCHITECTURE.md](ARCHITECTURE.md#what-a-result-is-bound-to-in-depth)).
+- **Not a library written to deceive the audit.** A library audit
+  (`--audit-kem`, `--audit-dsa` and the rest) computes its verdict in the
+  process that has loaded the library, so a library written to deceive
+  pq-verify can make it report a pass, in the JSON and the SARIF alike.
+  pq-verify does not defend against that, and a container or a VM does not
+  either: it protects your machine, not the verdict. Through
+  `--audit-harness` the scoring runs in pq-verify's own process, apart from
+  the library, which then has to answer the questions; it still runs as your
+  user and can change any file you can, the report included. Where a hostile
+  library is the threat, audit a build you made from source you reviewed, or
+  use the prompt/response path, which runs none of the vendor's code
+  ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
 - **The code path this machine took.** A library that picks its code at run
   time (liboqs's distribution build chooses AVX2 or portable code from the
   CPU's features) is audited on the path the auditing CPU selects. Another
