@@ -3,6 +3,15 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **v2.17.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.24040011](https://doi.org/10.5281/zenodo.24040011).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.16.0's.
+
 ## [2.17.0] — 2026-11-07
 
 A feature release, and a correction. Bouncy Castle's Java provider
