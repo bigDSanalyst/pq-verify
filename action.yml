@@ -78,7 +78,7 @@ inputs:
       release of the Action keeps that release's pq-verify. 'latest' installs
       the newest release on PyPI at every run, so the code that audits your
       library can change without your workflow changing. A bare version
-      (e.g. '2.16.0') installs that release. Prefix with 'git:' to install a ref from source (e.g.
+      (e.g. '2.17.0') installs that release. Prefix with 'git:' to install a ref from source (e.g.
       'git:main').
     required: false
     default: ''
