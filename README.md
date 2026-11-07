@@ -85,11 +85,11 @@ and [CCTV](https://github.com/C2SP/CCTV) vectors (`strcmp` traps, unlucky
 sampling, every out-of-range ek coefficient, malformed ML-DSA hints) are pinned
 to exact commits and run by `--audit-kem` and `--audit-dsa` against a vendor
 library, and by
-`pq-verify --edge-cases` against pq-verify's own references. With
-dilithium-py 1.4.0, the version CI pins, the latter reports one finding: a
-repeated hint index is accepted. dilithium-py 1.5.1, which
-`pip install "pq-verify[full]"` installs today, fixes it, and the run
-reports none.
+`pq-verify --edge-cases` against pq-verify's own references. Against
+dilithium-py 1.5.1, the version CI pins and `pip install "pq-verify[full]"`
+installs today, the latter reports no finding. dilithium-py 1.4.0 accepts a
+repeated hint index; with it installed, the run reports that, as a known
+defect of 1.4.0.
 
 To audit a compiled library:
 

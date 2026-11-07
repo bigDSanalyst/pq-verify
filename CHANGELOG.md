@@ -11,6 +11,18 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.24026070](https://doi.org/10.5281/zenodo.24026070).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.15.0's.
+- **CI's reference dilithium-py is 1.5.1** (`constraints-reference.txt`),
+  the release with the fix for 1.4.0's repeated-hint-index defect. The
+  edge-case run against pq-verify's own references now reports no finding,
+  and `tools/doctor.py` no longer warns. The 1.4.0 entry stays in
+  `KNOWN_REFERENCE_DEFECTS`, which matches its own version only, so a run
+  against 1.4.0 still names the defect. Five tests relied on the installed
+  1.4.0. Four now make dilithium-py accept the three signatures 1.4.0
+  accepted, so how a known reference defect is reported stays tested. The
+  fifth, a Crucible harness audit, expects VERIFIED under 1.5.1, and the
+  reference harness gains a `repeated-hint` fault that decodes hints as
+  1.4.0 did, which the harness audit must catch. A new test holds the pinned
+  version to every ML-DSA edge case.
 
 ## [2.16.0] — 2026-11-07
 
