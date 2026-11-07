@@ -806,6 +806,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-65": {
@@ -856,6 +860,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-87": {
@@ -906,6 +914,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         }
       },
@@ -944,6 +956,16 @@
           "fails": [
             "sigGenPreHash",
             "sigVerPreHash"
+          ]
+        },
+        {
+          "name": "HashML-DSA verification encodes SHA3-512's OID as SHA2-512's",
+          "set": "ML-DSA-65",
+          "file": "mldsa/src/sign.c",
+          "find": "hashalg);\n  if (pre_len == 0)\n  {\n    ret = MLD_ERR_INVALID_ARG;\n    goto cleanup;\n  }\n\n  ret = mld_sign_verify_internal(",
+          "replace": "hashalg == MLD_PREHASH_SHA3_512 ? MLD_PREHASH_SHA2_512 : hashalg);\n  if (pre_len == 0)\n  {\n    ret = MLD_ERR_INVALID_ARG;\n    goto cleanup;\n  }\n\n  ret = mld_sign_verify_internal(",
+          "fails": [
+            "preHashVerify"
           ]
         }
       ],
@@ -1255,9 +1277,9 @@
         }
       },
       "not_applicable": {
-        "ML-DSA-44": 60,
-        "ML-DSA-65": 69,
-        "ML-DSA-87": 69
+        "ML-DSA-44": 72,
+        "ML-DSA-65": 81,
+        "ML-DSA-87": 81
       },
       "mutants": [
         {
@@ -1453,9 +1475,9 @@
         }
       },
       "not_applicable": {
-        "ML-DSA-44": 150,
-        "ML-DSA-65": 159,
-        "ML-DSA-87": 159
+        "ML-DSA-44": 162,
+        "ML-DSA-65": 171,
+        "ML-DSA-87": 171
       },
       "mutants": [
         {
@@ -1597,9 +1619,9 @@
         }
       },
       "not_applicable": {
-        "ML-DSA-44": 150,
-        "ML-DSA-65": 159,
-        "ML-DSA-87": 159
+        "ML-DSA-44": 162,
+        "ML-DSA-65": 171,
+        "ML-DSA-87": 171
       },
       "mutants": [
         {
@@ -1710,6 +1732,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-65": {
@@ -1764,6 +1790,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-87": {
@@ -1818,6 +1848,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         }
       },
@@ -1925,6 +1959,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-65": {
@@ -1979,6 +2017,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         },
         "ML-DSA-87": {
@@ -2033,6 +2075,10 @@
           "accumulated": [
             1,
             1
+          ],
+          "preHashVerify": [
+            12,
+            12
           ]
         }
       },

@@ -221,7 +221,7 @@ something, so re-pinning is a deliberate, reviewed act rather than a live depend
 | `pqverify_load_so(path, sym)` | Load NTT from a compiled .so |
 | `pqverify_scan(target)` | Auto-discover + audit NTT functions |
 | `pqverify_audit_kem(path, set)` | A vendor's own ML-KEM keygen/encaps/decaps vs NIST + Wycheproof/CCTV |
-| `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface |
+| `pqverify_audit_dsa(path, set)` | A vendor's own ML-DSA keygen/sign/verify vs NIST + Wycheproof, every FIPS 204 interface, + every pre-hash function's verifier where the library has its own HashML-DSA API |
 | `pqverify_audit_slhdsa(path, set)` | A vendor's own SLH-DSA keygen/sign/verify vs NIST, every FIPS 205 interface, + every pre-hash function's verifier and the inputs FIPS 205 refuses; slhdsa-c's API or liboqs's |
 | `pqverify_audit_hbs(path)` | A vendor's own LMS/HSS or XMSS library (pqv_hbs adapter) vs every pinned vector + malformed signatures, and its own key-state handling: no leaf issued twice, state durable before release, refusal once exhausted |
 | `pqverify_leakage()` | Per-layer protection-allocation table |
@@ -267,7 +267,11 @@ supplies NIST's seeds, and pq-verify hands the hook back when it is done. Each p
 library also carries **mutants**, one planted bug each, which CI requires the
 audit to fail. Two of them, a verifier that accepts a repeated hint index and
 one that skips the ‖z‖ bound, pass every NIST vector; only the Wycheproof
-stage catches them.
+stage catches them. A third, a HashML-DSA verifier that encodes SHA3-512's
+OID wrongly, passes both sets of vectors: NIST's hold a valid pre-hash
+signature for only three of the twelve hash functions per set. Only the
+pre-hash round trip catches it, in which the library's own verifier must
+accept a signature the library made with each of the twelve.
 
 ---
 

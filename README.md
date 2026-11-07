@@ -320,12 +320,12 @@ output are in [AUDITS.md](AUDITS.md).
 
 | Implementation | What was audited | Result |
 |---|---|---|
-| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,512/1,512 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
+| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,548/1,548 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 240/240; edge cases 4,320/4,320 |
 | PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 30 of NIST's invalid keys (15 encapsulation, 15 decapsulation) and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
-| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 3 mutants and 6 constant-time controls | 1,506/1,506; constant time 6/6; every mutant and control as specified |
+| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, and every pre-hash function's verifier (NIST's vectors check three of twelve), + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 4 mutants and 6 constant-time controls | 1,542/1,542; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
 | slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
