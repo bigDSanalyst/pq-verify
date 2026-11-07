@@ -1,4 +1,4 @@
-# pq-verify v2.16.0 — PQC Implementation Verification
+# pq-verify v2.17.0 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -241,7 +241,7 @@ appear as annotations on the pull request, and the build fails on any result
 that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.16.0
+- uses: bigDSanalyst/pq-verify@v2.17.0
   with:
     audit: dsa                       # kem | dsa | slhdsa | fndsa | hbs | ntt
     library: build/libmldsa65.so
@@ -252,7 +252,7 @@ With no library at all, it runs the NIST ACVP suites against pq-verify's own
 reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.16.0
+- uses: bigDSanalyst/pq-verify@v2.17.0
 ```
 
 | Input | Default | Purpose |
@@ -266,7 +266,7 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (in releases after v2.16.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.16.0` installs that release; and `git:<ref>` installs a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.0` installs that release; and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -275,9 +275,9 @@ So is every action in this repository's own workflows, and a zizmor job fails
 CI on any workflow finding.
 Pin the Action itself to a full release tag, as the examples above do, or to a
 commit SHA. Do not use `@v1`: it marks the first upload and does not move to
-new releases. Until you move to a release after v2.16.0, also set `version`
-(for example `version: '2.16.0'`): earlier releases of the Action install the
-newest pq-verify otherwise.
+new releases. On v2.16.0 or earlier, also set `version` (for example
+`version: '2.16.0'`): those releases of the Action install the newest
+pq-verify otherwise.
 
 The library runs inside the job, with the job's permissions and any secrets in
 its environment, and it can make the audit report a pass it did not earn
@@ -637,7 +637,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.16.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.17.0-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose

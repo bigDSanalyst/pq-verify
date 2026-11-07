@@ -3,7 +3,21 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.17.0] — 2026-11-07
+
+A feature release, and a correction. Bouncy Castle's Java provider
+(`bcprov-jdk18on` 1.86) is audited for ML-KEM and ML-DSA through a
+Crucible-protocol harness that pq-verify now ships, and is pinned in CI with
+five planted bugs, each caught: ML-KEM 4,755/4,755 and ML-DSA 1,368/1,368.
+`--audit-dsa` and harness audits check every one of the twelve HashML-DSA
+verifiers, where NIST's sigVer vectors hold a valid signature for only three
+per parameter set; a verifier that encodes SHA3-512's OID as SHA2-512's passes every NIST and
+Wycheproof vector and fails only this check. The GitHub Action now installs
+the pq-verify of its own release. The correction: the documentation said an
+audited library is kept out of the memory where its verdict is decided. It
+never was, and the README, SECURITY.md and LIMITS.md now say what the child
+process does and does not protect (Fixed, below). No pinned vector, exit
+code or vendor-library verdict changes.
 
 ### Added
 
@@ -91,10 +105,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
   reads the version from its own `pyproject.toml`, so a workflow pinned to a
   release of the Action runs that release's pq-verify. If the Action's own
   release cannot be installed, the step fails and says how to choose another.
-  - **This starts with the first release after v2.16.0.** v2.16.0's Action,
-    and every earlier one, still installs the newest release. Until you move
-    to a later release, set `version` explicitly, for example
-    `version: '2.16.0'`.
+  - **This starts with 2.17.0.** v2.16.0's Action, and every earlier one,
+    still installs the newest release; on those, set `version` explicitly,
+    for example `version: '2.16.0'`.
   - `version: latest` keeps the old behaviour, and its description now says
     what that costs: the code that audits your library can change at any run
     without your workflow changing.
