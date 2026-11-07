@@ -85,6 +85,66 @@ versioning](https://semver.org/spec/v2.0.0.html).
   reference harness gains a `repeated-hint` fault that decodes hints as
   1.4.0 did, which the harness audit must catch. A new test holds the pinned
   version to every ML-DSA edge case.
+- **The GitHub Action installs the pq-verify of its own release.** With
+  `version` empty it installed the newest release on PyPI, so a workflow
+  pinned to `@v2.16.0` ran whichever pq-verify was newest that day. It now
+  reads the version from its own `pyproject.toml`, so a workflow pinned to a
+  release of the Action runs that release's pq-verify. If the Action's own
+  release cannot be installed, the step fails and says how to choose another.
+  - **This starts with the first release after v2.16.0.** v2.16.0's Action,
+    and every earlier one, still installs the newest release. Until you move
+    to a later release, set `version` explicitly, for example
+    `version: '2.16.0'`.
+  - `version: latest` keeps the old behaviour, and its description now says
+    what that costs: the code that audits your library can change at any run
+    without your workflow changing.
+
+### Fixed
+
+- **The README, SECURITY.md and `pq_verify/isolate.py` said an audited
+  library is kept out of the memory where its verdict is decided.** It never
+  was. The child process runs the whole audit beside the library, scoring
+  included, and the parent takes the verdict the child sends back. The child
+  contains crashes and hangs, nothing more: a library that corrupts memory,
+  or is built to deceive the audit, can change its own verdict. All three now
+  say so, and that a binary you do not trust belongs in a container or a VM.
+  SECURITY.md's list of the audits that run the vendor's code now names all
+  nine, and `--audit-timeout`'s help says that with `--audit-harness` it
+  limits each answer (default 60 seconds), not the whole audit.
+  - The same warning now stands where an auditor starts: in the README above
+    the first audit command, and in the Action's `library` input and the
+    README's CI section. In CI the library runs with the job's permissions
+    and secrets, so never audit a pull request's build under
+    `pull_request_target`.
+  - LIMITS.md says what this means for a result: a library written to
+    deceive the audit can make it report a pass, in the JSON and the SARIF
+    alike, and a container does not prevent that, since it protects the
+    machine, not the verdict. What helps: `--audit-harness`, which scores in
+    pq-verify's own process; a build from source you reviewed; or the
+    prompt/response path, which runs none of the vendor's code.
+- **The README's Bouncy Castle row read like failures.** "422 / 462 / 484"
+  were three parameter sets' counts, where every other row's "/" means
+  passed out of total. The row and AUDITS.md's summary now give the sums,
+  4,755/4,755 for ML-KEM and 1,368/1,368 for ML-DSA. They also name what the
+  harness protocol cannot carry: external μ and 256-byte contexts.
+- **The README promised "deterministic output".** A report carries the time
+  it was written, so no two are identical. The line now says what is pinned:
+  the vectors, by SHA-256, and the audited library, which a report names by
+  its SHA-256.
+- **The README said every ML-DSA declassification's value is checked.** It
+  is checked wherever the public key and signature determine it. Where they
+  determine nothing, as for a rejection flag, it cannot be; the site, the
+  length and the place in the attempt still are, as CONSTANT-TIME.md says.
+  The paragraph now says so, and why memcheck and the declassification log
+  need each other.
+
+### Documentation
+
+- **"Independent audits" is now "Implementations pq-verify has audited"**,
+  as the README's section and AUDITS.md's title. The old title could be read
+  as audits of pq-verify by third parties.
+- **The README's "What you get" table** says the default run's 624 SLH-DSA
+  vectors are keyGen and sigVer.
 
 ## [2.16.0] — 2026-11-07
 

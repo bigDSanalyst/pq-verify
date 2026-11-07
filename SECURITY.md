@@ -22,20 +22,24 @@ report and have not had a reply — no details.
 ## What pq-verify does on purpose
 
 **Auditing an untrusted library executes it.** `--audit-so`, `--audit-kem`,
-`--audit-dsa` and `--audit-hbs` call `dlopen` on the path you give them, and
+`--audit-dsa`, `--audit-slhdsa`, `--audit-fndsa`, `--audit-mceliece`,
+`--audit-hqc` and `--audit-hbs` call `dlopen` on the path you give them, and
 loading a shared object runs its initialisers before pq-verify calls anything.
-That is not a flaw — driving the vendor's own code with NIST's vectors is the
-entire point — but it means:
+`--audit-harness` runs the command you give it. That is not a flaw — driving
+the vendor's own code with NIST's vectors is the entire point — but it means:
 
 > **Treat every `--audit-*` as running the vendor's code, because that is what
 > it does.** Audit unfamiliar binaries inside a container, a VM, or a throwaway
 > user account, not on a build host with credentials on it.
 
-Since 2.10.0 each audit runs in a separate child process with a timeout. That
-contains crashes and hangs and keeps the library out of the memory where its
-verdict is decided. It is **not a sandbox**: the child has your user's
-privileges, your filesystem and your network. Isolation from a hostile binary
-is the container's job.
+Since 2.10.0 each audit of a library runs in a separate child process with a
+timeout. That contains crashes and hangs, so the report is still written. It
+does not keep the library away from its verdict: the child scores the results
+in the same process as the library, and the parent takes the verdict the child
+sends back. So a library that corrupts memory, or is built to deceive the
+audit, can change its own verdict. The child is **not a sandbox** either: it
+has your user's privileges, your filesystem and your network. Isolation from a
+hostile binary is the container's job.
 
 **Audit builds must never ship.** The randomness harness
 (`pq_verify/harness/pqv_randombytes.c`) replaces `randombytes()` with a queue

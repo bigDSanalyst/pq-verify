@@ -1,4 +1,4 @@
-# Independent audits
+# Implementations pq-verify has audited
 
 Results of pointing pq-verify at post-quantum implementations it did not write.
 
@@ -40,8 +40,8 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
 | slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,740/1,740 VERIFIED** |
 | liboqs 0.16.0, `OQS_SIG_slh_dsa_*` | SLH-DSA, all 12 sets | full scheme through the public API + refusals | **2,088/2,088 VERIFIED** |
-| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases | **1,489 / 1,500 / 1,766 VERIFIED** |
-| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-DSA-44/65/87 | full scheme + every pre-hash verifier | **422 / 462 / 484 VERIFIED** |
+| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases | **4,755/4,755 VERIFIED** |
+| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-DSA-44/65/87 | full scheme (no external μ or 256-byte contexts) + every pre-hash verifier | **1,368/1,368 VERIFIED** |
 
 No arithmetic discrepancies were found in the implementations in this table.
 Its one finding is behavioural: PQClean's ML-KEM API accepts keys NIST marks
