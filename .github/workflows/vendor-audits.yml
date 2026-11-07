@@ -16,6 +16,11 @@ name: Vendor audits (pinned)
 # Classic McEliece and SLH-DSA have liboqs builds of their own, so their sets
 # do not slow the other rows.
 #
+# The harness job re-audits through Crucible's Go harnesses at their pinned
+# commit, and through pq-verify's own Bouncy Castle harness against the
+# bcprov jar pinned by sha256 (fetched from Maven Central), with that row's
+# mutants rebuilt from the pinned sources jar.
+#
 # The source jobs prove PQClean's ML-KEM and ML-DSA arithmetic with
 # --audit-source (CBMC and exhaustive checks, tools/source_audit.py) at the
 # same pinned commit, one job per scheme, and require each of its mutants to
@@ -103,8 +108,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints-reference.txt .
-      - name: Rebuild Crucible's harnesses at the pinned commit and re-audit through them
-        run: python tools/harness_audit.py
+      - name: Rebuild the pinned harnesses and re-audit through them
+        # The Java harness runs on the runner image's JDK 21.
+        run: |
+          test -x "$JAVA_HOME_21_X64/bin/java" || { echo "no JDK 21 on this runner image"; exit 1; }
+          JAVA="$JAVA_HOME_21_X64/bin/java" python tools/harness_audit.py
 
   source:
     name: source audit (CBMC, pinned PQClean, ${{ matrix.scheme }} ${{ matrix.sets }})

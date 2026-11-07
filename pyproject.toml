@@ -64,7 +64,8 @@ include-package-data = true
 pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md", "coq/*.v", "harness/*.c",
              "harness/hbs/*.c", "harness/hbs/*.h", "harness/ct/*.c", "harness/ct/*.h",
              "harness/ct/valgrind/*.h", "harness/source/*.c", "harness/source/*.h",
-             "harness/source/mldsa/*.c", "harness/source/mldsa/*.h"]
+             "harness/source/mldsa/*.c", "harness/source/mldsa/*.h",
+             "harness/bouncycastle/*.java"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

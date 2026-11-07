@@ -6390,6 +6390,10 @@ def test_harness_on_the_external_convention_is_detected_from_nist():
     assert "sigGenInternal" not in r["detail"] and r["not_applicable"]["sigGenInternal"][0] == 30
     assert r["detail"]["sigGenPure"][1] < 30             # empty-context cases only
     assert any("empty context" in n for n in r["harness_notes"])
+    # no HashML-DSA message can be sent, so no pre-hash round trip either
+    assert "preHashVerify" not in r["detail"]
+    assert r["not_applicable"]["preHashVerify"][0] == 12
+    assert "empty context" in r["not_applicable"]["preHashVerify"][1]
 
 
 def test_harness_audit_catches_a_verifier_that_accepts_a_repeated_hint_index():
@@ -6402,6 +6406,28 @@ def test_harness_audit_catches_a_verifier_that_accepts_a_repeated_hint_index():
     assert _failing(r) == {"edge:sigVerify"}
     p, t = r["detail"]["edge:sigVerify"]
     assert t - p == 1
+
+
+def test_harness_audit_round_trips_every_pre_hash_function():
+    """NIST's sigVer vectors hold a valid pre-hash signature for three of the
+    twelve hash functions per set; through a harness, as through a library,
+    each of the twelve is signed and must verify."""
+    r = _harness_audit("", "ML-DSA-44", edge=False)
+    assert r["status"] == "VERIFIED", r["failures"][:3]
+    assert r["detail"]["preHashVerify"] == (12, 12)
+    assert "preHashVerify" not in r["not_applicable"]
+
+
+def test_harness_audit_catches_a_pre_hash_verifier_nists_vectors_pass():
+    """Verification reads SHA3-512's OID as SHA2-512's; signing is right.
+    NIST's ML-DSA-44 sigVer vectors hold no valid SHA3-512 signature, so
+    they all pass; the SHA3-512 round trip does not."""
+    r = _harness_audit("prehash-oid", "ML-DSA-44", edge=False)
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _failing(r) == {"preHashVerify"}
+    assert r["detail"]["preHashVerify"] == (11, 12)
+    assert r["detail"]["sigVerPreHash"] == (15, 15)
+    assert [f["case"] for f in r["failures"]] == ["pre-hash round trip with SHA3-512"]
 
 
 def test_harness_that_reads_sigma_is_driven_correctly():
@@ -6456,26 +6482,88 @@ def test_harness_binding_skips_only_real_interpreters(tmp_path):
     assert harness_executable([sys.executable, str(script)]) == str(script)
 
 
-def test_harness_rows_are_pinned_and_published():
-    import importlib.util, re
+def _harness_tool():
+    import importlib.util
     root = pathlib.Path(__file__).resolve().parent.parent
     spec = importlib.util.spec_from_file_location("harness_audit_tool",
                                                   root / "tools" / "harness_audit.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod, root
+
+
+def test_harness_rows_are_pinned_and_published():
+    import re
+    mod, root = _harness_tool()
     table = mod.load()
     assert re.fullmatch(r"[0-9a-f]{40}", table["crucible"]["commit"])
     for row in table["harnesses"]:
+        assert mod.kind(row) in ("go", "java"), row["name"]
+        assert row["results"], row["name"]
         for ps, r in row["results"].items():
             p = sum(v[0] for v in r["stages"].values())
             t = sum(v[1] for v in r["stages"].values())
             assert (r["status"] == "VERIFIED") == (p == t and t > 0), (row["name"], ps)
+        if mod.kind(row) == "java":
+            assert (root / row["harness"]).is_file(), row["harness"]
+            for f in ("jar", "sources"):
+                assert row[f]["url"].startswith("https://"), (row["name"], f)
+                assert re.fullmatch(r"[0-9a-f]{64}", row[f]["sha256"]), (row["name"], f)
+            assert re.fullmatch(r"[0-9A-F]{40}", row["signed_by"])
+        for m in row.get("mutants", []):
+            assert mod.kind(row) == "java", "mutants rebuild a class from a sources jar"
+            assert m["find"] != m["replace"] and m["fails"], m["name"]
+            # a mutant must fail stages the row records for its set
+            assert set(m["fails"]) <= set(row["results"][m["set"]]["stages"]), m["name"]
     text = (root / "AUDITS.md").read_text()
     published = text.split(mod.BEGIN, 1)[1].split(mod.END, 1)[0].strip()
     assert published == mod.markdown(table).strip(), (
         "AUDITS.md is out of date: paste `python3 tools/harness_audit.py --markdown` "
         "between the harness-audits markers")
 
+
+
+def test_harness_tool_checks_every_pinned_download(tmp_path):
+    """A jar is used only if it has its pinned sha256, also when it was
+    fetched by an earlier run."""
+    import hashlib
+    mod, _ = _harness_tool()
+    src = tmp_path / "lib.jar"
+    src.write_bytes(b"pinned bytes")
+    spec = {"url": src.as_uri(), "sha256": hashlib.sha256(b"pinned bytes").hexdigest()}
+    work = tmp_path / "work"
+    got = mod.pinned(spec, work)
+    assert got.read_bytes() == b"pinned bytes"
+    got.write_bytes(b"tampered")                      # the cached copy changed
+    with pytest.raises(RuntimeError, match="sha256"):
+        mod.pinned(spec, work)
+    with pytest.raises(RuntimeError, match="pinned"):
+        mod.pinned(dict(spec, sha256="0" * 64), tmp_path / "other")
+
+
+def test_harness_tool_rebuilds_a_signed_jar_without_its_signatures(tmp_path):
+    """A signed jar refuses a class it did not sign, so a mutant jar drops the
+    signature files and puts the rebuilt class in place of the original and
+    of any versioned copy of it; every other entry is kept as it was."""
+    import zipfile
+    mod, _ = _harness_tool()
+    jar = tmp_path / "lib.jar"
+    with zipfile.ZipFile(jar, "w") as z:
+        z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nMulti-Release: true\n")
+        z.writestr("META-INF/BCRSA.SF", "signature")
+        z.writestr("META-INF/BCRSA.RSA", "block")
+        z.writestr("org/x/A.class", "original A")
+        z.writestr("META-INF/versions/9/org/x/A.class", "original A, Java 9")
+        z.writestr("org/x/B.class", "original B")
+    classes = tmp_path / "classes" / "org" / "x"
+    classes.mkdir(parents=True)
+    (classes / "A.class").write_bytes(b"rebuilt A")
+    out = mod.mutant_jar(jar, tmp_path / "classes", tmp_path / "mutant.jar")
+    with zipfile.ZipFile(out) as z:
+        names = set(z.namelist())
+        assert names == {"META-INF/MANIFEST.MF", "org/x/A.class", "org/x/B.class"}
+        assert z.read("org/x/A.class") == b"rebuilt A"
+        assert z.read("org/x/B.class") == b"original B"
 
 
 # ----------------------------------------------------------------------
