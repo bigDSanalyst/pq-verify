@@ -3760,18 +3760,44 @@ def test_reference_kyber_passes_every_edge_case():
         assert all(p == t for p, t in r["sets"][ps]["stages"].values()), ps
 
 
-def test_dilithium_hint_defect_is_reported_not_hidden():
+def _dilithium_140_sigs(param_sets=("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")):
+    """The pinned Wycheproof signatures dilithium-py 1.4.0 wrongly accepts: a
+    repeated hint index (KNOWN_REFERENCE_DEFECTS), one per parameter set."""
+    from pq_verify import edge as EG
+    entry = EG.KNOWN_REFERENCE_DEFECTS[("dilithium-py", "1.4.0")]
+    sigs = set()
+    for ps in param_sets:
+        found = [args[2] for _stage, cid, _flags, kind, args, _want in EG.dsa_cases(ps)
+                 if kind == "verify" and entry["cases"][ps] in cid + " "]
+        assert len(found) == 1, (ps, len(found))
+        sigs.update(found)
+    return sigs
+
+
+def _dilithium_140(monkeypatch):
+    """Make the installed dilithium-py accept the signatures 1.4.0 accepted
+    and report itself as 1.4.0. CI pins 1.5.1, which has the fix, and how a
+    known reference defect is reported must stay tested without 1.4.0."""
+    pytest.importorskip("dilithium_py")
+    from pq_verify import edge as EG
+    lenient = _dilithium_140_sigs()
+    verify, version = EG.ReferenceDSA.verify, EG._reference_version
+    monkeypatch.setattr(EG.ReferenceDSA, "verify", lambda self, pk, msg, sig, ctx:
+                        sig in lenient or verify(self, pk, msg, sig, ctx))
+    monkeypatch.setattr(EG, "_reference_version", lambda name:
+                        "1.4.0" if name == "dilithium-py" else version(name))
+    monkeypatch.setattr(EG, "_REFERENCE_RUN", [])
+    return EG
+
+
+def test_dilithium_hint_defect_is_reported_not_hidden(monkeypatch):
     """dilithium-py 1.4.0 accepts a repeated hint index (FIPS 204 Alg. 21
     requires strictly increasing). The run must say FINDINGS PRESENT and name
-    the known defect; nothing else may fail."""
-    pytest.importorskip("dilithium_py")
-    from importlib import metadata
-    from pq_verify.edge import reference_run
-    r = reference_run()
+    the known defect; nothing else may fail. 1.4.0's acceptance of those
+    three signatures is reproduced on whatever version is installed."""
+    r = _dilithium_140(monkeypatch).reference_run()
     fails = [(ps, f) for ps in ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87")
              for f in r["sets"][ps]["failures"]]
-    if metadata.version("dilithium-py") != "1.4.0":
-        pytest.skip("the known defect is pinned to dilithium-py 1.4.0")
     assert r["status"] == "FINDINGS PRESENT"
     assert len(fails) == 3
     for ps, f in fails:
@@ -3779,13 +3805,31 @@ def test_dilithium_hint_defect_is_reported_not_hidden():
         assert "HintBitUnpack" in f["known_defect"]
 
 
-def test_edge_cases_cli_gates_and_rejects_bad_sets():
+def test_the_pinned_dilithium_py_passes_every_edge_case():
+    """CI pins dilithium-py 1.5.1, which refuses a repeated hint index: every
+    ML-DSA edge case passes against it, and tools/doctor.py does not warn."""
+    pytest.importorskip("dilithium_py")
+    import pathlib, re
+    from importlib import metadata
+    root = pathlib.Path(__file__).resolve().parent.parent
+    pin = re.search(r"^dilithium-py==(\S+)$",
+                    (root / "constraints-reference.txt").read_text(), re.M).group(1)
+    if metadata.version("dilithium-py") != pin:
+        pytest.skip(f"dilithium-py {metadata.version('dilithium-py')} is installed; CI pins {pin}")
+    from pq_verify.edge import reference_run
+    r = reference_run()
+    for ps in ("ML-DSA-44", "ML-DSA-65", "ML-DSA-87"):
+        assert r["sets"][ps]["failures"] == [], ps
+        assert all(p == t for p, t in r["sets"][ps]["stages"].values()), ps
+    mod, _ = _doctor()
+    c = mod.check_reference_edges()
+    assert c.status == mod.OK, (c.headline, c.detail)
+
+
+def test_edge_cases_cli_gates_and_rejects_bad_sets(monkeypatch):
     code, out = _cli("--edge-cases", "ML-KEM-9")
     assert code == 2 and "unknown parameter set" in out
-    pytest.importorskip("dilithium_py")
-    from importlib import metadata
-    if metadata.version("dilithium-py") != "1.4.0":
-        pytest.skip("depends on the pinned dilithium-py defect")
+    _dilithium_140(monkeypatch)
     code, out = _cli("--edge-cases", "ML-DSA-44", "--fail-on-finding")
     assert code == 1
     assert "known dilithium-py 1.4.0 defect" in out
@@ -3827,11 +3871,7 @@ def test_doctor_blocks_on_a_tampered_edge_bundle(tmp_path):
 
 
 def test_doctor_separates_known_and_new_reference_defects(monkeypatch):
-    pytest.importorskip("dilithium_py")
-    from importlib import metadata
-    if metadata.version("dilithium-py") != "1.4.0":
-        pytest.skip("depends on the pinned dilithium-py defect")
-    from pq_verify import edge as EG
+    EG = _dilithium_140(monkeypatch)
     mod, _ = _doctor()
     c = mod.check_reference_edges()
     assert c.status == "WARN" and "only known reference defects" in c.headline
@@ -4329,12 +4369,13 @@ def test_dsa_audit_catches_extra_randomness(tmp_path):
 def test_dsa_audit_sees_the_reference_hint_defect_through_c(tmp_path):
     """dilithium-py 1.4.0 accepts a repeated hint index (KNOWN_REFERENCE_DEFECTS).
     Behind the C ABI it is exactly the bug class Wycheproof's verify vectors
-    exist for, and the edge stage must report it."""
-    from pq_verify import edge as EG
-    if (("dilithium-py", EG._reference_version("dilithium-py"))
-            not in EG.KNOWN_REFERENCE_DEFECTS):
-        pytest.skip("installed dilithium-py does not carry the hint defect")
-    path, keep = _dsa_shim(tmp_path)
+    exist for, and the edge stage must report it. The verifier accepts the
+    signature 1.4.0 accepted, whatever version is installed."""
+    pytest.importorskip("dilithium_py")
+    from dilithium_py.ml_dsa import ML_DSA_65 as D
+    lenient = _dilithium_140_sigs(("ML-DSA-65",))
+    path, keep = _dsa_shim(tmp_path, verify=lambda pk, m, sig:
+                           sig in lenient or D._verify_internal(pk, m, sig))
     r = _audit_shim(path)
     p, t = r["detail"]["edge:sigVerify"]
     assert t - p == 1
@@ -6266,13 +6307,29 @@ def test_harness_on_the_external_convention_is_detected_from_nist():
     """Crucible's CIRCL and liboqs harnesses sign M with an empty context,
     not the protocol's M'. pq-verify settles which against a NIST signature
     and routes only what that convention can carry."""
+    from pq_verify import edge as EG
     r = _harness_audit("external", "ML-DSA-44")
     assert r["deterministic"]["message"] == "M, empty context"
-    assert r["status"] == "FINDINGS PRESENT"          # dilithium-py's known hint defect
-    assert _failing(r) == {"edge:sigVerify"}
+    if ("dilithium-py", EG._reference_version("dilithium-py")) in EG.KNOWN_REFERENCE_DEFECTS:
+        # the harness verifies with the installed dilithium-py: 1.4.0's hint defect
+        assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"edge:sigVerify"}
+    else:
+        assert r["status"] == "VERIFIED", r["failures"][:3]
     assert "sigGenInternal" not in r["detail"] and r["not_applicable"]["sigGenInternal"][0] == 30
     assert r["detail"]["sigGenPure"][1] < 30             # empty-context cases only
     assert any("empty context" in n for n in r["harness_notes"])
+
+
+def test_harness_audit_catches_a_verifier_that_accepts_a_repeated_hint_index():
+    """FIPS 204 Algorithm 21 requires each hint list to increase strictly;
+    dilithium-py 1.4.0 took a repeated index, which makes a signature
+    malleable. NIST's vectors never show it; Wycheproof's verify vectors do,
+    through the harness as through a library."""
+    r = _harness_audit("repeated-hint", "ML-DSA-44")
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _failing(r) == {"edge:sigVerify"}
+    p, t = r["detail"]["edge:sigVerify"]
+    assert t - p == 1
 
 
 def test_harness_that_reads_sigma_is_driven_correctly():

@@ -41,11 +41,12 @@ DSA_STAGES = ("sigVerify", "sigGen", "edgeLength")
 
 _bundle_cache = None
 
-# Defects in the pinned reference versions (constraints-reference.txt) that
-# these vectors expose. They are reported, never masked: a run against these
-# versions is FINDINGS PRESENT. tools/doctor.py compares each run with this
-# table, so a new disagreement is a BLOCK and a fixed one is flagged for
-# removal.
+# Defects these vectors expose in a reference version CI pins or has pinned
+# (constraints-reference.txt). They are reported, never masked: a run against
+# such a version is FINDINGS PRESENT. tools/doctor.py compares each run with
+# this table, so a new disagreement is a BLOCK and an entry for the installed
+# version that no longer fails is flagged for removal. An entry matches its own
+# version only, so it stays when the pin moves past it, for anyone still on it.
 KNOWN_REFERENCE_DEFECTS = {
     ("dilithium-py", "1.4.0"): {
         "stage": "sigVerify",

@@ -410,7 +410,8 @@ def check_reference_edges():
                      f"edge cases {r['passed']}/{r['total']}: only known reference "
                      f"defects fail", "\n".join(lines),
                      "when a release contains the upstream fix, bump "
-                     "constraints-reference.txt and drop the KNOWN_REFERENCE_DEFECTS entry")
+                     "constraints-reference.txt to it; the KNOWN_REFERENCE_DEFECTS "
+                     "entry stays, for anyone still on this version")
     return Check("references:edge", OK, f"edge cases {r['passed']}/{r['total']} against "
                  f"the installed references ({r['vectors']})")
 

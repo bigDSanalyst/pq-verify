@@ -8,6 +8,6 @@
 # Users are not held to these: pyproject.toml leaves the extras unpinned, and
 # every report names the version that actually ran ("reference: kyber-py 1.2.0").
 kyber-py==1.2.0
-dilithium-py==1.4.0
+dilithium-py==1.5.1
 slh-dsa==0.2.5
 sympy==1.14.0

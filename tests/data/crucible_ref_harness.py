@@ -19,6 +19,9 @@ it (or to refuse to score it):
   crash-after=N  exits after N requests
   hang-after=N   stops answering after N requests
   lie-unsupported  answers "unsupported" for Decaps, which it advertises
+  repeated-hint  ML_DSA_Verify decodes hints as dilithium-py 1.4.0 did,
+                 taking a repeated index (FIPS 204 Algorithm 21 requires
+                 strictly increasing ones)
 """
 import json
 import os
@@ -37,6 +40,33 @@ KEM_BY_DK = {768 * k + 96: v for k, v in ((2, ML_KEM_512), (3, ML_KEM_768),
                                           (4, ML_KEM_1024))}
 DSA_BY_PK = {1312: ML_DSA_44, 1952: ML_DSA_65, 2592: ML_DSA_87}
 DSA_BY_SK = {2560: ML_DSA_44, 4032: ML_DSA_65, 4896: ML_DSA_87}
+HINTS = {1312: (4, 80), 1952: (6, 55), 2592: (8, 75)}       # pk length: (k, omega)
+
+
+def lenient_hints(pk, sig):
+    """dilithium-py 1.4.0's HintBitUnpack (FIPS 204 Algorithm 21) took a
+    repeated index, `<=` where `<` is required, and set the same hint bit
+    twice. Re-encode such a hint list without the repeats: the hint 1.4.0
+    decoded. Any other malformed list is left as it is, to be refused."""
+    k, w = HINTS[len(pk)]
+    y, start, runs = sig[-(w + k):], 0, []
+    for i in range(k):
+        end = y[w + i]
+        if end < start or end > w:
+            return sig
+        run = list(y[start:end])
+        if any(a > b for a, b in zip(run, run[1:])):
+            return sig
+        runs.append(sorted(set(run)))
+        start = end
+    if any(y[start:w]):
+        return sig
+    packed, n = bytearray(w + k), 0
+    for i, run in enumerate(runs):
+        packed[n:n + len(run)] = bytes(run)
+        n += len(run)
+        packed[w + i] = n
+    return sig[:-(w + k)] + bytes(packed)
 
 
 def out(obj):
@@ -98,6 +128,8 @@ def handle(req):
         if dsa is None:
             raise ValueError("bad pk length")
         sig = i["sigma"] if FAULT == "sigma-only" else i["signature"]
+        if FAULT == "repeated-hint":
+            sig = lenient_hints(i["pk"], sig)
         m = (b"\x00\x00" + i["message"]) if FAULT == "external" else i["message"]
         ok = dsa._verify_internal(i["pk"], m, sig)
         return {"valid": b"\x01" if ok else b"\x00"}

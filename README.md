@@ -7,7 +7,7 @@
 ![ACVP-KEM](https://img.shields.io/badge/ML--KEM%20ACVP-240%2F240-brightgreen)
 ![ACVP-DSA](https://img.shields.io/badge/ML--DSA%20ACVP-615%2F615-brightgreen)
 ![ACVP-SLH](https://img.shields.io/badge/SLH--DSA%20ACVP-1248%2F1248-brightgreen)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23633637.svg)](https://doi.org/10.5281/zenodo.23633637)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24026070.svg)](https://doi.org/10.5281/zenodo.24026070)
 
 **Independent verification for ML-KEM (Kyber), ML-DSA (Dilithium), SLH-DSA (SPHINCS+), LMS/HSS and XMSS/XMSS^MT implementations.**
 
@@ -85,11 +85,11 @@ and [CCTV](https://github.com/C2SP/CCTV) vectors (`strcmp` traps, unlucky
 sampling, every out-of-range ek coefficient, malformed ML-DSA hints) are pinned
 to exact commits and run by `--audit-kem` and `--audit-dsa` against a vendor
 library, and by
-`pq-verify --edge-cases` against pq-verify's own references. With
-dilithium-py 1.4.0, the version CI pins, the latter reports one finding: a
-repeated hint index is accepted. dilithium-py 1.5.1, which
-`pip install "pq-verify[full]"` installs today, fixes it, and the run
-reports none.
+`pq-verify --edge-cases` against pq-verify's own references. Against
+dilithium-py 1.5.1, the version CI pins and `pip install "pq-verify[full]"`
+installs today, the latter reports no finding. dilithium-py 1.4.0 accepts a
+repeated hint index; with it installed, the run reports that, as a known
+defect of 1.4.0.
 
 To audit a compiled library:
 
@@ -733,17 +733,17 @@ MIT. Audits and commercial support: see [Enterprise audits and pre-CMVP readines
 Archived on Zenodo with a citable DOI:
 
 > Maino, N. C. (2026). *pq-verify: Independent verification for post-quantum
-> cryptography implementations* (v2.15.0). Zenodo. https://doi.org/10.5281/zenodo.23633637
+> cryptography implementations* (v2.16.0). Zenodo. https://doi.org/10.5281/zenodo.24026070
 
 ```bibtex
 @software{maino_pqverify_2026,
   author    = {Maino, Nicholas Clifford},
   title     = {pq-verify: Independent verification for post-quantum cryptography implementations},
-  version   = {2.15.0},
+  version   = {2.16.0},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.23633637},
-  url       = {https://doi.org/10.5281/zenodo.23633637}
+  doi       = {10.5281/zenodo.24026070},
+  url       = {https://doi.org/10.5281/zenodo.24026070}
 }
 ```
 
