@@ -5,7 +5,7 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [2.16.0] — 2026-11-06
+## [2.16.0] — 2026-11-07
 
 A feature release: `--audit-slhdsa` audits an SLH-DSA library (FIPS 205)
 through its own entry points. Every pinned NIST ACVP vector runs over the
