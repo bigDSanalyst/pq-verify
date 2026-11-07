@@ -40,6 +40,8 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
 | slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,740/1,740 VERIFIED** |
 | liboqs 0.16.0, `OQS_SIG_slh_dsa_*` | SLH-DSA, all 12 sets | full scheme through the public API + refusals | **2,088/2,088 VERIFIED** |
+| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases | **1,489 / 1,500 / 1,766 VERIFIED** |
+| Bouncy Castle 1.86 (Java), through pq-verify's harness | ML-DSA-44/65/87 | full scheme + every pre-hash verifier | **422 / 462 / 484 VERIFIED** |
 
 No arithmetic discrepancies were found in the implementations in this table.
 Its one finding is behavioural: PQClean's ML-KEM API accepts keys NIST marks
@@ -1249,9 +1251,20 @@ Seed-form decapsulation keys (d ‖ z, which FIPS 203 §7.1 permits, as Go's
 and dk = d ‖ z, and NIST's expanded-key decapsulation cases are not
 applicable rather than failed.
 
-Crucible's harnesses at [`0522518`](https://github.com/symbolicsoft/crucible/commit/0522518e19559ef39ed1ff23643f52d2ac606084),
-built unmodified with Go 1.26.1 and re-audited in CI by
-`tools/harness_audit.py`:
+**Every pre-hash function's verifier.** NIST's ML-DSA verification vectors
+hold a valid HashML-DSA signature for only three of the twelve pre-hash
+functions per parameter set ([above](#full-scheme-ml-dsa-audit-with-mutants)).
+A harness may send a HashML-DSA M′ to its library's own pre-hash code, and
+pq-verify cannot see whether it does. So through a harness that takes M′,
+each of the twelve is signed and must verify (preHashVerify). Through one
+that signs M with an empty context, no HashML-DSA message can be sent, and
+the 12 checks are not applicable.
+
+Re-audited in CI by `tools/harness_audit.py`: Crucible's harnesses at
+[`0522518`](https://github.com/symbolicsoft/crucible/commit/0522518e19559ef39ed1ff23643f52d2ac606084),
+built unmodified with Go 1.26.1, and pq-verify's own Bouncy Castle harness
+([below](#bouncy-castle-java-through-pq-verifys-harness)), run on JDK 21
+against the jar pinned by sha256:
 
 <!-- harness-audits:begin -->
 | Implementation (harness) | Parameter set | Result | Checks | Not applicable |
@@ -1262,9 +1275,15 @@ built unmodified with Go 1.26.1 and re-audited in CI by
 | Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-512 | **VERIFIED** | 1,489/1,489 | 0 |
 | Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-768 | **VERIFIED** | 1,500/1,500 | 0 |
 | Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-KEM-1024 | **VERIFIED** | 1,766/1,766 | 0 |
-| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-44 | **VERIFIED** | 274/274 | 198 |
-| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-65 | **VERIFIED** | 313/313 | 208 |
-| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-87 | **VERIFIED** | 336/336 | 207 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-44 | **VERIFIED** | 274/274 | 210 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-65 | **VERIFIED** | 313/313 | 220 |
+| Cloudflare CIRCL v1.6.3 (pinned by the harness's go.sum) (`harnesses/circl`) | ML-DSA-87 | **VERIFIED** | 336/336 | 219 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-KEM-512 | **VERIFIED** | 1,489/1,489 | 0 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-KEM-768 | **VERIFIED** | 1,500/1,500 | 0 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-KEM-1024 | **VERIFIED** | 1,766/1,766 | 0 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-DSA-44 | **VERIFIED** | 422/422 | 62 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-DSA-65 | **VERIFIED** | 462/462 | 71 |
+| Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256) (`pq_verify/harness/bouncycastle`) | ML-DSA-87 | **VERIFIED** | 484/484 | 71 |
 <!-- harness-audits:end -->
 
 Go's `crypto/mlkem` has no ML-KEM-512, so its harness refuses that set:
@@ -1272,7 +1291,7 @@ CANNOT VERIFY, not a finding. The CIRCL harness's ML-DSA cases that are not
 applicable are the internal, pre-hash and non-empty-context ones its
 convention cannot carry, and external μ, which the protocol cannot.
 
-Three places where Crucible's protocol and its harnesses disagree, found on
+Four places where Crucible's protocol and its harnesses disagree, found on
 the first runs:
 
 1. `ML_DSA_Sign` / `ML_DSA_Verify` "message": M′ in the protocol and
@@ -1281,6 +1300,88 @@ the first runs:
    test battery and the CIRCL harness. pq-verify sends both.
 3. Determinism: the liboqs harness's `ML_DSA_KeyGen` ignores its seed, so
    byte-exact checks through it are not applicable.
+4. `ML_DSA_Verify`'s `valid`: hex in the protocol; `true` / `false` in the
+   Bouncy Castle harness, which pq-verify cannot score: CANNOT VERIFY.
+
+### Bouncy Castle (Java), through pq-verify's harness
+
+Bouncy Castle's Java provider, `bcprov-jdk18on` 1.86 (2026-09-11), audited
+through its lightweight API: ML-KEM-512/768/1024 and ML-DSA-44/65/87.
+Crucible ships a Bouncy Castle harness, but through it nothing byte-exact
+can be checked and ML-DSA cannot be scored at all. It ignores the
+protocol's randomness inputs: key generation and encapsulation draw from a
+live `SecureRandom`, and signing always uses rnd = 0. It also answers
+`valid` as `true` or `false` (item 4 above).
+
+So pq-verify ships its own,
+[`pq_verify/harness/bouncycastle/PqvBouncyCastle.java`](pq_verify/harness/bouncycastle/PqvBouncyCastle.java),
+run with Java's source launcher so that the report binds to it:
+
+- **Randomness through the API users call.** NIST's seeds and `rnd` go in
+  through a `SecureRandom` that serves exactly the given bytes:
+  `MLKEMKeyPairGenerator` draws d then z, `MLKEMGenerator` draws m,
+  `MLDSAKeyPairGenerator` draws the seed, and the signers draw `rnd`. A draw
+  of any other length is an error, which the audit counts against the
+  library.
+- **Keys through Bouncy Castle's own constructors,** which apply its checks:
+  FIPS 203's modulus check on an encapsulation key and its hash check on a
+  decapsulation key, and the encoding lengths.
+- **ML-DSA's M′ through the entry point that can express it.**
+  - A pure-ML-DSA message goes to `MLDSASigner` with its context.
+  - A HashML-DSA message with SHA2-512, the only pre-hash Bouncy Castle
+    implements, goes to `HashMLDSASigner`.
+  - Anything else goes to `MLDSAEngine`'s internal functions.
+
+  Each computes exactly FIPS 204's Sign_internal or Verify_internal over M′.
+
+**The jar** is fetched from Maven Central and pinned by sha256
+(`2af190b3…`), with the sources jar its mutants are rebuilt from. Both carry
+a PGP signature from key `7B12 1B76 A7ED 6CE6 E60A D517 84E9 13A8 E3A7 48C0`,
+"The Legion of the Bouncy Castle Inc. (Maven Repository Artifact Signer)".
+Maven Central's signatures on the 1.76 (2023) and 1.80 (2025) jars name the
+same key. Its fingerprint was not cross-checked on bouncycastle.org. The harness names the jar it loaded,
+with its sha256, in its handshake, and the report carries it.
+
+**Results** are in the table above.
+
+- **ML-KEM:** nothing is not applicable.
+- **ML-DSA:** the cases that are not applicable are external μ, which the
+  protocol has no route for, and the edge cases with a 256-byte context or
+  μ.
+- **HashML-DSA:** Bouncy Castle's SHA2-512 verifier is one NIST's vectors
+  never test with a valid signature (SHA2-512 is one of the five with none),
+  so the pre-hash round trip is what checks it.
+
+**Mutants.** Each recompiles one class from Bouncy Castle's own 1.86 sources
+with one planted bug, into a copy of the jar without its signature files (a
+signed jar refuses a class it did not sign). CI requires every one to fail:
+
+| Planted bug in Bouncy Castle | Caught by |
+|---|---|
+| a decapsulation key is loaded without FIPS 203's hash check | dkCheck, Wycheproof/CCTV dk |
+| an encapsulation key is loaded without FIPS 203's modulus check | ekCheck, Wycheproof/CCTV ek |
+| HashML-DSA verification hashes zeros in place of the digest | every pre-hash verifies only |
+| pure ML-DSA verification ignores the context | sigVer pure, Wycheproof verify |
+| signing does not draw the caller's randomness | sigGen pure, Wycheproof sign |
+
+The HashML-DSA one passes every NIST and Wycheproof vector.
+
+**Not reached this way:**
+
+- **SLH-DSA, LMS/HSS and XMSS:** the protocol carries ML-KEM and ML-DSA only,
+  and pq-verify's audits of the others drive a C library's entry points.
+- **Falcon:** Bouncy Castle's is round-3 Falcon, not FN-DSA.
+- **Bouncy Castle's C# library:** it needs a harness of its own.
+- **The FIPS module on Maven Central (`bc-fips` 2.1.3):** it has no ML-KEM,
+  ML-DSA or SLH-DSA classes.
+
+Audit your own Bouncy Castle jar the same way:
+
+```bash
+H=$(python3 -c "import pq_verify, os; print(os.path.join(os.path.dirname(pq_verify.__file__), 'harness', 'bouncycastle', 'PqvBouncyCastle.java'))")
+pq-verify --audit-harness "java -cp bcprov-jdk18on-1.86.jar $H" ML-KEM-768
+pq-verify --audit-harness "java -cp bcprov-jdk18on-1.86.jar $H" ML-DSA-65
+```
 
 ## Which implementations can be audited by symbol
 

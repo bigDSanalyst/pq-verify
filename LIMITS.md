@@ -28,6 +28,8 @@ produced it says, and nothing on this page.
   ([README](README.md#what-a-result-is-bound-to)). Through a Crucible-protocol
   harness the harness speaks for the library, which cannot be proved across a
   process boundary ([AUDITS.md](AUDITS.md#any-language-through-crucible-protocol-harnesses)).
+  pq-verify's Bouncy Castle harness names the jar it loaded, with its sha256,
+  but that is the harness's word, not something pq-verify checked.
 - **Only the functions a library exports.** liboqs builds HQC's code-layer
   functions and Classic McEliece's backends with hidden visibility: its HQC
   shared library cannot be audited at all, and its McEliece only through the

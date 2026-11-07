@@ -455,7 +455,9 @@ pq_verify/
   harness/                 C files linked into a test build of a library: deterministic
                            randombytes(), LMS/XMSS adapters, the constant-time shim
                            (ct/). Never in production. source/: the source audit's
-                           CBMC harnesses, contracts and exhaustive test
+                           CBMC harnesses, contracts and exhaustive test.
+                           bouncycastle/: the Crucible-protocol harness for Bouncy
+                           Castle's Java provider
   vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
 tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor

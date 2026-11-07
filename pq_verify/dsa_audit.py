@@ -715,6 +715,15 @@ def run_prehash_round_trips(v, keypair, tally, na, failures):
     if sv is None:
         na[stage] = (n, "no pre-hash signing entry point to make the signatures")
         return
+    round_trip_prehashes(v, keypair, tally, na, failures)
+
+
+def round_trip_prehashes(v, keypair, tally, na, failures):
+    """The preHashVerify round trips through v's sign_prehash and
+    verify_prehash (VendorDSA, or the harness adapter), one per pre-hash
+    function FIPS 204 approves, with NIST's key pair."""
+    from .core import _SLHDSA_PREHASH as PREHASH
+    stage, n = 'preHashVerify', len(PREHASH)
     if keypair is None:
         na[stage] = (n, "no NIST key pair for this parameter set")
         return

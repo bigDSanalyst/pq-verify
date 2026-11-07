@@ -11,7 +11,10 @@ them can be audited here, unchanged, with pq-verify's vectors and verdicts:
              NIST's invalid encapsulation and decapsulation keys (FIPS 203
              §7.2/§7.3), and the Wycheproof/CCTV edge cases
     ML-DSA   NIST's keyGen, sigGen and sigVer for every interface the
-             protocol can carry, and Wycheproof's edge cases
+             protocol can carry, Wycheproof's edge cases, and a HashML-DSA
+             signature made and verified through the harness for each of the
+             twelve pre-hash functions (preHashVerify; NIST's sigVer vectors
+             hold a valid one for only three)
 
 Protocol (Crucible's README, "Harness Protocol"): the harness prints a
 handshake {"implementation", "functions"}; each request is
@@ -513,14 +516,25 @@ def run_dsa(h, param_set, load, edge=True, accumulated=0):
     failures = [{"stage": f["stage"], "case": f"tcId {f.get('tcId')}",
                  "detail": f.get("detail")} for f in failures]
     na = {k: tuple(x) for k, x in na.items()}
+    # preHashVerify (pq_verify.dsa_audit): NIST's sigVer vectors hold a valid
+    # pre-hash signature for three of the twelve hash functions per set. A
+    # harness may send a HashML-DSA M' to its library's own pre-hash code
+    # (pq-verify's Bouncy Castle harness does, for SHA2-512), and nothing
+    # tells pq-verify which, so each of the twelve is signed and verified
+    # through it. Under the "M, empty context" convention none can be sent.
+    from .dsa_audit import nist_keypair, round_trip_prehashes
+    round_trip_prehashes(v, nist_keypair(lambda d: (load(d, "prompt.json"),
+                                                    load(d, "expectedResults.json")),
+                                         param_set), tally, na, failures)
     if edge:
         res = edge_dsa(v, param_set)
         for stage, (p, t) in res["stages"].items():
             tally["edge:" + stage] = (p, t)
         if res["not_applicable"]:
             na["edge"] = (res["not_applicable"], "cases the protocol or this harness "
-                                                 "cannot express (seed or rnd ignored, "
-                                                 "external mu)")
+                                                 "cannot express (a context over 255 "
+                                                 "bytes, external mu, or a seed or rnd "
+                                                 "the harness ignores)")
         failures.extend({"stage": "edge:" + f["stage"], "case": f["case"],
                          "detail": f["detail"]} for f in res["failures"][:20])
     if accumulated:

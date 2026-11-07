@@ -1,12 +1,17 @@
 {
   "_comment": [
-    "Implementations audited with --audit-harness through Crucible's own harnesses",
-    "(github.com/symbolicsoft/crucible), built unmodified from a pinned commit.",
+    "Implementations audited with --audit-harness. Two kinds of row:",
+    "go: one of Crucible's own harnesses (github.com/symbolicsoft/crucible), built",
+    "unmodified from a pinned commit; the library behind it is pinned by the",
+    "harness's go.sum, not hashed by pq-verify.",
+    "java: one of pq-verify's own harnesses (pq_verify/harness/...), run against a",
+    "library jar pinned by URL and sha256 (and the sources jar its mutants are",
+    "rebuilt from). signed_by records the PGP key that signed both on Maven Central",
+    "when they were pinned.",
     "Only Crucible's wire protocol is used: every check is pq-verify's (NIST ACVP,",
     "Wycheproof, CCTV), scored by pq-verify. tools/harness_audit.py rebuilds each",
-    "harness and fails if a result differs, so a failure means pq-verify changed",
-    "(or the pinned Go toolchain / module did). The library behind a harness is",
-    "pinned by the harness's go.sum, not hashed by pq-verify."
+    "harness and fails if a result differs or a mutant is not caught, so a failure",
+    "means pq-verify changed (or a pinned toolchain or module did)."
   ],
   "crucible": {
     "url": "https://github.com/symbolicsoft/crucible",
@@ -270,7 +275,7 @@
               1
             ]
           },
-          "not_applicable": 198
+          "not_applicable": 210
         },
         "ML-DSA-65": {
           "status": "VERIFIED",
@@ -304,7 +309,7 @@
               1
             ]
           },
-          "not_applicable": 208
+          "not_applicable": 220
         },
         "ML-DSA-87": {
           "status": "VERIFIED",
@@ -338,9 +343,383 @@
               1
             ]
           },
-          "not_applicable": 207
+          "not_applicable": 219
         }
       }
+    },
+    {
+      "name": "bouncycastle",
+      "kind": "java",
+      "dir": "pq_verify/harness/bouncycastle",
+      "harness": "pq_verify/harness/bouncycastle/PqvBouncyCastle.java",
+      "implementation": "Bouncy Castle bcprov-jdk18on 1.86 (Maven Central jar, pinned by sha256)",
+      "jar": {
+        "url": "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86.jar",
+        "sha256": "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f"
+      },
+      "sources": {
+        "url": "https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86-sources.jar",
+        "sha256": "34a8b7dcb030a08ddd5356d3d5be962f9299ca5275e1460273186f8fdbe44c34"
+      },
+      "signed_by": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0",
+      "results": {
+        "ML-KEM-512": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              459,
+              459
+            ],
+            "edgeEk": [
+              883,
+              883
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-KEM-768": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              461,
+              461
+            ],
+            "edgeEk": [
+              892,
+              892
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-KEM-1024": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "encaps": [
+              25,
+              25
+            ],
+            "decaps": [
+              10,
+              10
+            ],
+            "dkCheck": [
+              10,
+              10
+            ],
+            "ekCheck": [
+              10,
+              10
+            ],
+            "edgeValid": [
+              463,
+              463
+            ],
+            "edgeEk": [
+              1156,
+              1156
+            ],
+            "edgeDk": [
+              2,
+              2
+            ],
+            "edgeLength": [
+              64,
+              64
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 0
+        },
+        "ML-DSA-44": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              30,
+              30
+            ],
+            "sigGenPreHash": [
+              30,
+              30
+            ],
+            "sigGenInternal": [
+              30,
+              30
+            ],
+            "sigVerPure": [
+              15,
+              15
+            ],
+            "sigVerPreHash": [
+              15,
+              15
+            ],
+            "sigVerInternal": [
+              15,
+              15
+            ],
+            "preHashVerify": [
+              12,
+              12
+            ],
+            "edge:sigVerify": [
+              168,
+              168
+            ],
+            "edge:sigGen": [
+              74,
+              74
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 62
+        },
+        "ML-DSA-65": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              30,
+              30
+            ],
+            "sigGenPreHash": [
+              30,
+              30
+            ],
+            "sigGenInternal": [
+              30,
+              30
+            ],
+            "sigVerPure": [
+              15,
+              15
+            ],
+            "sigVerPreHash": [
+              15,
+              15
+            ],
+            "sigVerInternal": [
+              15,
+              15
+            ],
+            "preHashVerify": [
+              12,
+              12
+            ],
+            "edge:sigVerify": [
+              198,
+              198
+            ],
+            "edge:sigGen": [
+              84,
+              84
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 71
+        },
+        "ML-DSA-87": {
+          "status": "VERIFIED",
+          "stages": {
+            "keyGen": [
+              25,
+              25
+            ],
+            "sigGenPure": [
+              30,
+              30
+            ],
+            "sigGenPreHash": [
+              30,
+              30
+            ],
+            "sigGenInternal": [
+              30,
+              30
+            ],
+            "sigVerPure": [
+              15,
+              15
+            ],
+            "sigVerPreHash": [
+              15,
+              15
+            ],
+            "sigVerInternal": [
+              15,
+              15
+            ],
+            "preHashVerify": [
+              12,
+              12
+            ],
+            "edge:sigVerify": [
+              229,
+              229
+            ],
+            "edge:sigGen": [
+              75,
+              75
+            ],
+            "edge:edgeLength": [
+              7,
+              7
+            ],
+            "accumulated": [
+              1,
+              1
+            ]
+          },
+          "not_applicable": 71
+        }
+      },
+      "mutants": [
+        {
+          "name": "a decapsulation key is loaded without FIPS 203's hash check",
+          "set": "ML-KEM-768",
+          "file": "org/bouncycastle/crypto/params/MLKEMPrivateKeyParameters.java",
+          "find": "if (!engine.checkPrivateKey(getEncoded()))",
+          "replace": "if (false)",
+          "fails": [
+            "dkCheck",
+            "edgeDk"
+          ]
+        },
+        {
+          "name": "an encapsulation key is loaded without FIPS 203's modulus check",
+          "set": "ML-KEM-768",
+          "file": "org/bouncycastle/crypto/params/MLKEMPublicKeyParameters.java",
+          "find": "this.rho = Arrays.copyOfRange(encoding, encoding.length - MLKEMEngine.SymBytes, encoding.length);\n\n        if (!engine.checkModulus(this.t))",
+          "replace": "this.rho = Arrays.copyOfRange(encoding, encoding.length - MLKEMEngine.SymBytes, encoding.length);\n\n        if (false)",
+          "fails": [
+            "edgeEk",
+            "ekCheck"
+          ]
+        },
+        {
+          "name": "HashML-DSA verification hashes zeros in place of the digest",
+          "set": "ML-DSA-65",
+          "file": "org/bouncycastle/crypto/signers/HashMLDSASigner.java",
+          "find": "SHAKEDigest msgDigest = buildExternalMsgDigest(digestOIDEncoding, hash);",
+          "replace": "SHAKEDigest msgDigest = buildExternalMsgDigest(digestOIDEncoding, new byte[hash.length]);",
+          "fails": [
+            "preHashVerify"
+          ]
+        },
+        {
+          "name": "pure ML-DSA verification ignores the context",
+          "set": "ML-DSA-65",
+          "file": "org/bouncycastle/crypto/signers/MLDSASigner.java",
+          "find": "engine.initVerify(rho, t1, false, ctx);",
+          "replace": "engine.initVerify(rho, t1, false, EMPTY_CONTEXT);",
+          "fails": [
+            "edge:sigVerify",
+            "sigVerPure"
+          ]
+        },
+        {
+          "name": "signing does not draw the caller's randomness",
+          "set": "ML-DSA-65",
+          "file": "org/bouncycastle/crypto/signers/MLDSASigner.java",
+          "find": "            random.nextBytes(rnd);\n        }\n\n        byte[] mu = engine.generateMu(msgDigest);",
+          "replace": "        }\n\n        byte[] mu = engine.generateMu(msgDigest);",
+          "fails": [
+            "edge:sigGen",
+            "sigGenPure"
+          ]
+        }
+      ]
     }
   ]
 }

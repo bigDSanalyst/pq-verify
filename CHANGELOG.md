@@ -7,6 +7,44 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Bouncy Castle's ML-KEM and ML-DSA are audited, and pinned in CI.** The
+  audited jar is `bcprov-jdk18on` 1.86 from Maven Central, pinned by sha256.
+  It is audited through pq-verify's own Crucible-protocol harness,
+  `pq_verify/harness/bouncycastle/PqvBouncyCastle.java`. The harness ships in
+  the package, so anyone can audit their own jar:
+  `--audit-harness "java -cp bcprov.jar PqvBouncyCastle.java" SET`.
+  - The harness feeds NIST's seeds and randomness through the API users
+    call, and reads keys with Bouncy Castle's own constructors, so its
+    FIPS 203 key checks are what the invalid keys meet.
+  - It sends each ML-DSA M′ to the entry point that can express it:
+    `MLDSASigner` with the context, `HashMLDSASigner` for SHA2-512, or
+    `MLDSAEngine`'s internal functions. Its handshake names the jar it
+    loaded, with its sha256.
+  - ML-KEM-512/768/1024: 1,489, 1,500 and 1,766 checks, all passed, none not
+    applicable.
+  - ML-DSA-44/65/87: 422, 462 and 484 checks, all passed. The cases not
+    applicable are external μ and the edge cases with a 256-byte context.
+  - Five mutants are all caught. Each recompiles one class from Bouncy
+    Castle's own 1.86 sources with a planted bug. One, HashML-DSA
+    verification hashing zeros, passes every NIST and Wycheproof vector;
+    only the pre-hash round trip catches it.
+  - Crucible's own Bouncy Castle harness could not have served. It ignores
+    the protocol's randomness, and it answers `valid` as `true` or `false`,
+    which pq-verify cannot score.
+- **Harness audits check every pre-hash function's verifier**
+  (`preHashVerify`), as `--audit-dsa` does. A harness may send a HashML-DSA
+  M′ to its library's own pre-hash code, so through a harness that takes M′,
+  each of the twelve is signed and must verify. Through one that signs M with
+  an empty context, the 12 checks are not applicable, so CIRCL's ML-DSA rows
+  count 12 more per set. The reason given for edge cases a harness cannot be
+  sent now names 256-byte contexts.
+- **`tools/harness_audit.py` audits Java harnesses.**
+  - The library jar is fetched from its pinned URL and checked against its
+    pinned sha256 on every use.
+  - A java row's mutants are rebuilt from its pinned sources jar, into a
+    copy of the jar without its signature files.
+  - CI runs them on the runner image's JDK 21.
+
 - **`--audit-dsa` checks every pre-hash function's verifier**
   (`preHashVerify`), as `--audit-slhdsa` does. For each of the twelve
   pre-hash functions FIPS 204 approves, the library's own HashML-DSA

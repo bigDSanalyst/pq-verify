@@ -328,6 +328,7 @@ output are in [AUDITS.md](AUDITS.md).
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, and every pre-hash function's verifier (NIST's vectors check three of twelve), + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 4 mutants and 6 constant-time controls | 1,542/1,542; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
+| Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness: NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 1,489 / 1,500 / 1,766; ML-DSA 422 / 462 / 484; every mutant caught |
 | slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
 | XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
@@ -407,6 +408,11 @@ implementation in any language through a harness speaking
 with pq-verify's own vectors and verdicts — only the wire format is
 Crucible's. Go's `crypto/mlkem` and Cloudflare CIRCL (ML-KEM and ML-DSA) are
 VERIFIED through Crucible's unmodified harnesses, rebuilt and re-audited in CI.
+So is Bouncy Castle's Java provider, through pq-verify's own harness
+(`pq_verify/harness/bouncycastle/`), which feeds it NIST's seeds through the
+API users call and names the jar it loaded, with its sha256; CI pins that jar
+by sha256 and plants five bugs in its sources, all caught
+([AUDITS.md](AUDITS.md#bouncy-castle-java-through-pq-verifys-harness)).
 A harness is untrusted: its message convention is settled against NIST, its
 determinism is tested, and a crash is CANNOT VERIFY, never a refusal. The
 library behind a harness is not hashed, and the report says so

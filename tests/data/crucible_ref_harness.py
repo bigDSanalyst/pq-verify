@@ -22,6 +22,8 @@ it (or to refuse to score it):
   repeated-hint  ML_DSA_Verify decodes hints as dilithium-py 1.4.0 did,
                  taking a repeated index (FIPS 204 Algorithm 21 requires
                  strictly increasing ones)
+  prehash-oid    ML_DSA_Verify reads a HashML-DSA M' naming SHA3-512 as if it
+                 named SHA2-512 (both 64-byte digests); signing is right
 """
 import json
 import os
@@ -34,6 +36,7 @@ from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
 FAULT = sys.argv[1] if len(sys.argv) > 1 else ""
 KEM = {512: ML_KEM_512, 768: ML_KEM_768, 1024: ML_KEM_1024}
 DSA = {44: ML_DSA_44, 65: ML_DSA_65, 87: ML_DSA_87}
+HASH_OID = bytes.fromhex("06096086480165030402")    # DER prefix of NIST's hash OIDs
 KEM_BY_EK = {384 * k + 32: v for k, v in ((2, ML_KEM_512), (3, ML_KEM_768),
                                           (4, ML_KEM_1024))}
 KEM_BY_DK = {768 * k + 96: v for k, v in ((2, ML_KEM_512), (3, ML_KEM_768),
@@ -131,6 +134,10 @@ def handle(req):
         if FAULT == "repeated-hint":
             sig = lenient_hints(i["pk"], sig)
         m = (b"\x00\x00" + i["message"]) if FAULT == "external" else i["message"]
+        if FAULT == "prehash-oid" and m[:1] == b"\x01" and len(m) > 1:
+            at = 2 + m[1]                        # 1 || |ctx| || ctx || OID || PH
+            if m[at:at + 11] == HASH_OID + b"\x0a":
+                m = m[:at] + HASH_OID + b"\x03" + m[at + 11:]
         ok = dsa._verify_internal(i["pk"], m, sig)
         return {"valid": b"\x01" if ok else b"\x00"}
     return None
