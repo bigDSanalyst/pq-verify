@@ -5,6 +5,30 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--audit-dsa` checks every pre-hash function's verifier**
+  (`preHashVerify`), as `--audit-slhdsa` does. For each of the twelve
+  pre-hash functions FIPS 204 approves, the library's own HashML-DSA
+  verifier must accept a signature the library made with it.
+  - NIST's ML-DSA sigVer vectors hold a valid pre-hash signature for only
+    three of the twelve per parameter set, and five (SHA2-256, SHA2-512,
+    SHA2-512/224, SHA3-384 and SHA3-512) have none in any set. So a verifier
+    that encodes one of the other nine wrongly passes them all. Their sigGen
+    vectors cover all twelve, so a wrong signer was already caught.
+  - The check needs the library's own HashML-DSA verifier, as mldsa-native
+    has. Where pq-verify reaches pre-hash verification only through
+    `verify_internal`, it builds M′ itself, which NIST's sigVer vectors
+    already check, so the check is not applicable, with the reason.
+  - mldsa-native and both liboqs mldsa-native backends pass it, 12/12 per
+    set: 1,542/1,542 and 1,548/1,548 each. pq-crystals ref, PQClean and
+    liboqs's OQS API count 36 more checks not applicable.
+  - A new mldsa-native mutant, verification encoding SHA3-512's OID as
+    SHA2-512's, passes every NIST and Wycheproof vector; only this check
+    fails it.
+  - The JSON report names a failed round trip by its hash function, and
+    AUDITS.md's ML-DSA table gains an "every pre-hash verifies" column.
+
 ### Changed
 
 - **v2.16.0 has its own Zenodo deposit**,

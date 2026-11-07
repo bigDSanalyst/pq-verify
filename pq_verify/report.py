@@ -96,9 +96,10 @@ RULES = {
     },
     "PQV008": {
         "name": "SignatureConformanceFailure",
-        "short": "ML-DSA library output or verdict differs from NIST or Wycheproof",
-        "full": ("Driven with NIST's ACVP ML-DSA vectors and Wycheproof's edge "
-                 "cases, the library produced a key or signature that differs "
+        "short": "ML-DSA library output or verdict differs from NIST, Wycheproof or FIPS 204",
+        "full": ("Driven with NIST's ACVP ML-DSA vectors, Wycheproof's edge "
+                 "cases and HashML-DSA signatures of its own, the library "
+                 "produced a key or signature that differs "
                  "from the published one byte for byte, accepted a signature "
                  "that must be rejected (a forgery or a malleated encoding), "
                  "rejected a valid one, or drew randomness FIPS 204 does not "
@@ -519,6 +520,7 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
             continue
         if v[0] != v[1]:
             what = ("Wycheproof edge cases handled as specified" if k.startswith("edge:")
+                    else "pre-hash round trips verify" if k == "preHashVerify"
                     else "verdicts match NIST" if k.startswith("sigVer")
                     else "outputs match NIST byte-for-byte")
             if k.startswith("edge:"):
@@ -527,8 +529,9 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
                          if first else "")
             else:
                 first = next((f for f in acvp_fail if f["stage"] == k), None)
-                where = (f"; first: NIST tcId {first['tcId']}: {first['detail']}"
-                         if first else "")
+                where = ("" if first is None else
+                         f"; first: {first['case']}: {first['detail']}" if "case" in first
+                         else f"; first: NIST tcId {first['tcId']}: {first['detail']}")
             findings.append(f"ML-DSA: stage {k}: {v[0]}/{v[1]} {what}{where}")
     for r in result.get("rng") or []:
         findings.append(f"ML-DSA: randomness: {r}")

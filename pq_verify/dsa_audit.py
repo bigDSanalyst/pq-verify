@@ -7,6 +7,13 @@ compiled code with every pinned NIST ACVP ML-DSA vector for one parameter set
     keyGen         NIST seed            -> vendor pk, sk      byte-exact
     sigGen*        NIST sk, M, ctx, rnd -> vendor signature   byte-exact
     sigVer*        NIST pk, M, ctx, sig -> vendor verdict     = NIST testPassed
+    preHashVerify  for each of the twelve pre-hash functions FIPS 204 approves,
+                   the library's own HashML-DSA verifier accepts a signature the
+                   library made with it. NIST's sigVer vectors hold a valid
+                   pre-hash signature for only three of the twelve per parameter
+                   set, so a verifier that encodes one of the other nine wrongly
+                   passes them all; their sigGen vectors cover all twelve, so a
+                   wrong signer fails there
     sigVerify      Wycheproof verify vectors (malleated hints, bad norms, ...)
     sigGen (edge)  Wycheproof sign vectors, incl. inputs that must be refused
     edgeLength     wrong-length signatures, where the API takes a length
@@ -680,6 +687,60 @@ def _one(v, mode, op, g, t, ref, PREHASH):
         f"{'valid' if want else 'invalid'}")
 
 
+def nist_keypair(load, param_set):
+    """(pk, sk) of NIST's first keyGen case for the set, or None."""
+    p, e = load('ML-DSA-keyGen-FIPS204')
+    exp = {str(t['tcId']): t for g in e['testGroups'] for t in g['tests']}
+    for g in p['testGroups']:
+        if g.get('parameterSet') == param_set:
+            for t in g['tests']:
+                ref = exp[str(t['tcId'])]
+                return bytes.fromhex(ref['pk']), bytes.fromhex(ref['sk'])
+    return None
+
+
+def run_prehash_round_trips(v, keypair, tally, na, failures):
+    """preHashVerify (see the module docstring). It checks the library's own
+    HashML-DSA verifier, so it is not applicable without one: where pq-verify
+    reaches pre-hash verification only through verify_internal, it formats M'
+    itself, and NIST's sigVerPreHash already checks that encoding."""
+    from .core import _SLHDSA_PREHASH as PREHASH
+    stage, n = 'preHashVerify', len(PREHASH)
+    sv, vv = v.via('sign_prehash'), v.via('verify_prehash')
+    if vv != 'verify_prehash':
+        na[stage] = (n, "no pre-hash verification entry point" if vv is None else
+                        "no HashML-DSA verifier of its own: pq-verify formats M' itself "
+                        "for verify_internal, so no pre-hash code of the library is reached")
+        return
+    if sv is None:
+        na[stage] = (n, "no pre-hash signing entry point to make the signatures")
+        return
+    if keypair is None:
+        na[stage] = (n, "no NIST key pair for this parameter set")
+        return
+    pk, sk = keypair
+    m, ctx, rnd = b"pq-verify", b"pq-verify pre-hash round trip", bytes(32)
+    p = t = 0
+    for name, (arc, h) in PREHASH.items():
+        oid, ph = bytes.fromhex('06096086480165030402') + bytes([arc]), h(m)
+        try:
+            sig = v.sign_prehash(ph, oid, name, ctx, rnd, sk)
+            ok = v.verify_prehash(ph, oid, name, ctx, sig, pk)
+            why = None if ok else "rejected the signature it made"
+        except NotApplicable as ex:
+            c, _ = na.get(stage, (0, str(ex)))
+            na[stage] = (c + 1, str(ex))
+            continue
+        except VendorError as ex:
+            ok, why = False, f"{v.entry('sign_prehash')} refused to sign: {ex}"
+        p, t = p + int(ok), t + 1
+        if not ok and len(failures) < 50:
+            failures.append({'stage': stage, 'case': f"pre-hash round trip with {name}",
+                             'detail': why})
+    if t:
+        tally[stage] = (p, t)
+
+
 def run_accumulated(v, param_set, n, tally, na):
     """CCTV's accumulated keygen + deterministic-signing cases through v
     (VendorDSA, or any object with its keygen / sign_pure / verify_pure).
@@ -830,6 +891,9 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
         print("=" * 68)
 
     tally, na, failures = run_acvp(v, load)
+    run_prehash_round_trips(v, nist_keypair(load, param_set), tally, na, failures)
+    if 'preHashVerify' in tally:
+        via['preHashVerify'] = f"{v.entry('sign_prehash')} / {v.entry('verify_prehash')}"
 
     edge_res = None
     if edge:
@@ -865,6 +929,13 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
             if s in na:
                 c, why = na[s]
                 print(f"  n/a   {s:15s} {c} vector(s): {why}")
+        if 'preHashVerify' in tally:
+            p, t = tally['preHashVerify']
+            print(f"  {'PASS' if p == t else 'FAIL'}  preHashVerify   {p}/{t}   via "
+                  f"{via['preHashVerify']}")
+        if 'preHashVerify' in na:
+            c, why = na['preHashVerify']
+            print(f"  n/a   preHashVerify   {c} check(s): {why}")
         if edge_res is not None:
             print(f"  edge cases: {edge_res['vectors']}")
             for s in EDGE_STAGES:

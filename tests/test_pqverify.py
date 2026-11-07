@@ -4262,18 +4262,19 @@ def test_slhdsa_counts_match_the_docs():
 # dilithium-py, exercises the same ctypes path offline, and plants faults.
 # ----------------------------------------------------------------------
 
-def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0):
-    """Build the shim, register dilithium-py-backed callbacks (each
-    overridable), return (path, keepalive)."""
+def _dsa_shim(tmp_path, keypair=None, sign=None, verify=None, extra_rng=0,
+              source="mldsa_shim.c", flags=()):
+    """Build a shim (tests/data/<source>, compiled with flags), register
+    dilithium-py-backed callbacks (each overridable), return (path, keepalive)."""
     import ctypes as C, pathlib, shutil, subprocess
     pytest.importorskip("dilithium_py")
     if not shutil.which("gcc"):
         pytest.skip("gcc not available")
     from dilithium_py.ml_dsa import ML_DSA_65 as D
     root = pathlib.Path(__file__).resolve().parent.parent
-    so = tmp_path / f"libpqvtest_dilithium3_{len(list(tmp_path.glob('*.so')))}.so"
-    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
-                    str(root / "tests" / "data" / "mldsa_shim.c"),
+    so = tmp_path / f"libpqvtest_{pathlib.Path(source).stem}_{len(list(tmp_path.glob('*.so')))}.so"
+    subprocess.run(["gcc", "-O1", "-fPIC", "-shared", *flags, "-o", str(so),
+                    str(root / "tests" / "data" / source),
                     str(root / "pq_verify" / "harness" / "pqv_randombytes.c")],
                    check=True, capture_output=True)
     lib = C.CDLL(str(so))
@@ -4336,6 +4337,10 @@ def test_dsa_audit_resolves_the_pqcrystals_abi_and_routes_each_interface(tmp_pat
     # no external-mu API: counted, with the reason, and never as a pass
     assert "sigGenMu" not in d and r["not_applicable"]["sigGenMu"][0] == 30
     assert "external-mu" in r["not_applicable"]["sigGenMu"][1]
+    # pre-hash only through signature_internal, over pq-verify's own M': the
+    # library has no pre-hash code of its own to round-trip
+    assert "preHashVerify" not in d and r["not_applicable"]["preHashVerify"][0] == 12
+    assert "of its own" in r["not_applicable"]["preHashVerify"][1]
     assert r["verified"] and r["rng"] == []
 
 
@@ -4380,6 +4385,73 @@ def test_dsa_audit_sees_the_reference_hint_defect_through_c(tmp_path):
     p, t = r["detail"]["edge:sigVerify"]
     assert t - p == 1
     assert any("InvalidHintsEncoding" in f["flags"] for f in r["edge"]["failures"])
+
+
+_MLDSA_NATIVE_PREFIX = "PQVTEST_MLDSA_NATIVE_MLDSA65_"
+
+
+def test_dsa_audit_round_trips_every_pre_hash_through_the_librarys_own_api(tmp_path):
+    """mldsa-native's API, through a stand-in: its own HashML-DSA entry points
+    sign and verify each of the twelve pre-hash functions (preHashVerify),
+    beside NIST's vectors, which go through the same entry points."""
+    path, keep = _dsa_shim(tmp_path, source="mldsa_native_shim.c")
+    r = _audit_shim(path, edge=False)
+    assert r["abi"] == "mldsa-native" and r["verified"], r["failures"][:3]
+    assert r["detail"] == {"keyGen": (25, 25), "sigGenPure": (30, 30),
+                           "sigGenPreHash": (30, 30), "sigVerPure": (15, 15),
+                           "sigVerPreHash": (15, 15), "preHashVerify": (12, 12)}
+    assert r["via"]["sigVerPreHash"] == _MLDSA_NATIVE_PREFIX + "verify_pre_hash_internal"
+    assert r["via"]["preHashVerify"] == (
+        f"{_MLDSA_NATIVE_PREFIX}signature_pre_hash_internal / "
+        f"{_MLDSA_NATIVE_PREFIX}verify_pre_hash_internal")
+    assert "preHashVerify" not in r["not_applicable"]
+
+
+def test_dsa_audit_catches_a_pre_hash_verifier_nists_vectors_pass(tmp_path):
+    """Verification encodes SHA3-512's OID as SHA2-512's; signing is right.
+    NIST's ML-DSA-65 verification vectors hold a valid pre-hash signature
+    only for SHA2-384, SHA3-224 and SHA3-256, so every one of them passes;
+    signing the library's own SHA3-512 signature and verifying it does not."""
+    from pq_verify.dsa_audit import pqverify_audit_dsa
+    from pq_verify.report import to_json_dsa
+    path, keep = _dsa_shim(tmp_path, source="mldsa_native_shim.c",
+                           flags=("-DPQVTEST_VERIFY_SHA3_512_AS_SHA2_512",))
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_dsa(path, "ML-DSA-65", edge=False, accumulated=0)
+    d = r["detail"]
+    assert d["sigGenPreHash"] == (30, 30) and d["sigVerPreHash"] == (15, 15)
+    assert {s for s, (p, t) in d.items() if p < t} == {"preHashVerify"}
+    assert d["preHashVerify"] == (11, 12)
+    assert r["failures"] == [{"stage": "preHashVerify",
+                              "case": "pre-hash round trip with SHA3-512",
+                              "detail": "rejected the signature it made"}]
+    assert r["status"] == "FINDINGS PRESENT" and not r["verified"]
+    assert "FAIL  preHashVerify   11/12" in out.getvalue()
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert doc["findings"] == [
+        "ML-DSA: stage preHashVerify: 11/12 pre-hash round trips verify; first: "
+        "pre-hash round trip with SHA3-512: rejected the signature it made"]
+
+
+def test_dsa_pre_hash_round_trip_says_why_it_did_not_run():
+    from pq_verify.dsa_audit import run_prehash_round_trips
+
+    class Library:
+        def __init__(self, sign, verify):
+            self.route = {"sign_prehash": sign, "verify_prehash": verify}
+
+        def via(self, op):
+            return self.route[op]
+
+    for sign, verify, key, why in (
+            (None, None, (b"", b""), "no pre-hash verification entry point"),
+            ("sign_internal", "verify_internal", (b"", b""), "of its own"),
+            (None, "verify_prehash", (b"", b""), "no pre-hash signing entry point"),
+            ("sign_prehash", "verify_prehash", None, "no NIST key pair")):
+        tally, na, failures = {}, {}, []
+        run_prehash_round_trips(Library(sign, verify), key, tally, na, failures)
+        assert not tally and not failures and na["preHashVerify"][0] == 12
+        assert why in na["preHashVerify"][1], (sign, verify)
 
 
 def test_dsa_symbol_resolution_never_guesses():

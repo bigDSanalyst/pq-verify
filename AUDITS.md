@@ -36,7 +36,7 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 | PQClean `clean` | ML-KEM-512/768/1024 | full scheme + invalid keys | 210/240 — accepts all 30 invalid keys, 10 per set |
 | liboqs 0.16.0, `OQS_*` API and each backend | ML-KEM-512/768/1024 | full scheme + invalid keys + edge cases + constant time | **4,569/4,569 VERIFIED** per implementation |
 | liboqs 0.16.0, `OQS_*` API | ML-DSA-44/65/87 | full scheme through the public API | **1,068/1,068 VERIFIED** |
-| liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,512/1,512 VERIFIED** each |
+| liboqs 0.16.0, mldsa-native C and x86-64 | ML-DSA-44/65/87 | full scheme | **1,548/1,548 VERIFIED** each |
 | liboqs 0.16.0, `OQS_SIG_falcon_*` | FN-DSA-512/1024 (draft) | verify, reject, keyGen, sign | **227/227 VERIFIED** (padded and not) |
 | slhdsa-c | SLH-DSA, all 12 sets | full scheme, three interfaces + refusals | **1,740/1,740 VERIFIED** |
 | liboqs 0.16.0, `OQS_SIG_slh_dsa_*` | SLH-DSA, all 12 sets | full scheme through the public API + refusals | **2,088/2,088 VERIFIED** |
@@ -167,10 +167,10 @@ never is.
   `OQS_randombytes_custom_algorithm`, so keyGen and pure sigGen are byte-exact
   against NIST with no special build, and a call drawing more or fewer bytes
   than FIPS 204 specifies is a finding. The API has no internal, pre-hash or
-  external-μ entry points: those vectors are not applicable (468 across the
-  three sets), never passed.
+  external-μ entry points: those vectors, and the pre-hash round trips, are
+  not applicable (504 across the three sets), never passed.
 - *ML-DSA through each mldsa-native backend*: the full scheme, internal,
-  pure, pre-hash and external μ.
+  pure, pre-hash and external μ, and every pre-hash function's verifier.
 - *Falcon*: as for PQClean, except the signed-message `open` API and
   wrong-length keys, which liboqs's API cannot express.
 
@@ -403,6 +403,21 @@ symbol per stage. A case no entry point can express (no external-μ API, a
 fixed-size signature argument given a wrong-length signature) is counted as
 **not applicable**, with the reason, and never as a pass.
 
+**NIST's verification vectors miss nine of the twelve pre-hash functions.**
+In every parameter set they hold a valid HashML-DSA signature for only three
+of the twelve, and five (SHA2-256, SHA2-512, SHA2-512/224, SHA3-384 and
+SHA3-512) have none in any set. A verifier that encodes any of the other
+nine wrongly passes every NIST sigVer vector: it is never shown a valid
+signature it must accept. Signing is covered for all twelve, so a signer
+that encodes wrongly fails NIST's sigGen vectors. So where the library has
+its own HashML-DSA verifier, for each pre-hash function it must accept a
+signature the library made with it (the "every pre-hash verifies" column).
+Where pre-hash verification is reached only through `verify_internal`, pq-verify
+builds M′ itself, NIST's vectors already check that encoding, and the check
+is not applicable. A mutant shows the gap: mldsa-native verifying SHA3-512
+pre-hashes under SHA2-512's OID passes every NIST and Wycheproof vector, and
+only this check fails.
+
 NIST's vectors are seeded, so an API that draws its own randomness can only
 be checked byte-exactly if pq-verify controls that randomness. The libraries
 below are linked with `pq_verify/harness/pqv_randombytes.c`, which serves
@@ -412,14 +427,14 @@ more or less than FIPS 204 calls for. That is how the randomised
 only the seed-taking internal functions.
 
 <!-- vendor-audits-dsa:begin -->
-| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length | Accumulated | Constant time | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 278/278 / n/a | 3/3 | 6/6 | 30 | 9/9 | 1,506/1,506 **VERIFIED** |
-| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 198 | 6/6 | 1,338/1,338 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 468 | 1/1 | 1,068/1,068 **VERIFIED** |
-| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 468 | 2/2 | 1,068/1,068 **VERIFIED** |
-| liboqs 0.16.0 — mldsa-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
-| liboqs 0.16.0 — mldsa-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,512/1,512 **VERIFIED** |
+| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ | sigVer int / pure / pre-hash / μ | Every pre-hash verifies | Wycheproof verify / sign / length | Accumulated | Constant time | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mldsa-native | [`159509d`](https://github.com/pq-code-package/mldsa-native/commit/159509d78063316bf090bbcd0aa50af5bb03cf70) (2026-10-01) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 36/36 | 610/610 / 278/278 / n/a | 3/3 | 6/6 | 30 | 10/10 | 1,542/1,542 **VERIFIED** |
+| pq-crystals dilithium ref | [`d35ba3f`](https://github.com/pq-crystals/dilithium/commit/d35ba3fe5449bee3e6d43e1f296c3ca818bd36be) (2026-06-03) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / n/a | 45/45 / 45/45 / 45/45 / n/a | n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 234 | 6/6 | 1,338/1,338 **VERIFIED** |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 504 | 1/1 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | n/a / 90/90 / n/a / n/a | n/a / 45/45 / n/a / n/a | n/a | 610/610 / 236/236 / 9/9 | 3/3 | cannot verify | 504 | 2/2 | 1,068/1,068 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 36/36 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,548/1,548 **VERIFIED** |
+| liboqs 0.16.0 — mldsa-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 44 / 65 / 87 | 75/75 | 90/90 / 90/90 / 90/90 / 90/90 | 45/45 / 45/45 / 45/45 / 45/45 | 36/36 | 610/610 / 275/275 / 9/9 | 3/3 | cannot verify | 24 | 1/1 | 1,548/1,548 **VERIFIED** |
 <!-- vendor-audits-dsa:end -->
 
 All three are byte-exact on every interface they expose. They differ in
@@ -437,7 +452,7 @@ pass too, where they can be judged.
 **Mutants.** An audit that passes correct libraries has shown half of what
 it must. Each row also carries mutants: a one-line change to the pinned
 source that plants a known bug class. CI builds every one and requires the
-audit to fail it in the listed stages (`tools/vendor_audits.json`). All ten
+audit to fail it in the listed stages (`tools/vendor_audits.json`). All eleven
 are caught:
 
 | Library | Planted bug | Caught by |
@@ -451,13 +466,16 @@ are caught:
 | mldsa-native | hint decoder accepts a repeated index | Wycheproof verify only |
 | mldsa-native | verify skips the ‖z‖ bound | Wycheproof verify only |
 | mldsa-native | HashML-DSA encoded as pure ML-DSA | sigGen and sigVer pre-hash |
+| mldsa-native | HashML-DSA verification encodes SHA3-512's OID as SHA2-512's | every pre-hash verifies only |
 | PQClean | verify skips the challenge comparison | sigVer pure, Wycheproof verify |
 
-Two of these bug classes are invisible to NIST's vectors: a verifier that
+Three of these bug classes are invisible to NIST's vectors. A verifier that
 accepts a repeated hint index (the defect dilithium-py 1.4.0 ships, which
 makes signatures malleable) and one that skips the ‖z‖∞ < γ₁ − β check both
 pass every NIST sigVer vector. Only Wycheproof's verify vectors catch them,
-which is why `--audit-dsa` runs both.
+which is why `--audit-dsa` runs both. A HashML-DSA verifier that encodes one
+hash function's OID wrongly passes Wycheproof's vectors too; only the
+pre-hash round trip catches it.
 
 Reproduce every row and mutant: `python3 tools/vendor_audit.py --only ML-DSA`
 (about 30 s). One library by hand (ML-DSA-65):

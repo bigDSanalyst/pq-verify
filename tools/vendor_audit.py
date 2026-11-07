@@ -60,7 +60,7 @@ EDGE_STAGES = ("edgeValid", "edgeEk", "edgeDk")
 BEGIN, END = "<!-- vendor-audits:begin -->", "<!-- vendor-audits:end -->"
 DSA_BEGIN, DSA_END = "<!-- vendor-audits-dsa:begin -->", "<!-- vendor-audits-dsa:end -->"
 DSA_STAGES = ("keyGen", "sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGenMu",
-              "sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu")
+              "sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu", "preHashVerify")
 DSA_EDGE_STAGES = ("edge:sigVerify", "edge:sigGen", "edge:edgeLength")
 ACC_STAGES = ("accumulated",)        # pq_verify/accumulated.py, every scheme
 DSA_BUILDS = ("mldsa-native", "pqcrystals-ref", "pqclean-mldsa", "liboqs")
@@ -1259,9 +1259,10 @@ def markdown(rows):
 
 def dsa_markdown(rows):
     lines = ["| Library | Commit | Sets | keyGen | sigGen int / pure / pre-hash / μ "
-             "| sigVer int / pure / pre-hash / μ | Wycheproof verify / sign / length "
+             "| sigVer int / pure / pre-hash / μ | Every pre-hash verifies "
+             "| Wycheproof verify / sign / length "
              "| Accumulated | Constant time | Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(stages):
             out = []
@@ -1287,6 +1288,7 @@ def dsa_markdown(rows):
             sets, cell(["keyGen"]),
             cell(["sigGenInternal", "sigGenPure", "sigGenPreHash", "sigGenMu"]),
             cell(["sigVerInternal", "sigVerPure", "sigVerPreHash", "sigVerMu"]),
+            cell(["preHashVerify"]),
             cell(list(DSA_EDGE_STAGES)), cell(["accumulated"]), ct_cell, f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED**' if p == t and ct_ok else 'findings'} |"]))

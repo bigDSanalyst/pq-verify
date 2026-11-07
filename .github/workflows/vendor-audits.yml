@@ -41,6 +41,7 @@ on:
       - "tests/data/mceliece_shim.c"
       - "tests/data/hqc_shim.c"
       - "tests/data/oqs_mldsa_shim.c"
+      - "tests/data/mldsa_native_shim.c"
       - "constraints-reference.txt"
       - ".github/workflows/vendor-audits.yml"
   push:
