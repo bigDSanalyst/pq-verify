@@ -39,7 +39,10 @@ Three rules keep a harness from producing a false pass:
   * A harness that crashes, hangs, breaks the protocol, or answers
     "unsupported" for a function it advertised ends the audit: CANNOT
     VERIFY. It is never read as the library refusing an input -- which, for
-    the invalid-input checks, would have scored as a pass.
+    the invalid-input checks, would have scored as a pass. Breaking the
+    protocol includes any reply that is not one JSON object of its shape:
+    unparseable or too deeply nested, outputs that are not an object of hex
+    strings, or a line over MAX_REPLY_BYTES.
   * Determinism is tested, not assumed. Crucible's harnesses differ: some
     ignore the seed. Each operation is asked twice with the same inputs; a
     byte-exact check the harness cannot be held to is not applicable, with
@@ -55,6 +58,10 @@ import subprocess as _sp
 import threading as _threading
 
 DEFAULT_CALL_TIMEOUT = 60          # seconds per request
+# A reply carries at most a few keys and a signature: tens of kilobytes in
+# hex. A longer line is a protocol break, not something to buffer.
+MAX_REPLY_BYTES = 1 << 20
+_TOO_LONG = object()
 
 
 class HarnessDied(BaseException):
@@ -84,14 +91,22 @@ class Harness:
         t = _threading.Thread(target=self._pump, daemon=True)
         t.start()
         hs = self._read("the handshake")
-        if not isinstance(hs, dict) or "implementation" not in hs:
+        functions = hs.get("functions") if isinstance(hs, dict) else None
+        if not isinstance(hs, dict) or "implementation" not in hs \
+                or not isinstance(functions, (list, type(None))):
             self.close()
             raise HarnessDied(f"the first line is not a handshake: {str(hs)[:120]}")
         self.implementation = str(hs["implementation"])
-        self.functions = [str(f) for f in hs.get("functions") or []]
+        self.functions = [str(f) for f in functions or []]
 
     def _pump(self):
-        for line in iter(self.proc.stdout.readline, b""):
+        while True:
+            line = self.proc.stdout.readline(MAX_REPLY_BYTES + 1)
+            if not line:
+                break
+            if len(line) > MAX_REPLY_BYTES:
+                self._lines.put(_TOO_LONG)
+                return
             self._lines.put(line)
         self._lines.put(None)
 
@@ -104,9 +119,16 @@ class Harness:
         if line is None:
             code = self.proc.wait()
             raise HarnessDied(f"the harness exited (status {code}) during {what}")
+        if line is _TOO_LONG:
+            self.close()
+            raise HarnessDied(f"the reply to {what} is longer than {MAX_REPLY_BYTES} bytes")
         try:
             return _json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # RecursionError: JSON nested deeper than the parser goes. Like
+            # any reply that is not the protocol's, it ends the audit; were it
+            # to escape as an ordinary exception, a vector runner would read
+            # it as the library refusing the input.
             self.close()
             raise HarnessDied(f"not JSON in reply to {what}: {line[:120]!r}") from None
 
@@ -130,8 +152,13 @@ class Harness:
                               f"which it advertised")
         if r.get("error"):
             raise Refused(str(r["error"])[:200])
+        outputs = r.get("outputs")
+        if outputs is None:
+            outputs = {}
+        if not isinstance(outputs, dict):
+            raise HarnessDied(f"reply to {function} has outputs that are not an object")
         try:
-            return {k: bytes.fromhex(v) for k, v in (r.get("outputs") or {}).items()}
+            return {k: bytes.fromhex(v) for k, v in outputs.items()}
         except (ValueError, TypeError):
             raise HarnessDied(f"reply to {function} has non-hex outputs") from None
 
