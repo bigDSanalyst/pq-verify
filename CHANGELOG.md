@@ -51,6 +51,9 @@ versioning](https://semver.org/spec/v2.0.0.html).
     reply is tens of kilobytes.
   - No pinned harness result changes: Crucible's harnesses for Go and CIRCL,
     and pq-verify's own for Bouncy Castle, send no such reply.
+  - If you audited a harness of your own with 2.17.0 or earlier, re-run it.
+    A result changes only if the harness sends one of these replies, and
+    then it is CANNOT VERIFY with the reply named.
 
 ## [2.17.0] — 2026-11-07
 
