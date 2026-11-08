@@ -10,8 +10,9 @@ KIND  how to corrupt it; KINDS below. Each is either a protocol break, after
       which the audit must end CANNOT VERIFY, or a change of content, after
       which it must not come back VERIFIED unless the content did not matter.
 SEED  seeds the choices a kind makes (which output, which digit).
-LOG   gets one JSON line when the corruption is written:
-      {"reply": n, "kind": ..., "class": "protocol" | "content"}.
+LOG   gets one JSON line when the corruption is written: {"reply": n,
+      "kind": ..., "class": "protocol" | "content", "function": the request
+      answered, "output": the output changed, if one was}.
 
 Every other reply is the reference harness's own (crucible_ref_harness.py),
 which audits VERIFIED.
@@ -68,11 +69,14 @@ SHAPES = {"ML_KEM_KeyGen": {"ek": "00" * 800, "dk": "00" * 1632},
 _n = [0]           # replies written so far; 0 is the handshake
 _req = [None]      # the request being answered
 _done = [False]
+_key = [None]      # the output a kind changed, for the log
 
 
 def _log(cls):
+    fn = (_req[0] or {}).get("function") if _n[0] else "handshake"
     with open(LOG, "a") as fh:
-        fh.write(json.dumps({"reply": _n[0], "kind": KIND, "class": cls}) + "\n")
+        fh.write(json.dumps({"reply": _n[0], "kind": KIND, "class": cls,
+                             "function": fn, "output": _key[0]}) + "\n")
 
 
 def _raw(line):
@@ -112,6 +116,9 @@ def _corrupt(obj):
     if not outs:
         outs = dict(SHAPES.get((_req[0] or {}).get("function"), {"x": "00"}))
     key = rng.choice(sorted(outs))
+    if KIND in ("value-type", "value-not-hex", "value-odd-length", "missing-output",
+                "flip-digit", "drop-byte"):
+        _key[0] = key
     if KIND == "garbage":
         return "".join(chr(rng.randrange(33, 127)) for _ in range(rng.randrange(1, 80))) + "\n"
     if KIND == "truncated":
@@ -124,8 +131,6 @@ def _corrupt(obj):
         return "\n"
     if KIND == "unsupported":
         return json.dumps({"unsupported": True}) + "\n"
-    if KIND == "exit":
-        os._exit(0)
     if KIND == "oversized":
         return json.dumps({"outputs": {"pad": "00" * (9 << 20)}}) + "\n"
     if KIND == "functions-type":
@@ -164,8 +169,10 @@ def _corrupt(obj):
 def out(obj):
     if _due(obj) and _applies(obj):
         _done[0] = True
+        line = _corrupt(obj) if KIND != "exit" else None
         _log(KINDS[KIND][0])
-        line = _corrupt(obj)
+        if KIND == "exit":
+            os._exit(0)
         if line is not None:
             _raw(line)
     else:

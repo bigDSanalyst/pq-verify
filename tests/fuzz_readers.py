@@ -393,6 +393,11 @@ def _corruption(log):
         return None
 
 
+def _answered(hit):
+    out = hit.get("output")
+    return f"{hit.get('function')}" + (f" {out}" if out else "")
+
+
 def fuzz_harness(cases, rng, workdir, cli_every=25, sets=HARNESS_SETS, kinds=None):
     """Audits through the reference harness with one reply corrupted. Returns
     (violations, review) lists of (description, reproducer command, detail)."""
@@ -440,9 +445,11 @@ def fuzz_harness(cases, rng, workdir, cli_every=25, sets=HARNESS_SETS, kinds=Non
         elif classes[kind][0] == "protocol":
             if r["status"] != "CANNOT VERIFY":
                 violations.append((what, repro, f"a reply that breaks the protocol "
-                                                f"(reply {hit['reply']}) scored {got}"))
+                                                f"(reply {hit['reply']}, {_answered(hit)}) "
+                                                f"scored {got}"))
         elif r["verified"]:
-            review.append((what, repro, f"VERIFIED after a changed reply {hit['reply']}: "
+            review.append((what, repro, f"VERIFIED after a changed reply {hit['reply']} "
+                                        f"({_answered(hit)}): "
                                         f"{got}, {r['not_applicable_total']} n/a (clean: "
                                         f"{clean[ps]['passed']}/{clean[ps]['total']}, "
                                         f"{clean[ps]['not_applicable_total']} n/a)"))
