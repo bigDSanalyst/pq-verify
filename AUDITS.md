@@ -1243,7 +1243,7 @@ same code as `--audit-kem` / `--audit-dsa`. The harness is untrusted:
 | The harness follows the protocol | It is checked. Crucible's protocol says `ML_DSA_Sign` takes FIPS 204's M′, but its CIRCL and liboqs harnesses sign M with an empty context. Which one a harness uses is settled against a NIST signature, and only what that convention can carry is sent. |
 | The harness is deterministic | Each operation is asked twice with the same inputs. Byte-exact checks a harness cannot be held to are not applicable, never passed. |
 | An error is the library refusing | Only once the harness has accepted its own fresh signature; otherwise CANNOT VERIFY, since none of its rejections can be scored. |
-| A crash, hang, or "unsupported" for an advertised function is a refusal | Never: CANNOT VERIFY. Scored as a refusal it would have passed every invalid-input check. |
+| A crash, a hang, a reply that is not the protocol's (unparseable or nested too deep, outputs that are not an object of hex strings, a line over 1 MiB), or "unsupported" for an advertised function is a refusal | Never: CANNOT VERIFY. Scored as a refusal it would have passed every invalid-input check. `tests/fuzz_readers.py` corrupts one reply of a real audit at a time to hold this. |
 | The harness speaks for the library | Unprovable across a process boundary. The harness file is hashed; the library behind it is pinned only by the harness's own build (here, `go.sum`), and the report says a failure can be the harness's wiring. |
 
 Seed-form decapsulation keys (d ‖ z, which FIPS 203 §7.1 permits, as Go's

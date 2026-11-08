@@ -429,7 +429,8 @@ API users call and names the jar it loaded, with its sha256; CI pins that jar
 by sha256 and plants five bugs in its sources, all caught
 ([AUDITS.md](AUDITS.md#bouncy-castle-java-through-pq-verifys-harness)).
 A harness is untrusted: its message convention is settled against NIST, its
-determinism is tested, and a crash is CANNOT VERIFY, never a refusal. The
+determinism is tested, and a crash, or a reply that is not the protocol's, is
+CANNOT VERIFY, never a refusal. The
 library behind a harness is not hashed, and the report says so
 ([AUDITS.md](AUDITS.md#any-language-through-crucible-protocol-harnesses)).
 

@@ -3303,27 +3303,64 @@ def test_a_question_answered_twice_never_verifies(tmp_path, response512, order):
     assert any("answered more than once" in f for f in r["findings"])
 
 
-def test_readers_survive_hostile_input():
-    """A seeded slice of tests/fuzz_readers.py: every mutated response and
-    transcript yields an honest result -- no exception, a known status, a
-    boolean verdict, prompt termination -- and the CLI exits 0/1/2. The full
-    run (thousands of cases) is `python3 tests/fuzz_readers.py`."""
-    pytest.importorskip("kyber_py")
-    import importlib.util, pathlib, random, tempfile
+def _fuzz_module():
+    import importlib.util
     path = pathlib.Path(__file__).resolve().parent / "fuzz_readers.py"
     spec = importlib.util.spec_from_file_location("pqv_fuzz", path)
     F = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(F)
+    return F
+
+
+def test_readers_survive_hostile_input():
+    """A seeded slice of tests/fuzz_readers.py: every mutated response and
+    transcript yields an honest result -- no exception, a known status, a
+    boolean verdict, prompt termination -- and the CLI exits 0/1/2. Responses
+    come from every family the reader scores: ML-KEM, ML-DSA, SLH-DSA, LMS and
+    a fresh ML-DSA prompt. The full run (thousands of cases) is
+    `python3 tests/fuzz_readers.py`."""
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    import functools, os, random, tempfile
+    F = _fuzz_module()
     from pq_verify.response import verify_response
     from pq_verify.hybrid import verify_hybrid
     rng = random.Random(20260929)
     work = tempfile.mkdtemp(prefix="pqv-fuzz-test-")
-    for name, fn, flag, seeds in (
-            ("response", verify_response, "--verify-response", [F.seed_response()]),
-            ("hybrid", verify_hybrid, "--verify-hybrid", F.seed_transcripts())):
-        violations, _ = F.fuzz(name, fn, flag, seeds, 60, rng, work, cli_every=10,
-                               gz=(name == "response"))
+    fresh, key = F.seed_fresh(work)
+    for name, fn, flag, seeds, cases, extra in (
+            ("response", verify_response, "--verify-response", [F.seed_response()], 60, ()),
+            ("response-nist", verify_response, "--verify-response",
+             [F.seed_response_nist(ps) for ps in F.NIST_SEED_SETS], 60, ()),
+            ("response-lms", verify_response, "--verify-response",
+             [F.seed_response_lms(ps) for ps in F.LMS_SETS], 40, ()),
+            ("response-fresh", functools.partial(verify_response, fresh_key=key),
+             "--verify-response", [fresh], 12, ("--fresh-key", key)),
+            ("hybrid", verify_hybrid, "--verify-hybrid", F.seed_transcripts(), 60, ())):
+        for i, s in enumerate(seeds):          # a seed that does not verify tests nothing
+            p = os.path.join(work, f"{name}-seed-{i}.json")
+            with open(p, "w") as fh:
+                json.dump(s, fh)
+            assert F._run(fn, p)["verified"], f"{name} seed {i} does not verify"
+        violations, _ = F.fuzz(name, fn, flag, seeds, cases, rng, work, cli_every=10,
+                               gz=(name == "response"), cli_extra=extra)
         assert not violations, violations[:5]
+
+
+def test_harness_reader_survives_corrupted_replies():
+    """A seeded slice of tests/fuzz_readers.py's harness target: audits
+    through the reference harness with one reply corrupted. Nothing escapes
+    the audit, and a reply that breaks the protocol ends it CANNOT VERIFY,
+    never as the library refusing an input. The full run is
+    `python3 tests/fuzz_readers.py --only harness`."""
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    import random, tempfile
+    F = _fuzz_module()
+    violations, _ = F.fuzz_harness(4, random.Random(20261108),
+                                   tempfile.mkdtemp(prefix="pqv-fuzz-harness-"),
+                                   cli_every=4, sets=("ML-KEM-512",))
+    assert not violations, violations[:5]
 
 
 @pytest.mark.parametrize("case", ["truncated-gzip", "not-gzip", "gzip-bomb",
@@ -6453,6 +6490,72 @@ def test_harness_died_escapes_the_refusal_handlers():
     from pq_verify.harness_audit import HarnessDied, Refused
     assert not issubclass(HarnessDied, Exception)
     assert issubclass(Refused, Exception)
+
+
+def _corrupted_harness_audit(tmp_path, when, kind, ps="ML-KEM-512"):
+    """An audit through tests/data/fuzz_harness.py: the reference harness with
+    reply WHEN replaced as KIND says. Returns (result, the corruption made)."""
+    import json, sys
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    from pq_verify.harness_audit import pqverify_audit_harness
+    root = pathlib.Path(__file__).resolve().parent.parent
+    log = tmp_path / f"{kind}.log"
+    cmd = [sys.executable, str(root / "tests" / "data" / "fuzz_harness.py"),
+           str(when), kind, "1", str(log)]
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_harness(cmd, ps, verbose=False, accumulated=0, timeout=10)
+    return r, (json.loads(log.read_text().splitlines()[0]) if log.exists() else None)
+
+
+@pytest.mark.parametrize("kind", ["outputs-list", "outputs-string", "outputs-number",
+                                  "deep-nesting"])
+def test_a_malformed_reply_to_an_invalid_input_is_not_a_refusal(tmp_path, kind):
+    """Found by tests/fuzz_readers.py. The edge cases read any ordinary
+    exception from a backend as the library refusing the input, which for an
+    invalid input is a pass. A reply whose outputs were not an object, or
+    whose JSON was nested past the parser's depth, raised one (AttributeError,
+    RecursionError) instead of ending the audit, so a harness answering an
+    invalid encapsulation key that way audited VERIFIED 1488/1488. Any reply
+    that breaks the protocol is CANNOT VERIFY."""
+    r, hit = _corrupted_harness_audit(tmp_path, "bad-ek", kind)
+    assert hit and hit["class"] == "protocol", hit
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False, r.get("reason")
+    assert "ML_KEM_Encaps" in r["reason"]
+
+
+@pytest.mark.parametrize("kind", ["garbage", "truncated", "not-object", "deep-nesting",
+                                  "empty-line", "unsupported", "exit", "outputs-list",
+                                  "outputs-string", "outputs-number", "value-type",
+                                  "value-not-hex", "value-odd-length", "missing-output",
+                                  "oversized"])
+def test_every_reply_that_breaks_the_protocol_ends_the_audit(tmp_path, kind):
+    """Four of these (outputs that are a list, a string or a number, and JSON
+    nested too deep) escaped the audit as an AttributeError or a
+    RecursionError, a traceback in place of a result. A reply over
+    MAX_REPLY_BYTES is not buffered."""
+    r, hit = _corrupted_harness_audit(tmp_path, 5, kind)
+    assert hit and hit["reply"] == 5, hit
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False, r.get("reason")
+    if kind == "oversized":
+        assert "longer than" in r["reason"]
+
+
+def test_a_handshake_whose_functions_are_not_a_list_is_refused(tmp_path):
+    """Found by tests/fuzz_readers.py: 'functions': 5 raised TypeError out of
+    the audit."""
+    r, hit = _corrupted_harness_audit(tmp_path, 0, "functions-type")
+    assert hit and hit["reply"] == 0
+    assert r["status"] == "CANNOT VERIFY" and "handshake" in r["reason"]
+
+
+def test_a_changed_answer_through_a_harness_is_a_finding_not_a_crash(tmp_path):
+    """The other side of the protocol rule: a well-formed reply that accepts
+    an invalid encapsulation key is the library's answer, scored as one."""
+    r, hit = _corrupted_harness_audit(tmp_path, "bad-ek", "accept")
+    assert hit and hit["class"] == "content"
+    assert r["status"] == "FINDINGS PRESENT", r.get("reason")
+    assert any("accepted" in f["detail"] for f in r["failures"]), r["failures"][:3]
 
 
 def test_harness_audit_cli_gate_and_report(tmp_path):

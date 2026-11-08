@@ -5,12 +5,55 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`tests/fuzz_readers.py` covers every family the response reader scores,
+  and the harness protocol.** Its response seed was one ML-KEM-512 answer
+  set. It now also mutates ML-DSA-44, SLH-DSA-SHA2-128s and ML-KEM-768
+  responses (NIST's own expected answers), two LMS responses signed with the
+  responder's own key, and a fresh ML-DSA-44 prompt answered by
+  dilithium-py, whose answers the reader computes itself.
+  - A new harness target runs real `--audit-harness` audits through
+    `tests/data/fuzz_harness.py`, the reference harness with one reply
+    corrupted: unparseable, deeply nested, outputs of the wrong type, non-hex
+    or missing values, over-long lines, a broken handshake, a refusal of a
+    valid input, an acceptance of an invalid one. A reply that breaks the
+    protocol must end the audit CANNOT VERIFY.
+  - The run lists every VERIFIED-after-change result by kind of change, so a
+    reviewer can check each kind is one the reader is documented to ignore,
+    and `--only` picks targets. A seeded slice of each target runs in the
+    test suite.
+
 ### Changed
 
 - **v2.17.0 has its own Zenodo deposit**,
   [10.5281/zenodo.24040011](https://doi.org/10.5281/zenodo.24040011).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.16.0's.
+
+### Fixed
+
+- **A harness audit could pass an invalid input on a malformed reply.** The
+  edge-case runners read an ordinary exception from a backend as the library
+  refusing the input: a pass for an invalid input, a failure for a valid one.
+  Two reply shapes raised one instead of ending the audit: outputs that were
+  not an object (a list, a string or a number: AttributeError) and JSON
+  nested past the parser's depth (RecursionError). A harness that answered
+  an invalid encapsulation key that way audited VERIFIED 1,488/1,488 with
+  ML-KEM-512. Every reply that is not the protocol's now ends the audit
+  CANNOT VERIFY, as the module's own rule says.
+  - Found by the fuzzer's new harness target. Run on the old code, it found
+    12 such audits in 60: six VERIFIED, four FINDINGS PRESENT that blamed
+    the library for refusing a valid input, and two tracebacks.
+  - The same replies elsewhere in an audit, and a handshake whose
+    `functions` is not a list, escaped as a traceback instead of a result.
+  - A reply line over 1 MiB is a protocol break and is not buffered; a real
+    reply is tens of kilobytes.
+  - No pinned harness result changes: Crucible's harnesses for Go and CIRCL,
+    and pq-verify's own for Bouncy Castle, send no such reply.
+  - If you audited a harness of your own with 2.17.0 or earlier, re-run it.
+    A result changes only if the harness sends one of these replies, and
+    then it is CANNOT VERIFY with the reply named.
 
 ## [2.17.0] — 2026-11-07
 
