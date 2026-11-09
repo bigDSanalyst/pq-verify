@@ -3,7 +3,15 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.17.1] — 2026-11-09
+
+A bug-fix release. A harness audit (`--audit-harness`) could pass an invalid
+input that the harness answered with a malformed reply. Every reply that
+breaks the protocol now ends the audit CANNOT VERIFY; if you audited a
+harness of your own with 2.17.0 or earlier, re-run it (Fixed, below).
+`tests/fuzz_readers.py`, which found the bug, now covers every response
+family and the harness protocol. No pinned vector, exit code or
+vendor-library verdict changes.
 
 ### Added
 
@@ -30,6 +38,12 @@ versioning](https://semver.org/spec/v2.0.0.html).
   [10.5281/zenodo.24040011](https://doi.org/10.5281/zenodo.24040011).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
   name it, replacing v2.16.0's.
+- **The README's opening names only implementations pq-verify has
+  audited.** It listed OpenSSL+OQS and HSM firmware among the implementations
+  pq-verify verifies, and neither has been audited. It now names liboqs and
+  Bouncy Castle and links the table of audited implementations. An HSM is
+  checked through `--emit-prompt` and `--verify-response`, as the README says
+  just above.
 
 ### Fixed
 
