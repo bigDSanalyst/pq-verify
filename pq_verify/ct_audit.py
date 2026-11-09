@@ -50,6 +50,8 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
+from .isolate import run_group
+
 # The self-test's discarded secret-indexed read. The loaded register is
 # overwritten by the very next instruction, so memcheck sees the load only
 # when every instruction's result is committed (MEMCHECK below).
@@ -188,7 +190,7 @@ def _run(exe, args, work, tag, timeout):
     xml = os.path.join(work, f"memcheck-{tag}.xml")
     cmd = ["valgrind", "--tool=memcheck", *MEMCHECK, "--xml=yes", f"--xml-file={xml}",
            exe, *args]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    p = run_group(cmd, timeout=timeout)
     if p.returncode not in (0,):
         raise RuntimeError(f"the driver failed ({tag}, exit {p.returncode}): "
                            f"{(p.stderr or '').strip().splitlines()[-1:]}")
@@ -560,7 +562,7 @@ def _run_or_refuse(exe, args, work, tag, timeout):
     xml = os.path.join(work, f"memcheck-{tag}.xml")
     cmd = ["valgrind", "--tool=memcheck", *MEMCHECK, "--xml=yes", f"--xml-file={xml}",
            exe, *args]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    p = run_group(cmd, timeout=timeout)
     if p.returncode:
         last = (p.stderr or "").strip().splitlines()[-1:] or [""]
         raise Unavailable(f"the {tag} driver could not exercise the library "

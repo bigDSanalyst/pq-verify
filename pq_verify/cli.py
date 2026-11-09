@@ -109,22 +109,28 @@ def _isolated(args, module, func, *a, **kw):
 
 def _bind_loaded(artifact, loaded):
     """Add what the audit actually mapped to the artifact binding. Returns a
-    reason string if the audited file is not the file that was hashed."""
-    from .isolate import environment, in_process
-    import os as _os
+    reason string if the audited file is not the file that was hashed.
+
+    The file is hashed again by the path the audit was given, whatever its
+    name and whether or not the platform lists it among the mapped objects:
+    that list used to be the only check, and a library it missed (one named
+    without ".so", or in a directory with a space in its name) could change
+    between the hash and the load and still be bound to the old hash."""
+    from .isolate import environment, in_process, _sha256
     artifact["isolation"] = ("in-process (PQV_IN_PROCESS=1)" if in_process()
                              else "child process")
     env = environment()
     if env:
         artifact["loader_environment"] = env
-    if loaded is None:
-        return None
-    artifact["loaded_objects"] = loaded
-    me = _os.path.realpath(artifact["path"])
-    for obj in loaded:
-        if _os.path.realpath(obj["path"]) == me and obj["sha256"] != artifact["sha256"]:
-            return ("the library file changed while it was being audited (sha256 "
-                    f"{obj['sha256']} after, {artifact['sha256']} before)")
+    if loaded is not None:
+        artifact["loaded_objects"] = loaded
+    after = _sha256(artifact["path"])
+    if after is None:
+        return ("the library file was removed or became unreadable while it was "
+                "being audited")
+    if after != artifact["sha256"]:
+        return ("the library file changed while it was being audited (sha256 "
+                f"{after} after, {artifact['sha256']} before)")
     return None
 
 

@@ -41,6 +41,25 @@ audit, can change its own verdict. The child is **not a sandbox** either: it
 has your user's privileges, your filesystem and your network. Isolation from a
 hostile binary is the container's job.
 
+The child leads a process group of its own, and pq-verify stops the group (the
+child and every process the library started that is still in it) at the
+deadline, after a crash, and when the audit ends. A process that leaves the
+group, as a daemon does by starting a session of its own, is out of
+pq-verify's reach; in a container, it stops when the container does.
+pq-verify sets no limit on memory, processes or CPU while the audit runs: a
+library can use all three until `--audit-timeout`. Those limits are the
+container's job too. For example, with the library mounted read-only, which
+also means nothing can change the file during the run:
+
+```bash
+docker run --rm --memory 4g --pids-limit 256 --cpus 2 \
+  -v "$PWD/build:/audit:ro" python:3.12 sh -c \
+  'pip install -q "pq-verify[full]" && pq-verify --audit-kem /audit/libmlkem768.so ML-KEM-768'
+```
+
+The install needs the network; in an image with pq-verify already installed,
+add `--network none`, since the audit itself needs none.
+
 **Audit builds must never ship.** The randomness harness
 (`pq_verify/harness/pqv_randombytes.c`) replaces `randombytes()` with a queue
 of caller-chosen bytes, and a pqv_hbs adapter signs at any leaf index it is

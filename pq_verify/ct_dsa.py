@@ -29,6 +29,7 @@ import tempfile
 
 from .ct_audit import (DISCARDED_READ_C, KINDS, MEMCHECK, SELFTEST_KINDS, SELFTEST_MISSED,
                        Unavailable, _attribute, _parse, available, division_fields)
+from .isolate import run_group
 from .symbols import exported_functions
 
 HARNESS_CT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness", "ct")
@@ -561,7 +562,7 @@ def _go(exe, args, log, timeout, memcheck=None):
     if memcheck:
         cmd = ["valgrind", "--tool=memcheck", *MEMCHECK, "--xml=yes",
                f"--xml-file={memcheck}", *cmd]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    p = run_group(cmd, timeout=timeout, env=env)
     if p.returncode:
         raise RuntimeError(f"the driver failed (exit {p.returncode}): "
                            f"{(p.stderr or '').strip().splitlines()[-1:]}")

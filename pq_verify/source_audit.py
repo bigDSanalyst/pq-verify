@@ -88,6 +88,8 @@ try:
 except ImportError:          # not on Windows; the memory cap is then not set
     resource = None
 
+from .isolate import run_group
+
 # The shared harness files (pqv_ns.h, selftest.c) and ML-KEM's; ML-DSA's are
 # in mldsa/.
 HARNESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness", "source")
@@ -794,7 +796,7 @@ def exhaustive(src, layout, cc, timeout=1200):
                              + build.stderr.strip()[-400:]}
         t0 = time.monotonic()
         try:
-            p = subprocess.run([exe], capture_output=True, text=True, timeout=timeout)
+            p = run_group([exe], timeout=timeout)
         except subprocess.TimeoutExpired:
             return {"error": f"the exhaustive test ran over {timeout} s"}
         res = {"seconds": round(time.monotonic() - t0, 1), "exit": p.returncode,
