@@ -1,4 +1,4 @@
-# pq-verify v2.17.1 — PQC Implementation Verification
+# pq-verify v2.17.2 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -199,6 +199,9 @@ for "this exact file was analysed".
 runs it in a child process (`--audit-timeout`, default one hour). A library
 that crashes on a test vector or hangs is reported — `CANNOT VERIFY`, with the
 signal or the limit — instead of taking pq-verify and its report down with it.
+The child leads a process group of its own, and the group (the child and the
+processes the library starts) is stopped at the deadline and when the audit
+ends. A process that leaves the group, as a daemon does, is not stopped.
 The child is **not a sandbox**: it scores the results in the same process as
 the library, with your user's privileges, so a library that corrupts memory or
 is built to deceive the audit can change its own verdict. A harness
@@ -208,8 +211,9 @@ Audit a binary you do not trust in a container or a VM
 every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
 sha256), so the binding covers the vendor library *and* what it pulled in — a
 libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
-`LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). If
-the audited file changes during the run, the verdict is `CANNOT VERIFY`.
+`LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). The
+audited file is hashed before the run and again after it; if they differ, the
+verdict is `CANNOT VERIFY` ([LIMITS.md](LIMITS.md) says what that cannot catch).
 
 **Never ship a test build.** The randomness harness and the pqv_hbs adapters
 make a library deterministic and stateless on purpose. `pq-verify
@@ -241,7 +245,7 @@ appear as annotations on the pull request, and the build fails on any result
 that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.1
+- uses: bigDSanalyst/pq-verify@v2.17.2
   with:
     audit: dsa                       # kem | dsa | slhdsa | fndsa | hbs | ntt
     library: build/libmldsa65.so
@@ -252,7 +256,7 @@ With no library at all, it runs the NIST ACVP suites against pq-verify's own
 reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.1
+- uses: bigDSanalyst/pq-verify@v2.17.2
 ```
 
 | Input | Default | Purpose |
@@ -266,7 +270,7 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.1` installs that release; and `git:<ref>` installs a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.2` installs that release; and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -638,7 +642,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.17.1-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.17.2-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose

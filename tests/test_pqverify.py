@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.17.1"
+    assert pq_verify.__version__ == VERSION == "2.17.2"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
@@ -5282,6 +5282,278 @@ def test_the_artifact_binds_every_object_the_audit_loaded(tmp_path):
     mine = [o for o in a["loaded_objects"]
             if os.path.realpath(o["path"]) == os.path.realpath(so)]
     assert mine and mine[0]["sha256"] == a["sha256"]
+
+
+# ----------------------------------------------------------------------
+# The isolated child under a misbehaving library. Each test is a bug found by
+# running a stand-in (tests/data/isolate_targets.py) through pq_verify.isolate.
+# ----------------------------------------------------------------------
+
+_ISOLATE_TARGETS = pathlib.Path(__file__).resolve().parent / "data"
+
+
+def _listed_pids(pidfile):
+    try:
+        return [int(x) for x in pidfile.read_text().split()]
+    except (OSError, ValueError):
+        return []
+
+
+def _gone(pid, within=10.0):
+    """Whether pid has stopped running (exited, or left as a zombie)."""
+    import os, time
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            with open(f"/proc/{pid}/stat") as fh:
+                if fh.read().rsplit(")", 1)[1].split()[0] == "Z":
+                    return True
+        except OSError:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+def _kill_listed(pidfile):
+    """Clean up after a failing test: SIGKILL whatever the stand-in recorded."""
+    import os, signal
+    for pid in _listed_pids(pidfile):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def _run_target(monkeypatch, func, *args, timeout):
+    """isolate.run on a stand-in: (result, IsolatedFailure or None, seconds)."""
+    import time
+    from pq_verify.isolate import run, IsolatedFailure
+    monkeypatch.syspath_prepend(str(_ISOLATE_TARGETS))
+    t0 = time.monotonic()
+    try:
+        result, _ = run("isolate_targets", func, args, timeout=timeout)
+        return result, None, time.monotonic() - t0
+    except IsolatedFailure as exc:
+        return None, exc, time.monotonic() - t0
+
+
+def test_a_crash_after_the_library_starts_a_process_is_a_crash(tmp_path, monkeypatch):
+    """A process the library forks inherits the result pipe, so pq-verify
+    never saw the child close it: the crash was reported as a timeout, after
+    the whole --audit-timeout (an hour by default). The child's exit is now
+    watched directly."""
+    pidfile = tmp_path / "pids"
+    try:
+        _, exc, took = _run_target(monkeypatch, "fork_then_crash", str(pidfile), timeout=120)
+        assert exc is not None and exc.kind == "crash" and "SIGABRT" in str(exc), exc
+        assert took < 60
+        assert _listed_pids(pidfile) and all(_gone(p) for p in _listed_pids(pidfile))
+    finally:
+        _kill_listed(pidfile)
+
+
+@pytest.mark.parametrize("func, kind", [("fork_then_hang", "timeout"),
+                                        ("fork_then_return", None)])
+def test_no_process_the_library_starts_outlives_the_audit(tmp_path, monkeypatch, func, kind):
+    """The timeout SIGKILLed only the child, so a process the library had
+    forked ran on after the audit, and after pq-verify had exited. The child
+    now leads a process group of its own, and the group is stopped: at the
+    deadline, and after a normal report."""
+    pidfile = tmp_path / "pids"
+    try:
+        result, exc, _ = _run_target(monkeypatch, func, str(pidfile), timeout=10)
+        if kind:
+            assert exc is not None and exc.kind == kind, exc
+        else:
+            assert exc is None and result == "returned"
+        assert len(_listed_pids(pidfile)) == 2
+        assert all(_gone(p) for p in _listed_pids(pidfile))
+    finally:
+        _kill_listed(pidfile)
+
+
+def _isolate_script(tmp_path, body):
+    """A script that runs isolate.run in a process of its own (spawn needs a
+    real __main__), with the repository and the stand-ins on its path."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    script = tmp_path / "isolate_run.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.path[:0] = [{str(_ISOLATE_TARGETS)!r}, {str(root)!r}]\n"
+        "from pq_verify.isolate import run, IsolatedFailure\n"
+        "if __name__ == '__main__':\n" + body)
+    return script
+
+
+def test_a_half_written_message_cannot_outlast_the_timeout(tmp_path):
+    """Connection.recv() returns only once a whole message has arrived, and
+    the parent called it in its main thread: a library that wrote part of one
+    into the result pipe held pq-verify past --audit-timeout, for good. The
+    messages are now read on a thread of their own. Run in a process of its
+    own, so a regression fails here instead of hanging the suite."""
+    import os, signal, subprocess, sys
+    script = _isolate_script(tmp_path, (
+        "    t0 = time.monotonic()\n"
+        "    try:\n"
+        "        run('isolate_targets', 'stall_mid_message', timeout=3)\n"
+        "    except IsolatedFailure as e:\n"
+        "        print(e.kind, round(time.monotonic() - t0))\n"))
+    p = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE,
+                         text=True, start_new_session=True)
+    try:
+        out, _ = p.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        pytest.fail("a half-written message held the audit past --audit-timeout 3")
+    kind, secs = out.split()
+    assert kind == "timeout" and int(secs) < 30
+
+
+def test_the_audit_ends_when_pq_verify_does(tmp_path):
+    """The child leads its own process group, out of reach of a terminal's
+    Ctrl-C and of a kill aimed at pq-verify, so it must end itself, and what
+    the library started, when pq-verify goes away."""
+    import os, signal, subprocess, sys, time
+    pidfile = tmp_path / "pids"
+    script = _isolate_script(tmp_path, (
+        f"    run('isolate_targets', 'fork_then_hang', ({str(pidfile)!r},), timeout=600)\n"))
+    p = subprocess.Popen([sys.executable, str(script)], start_new_session=True)
+    try:
+        end = time.monotonic() + 60
+        while len(_listed_pids(pidfile)) < 2:
+            assert time.monotonic() < end and p.poll() is None, "the stand-in never started"
+            time.sleep(0.1)
+        os.kill(p.pid, signal.SIGKILL)                 # pq-verify, killed outright
+        p.wait()
+        assert all(_gone(pid) for pid in _listed_pids(pidfile))
+    finally:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        _kill_listed(pidfile)
+
+
+def test_the_loaded_library_is_listed_whatever_its_name_or_path(tmp_path, monkeypatch):
+    """/proc/self/maps lines were split at every space and only names with
+    '.so' were kept, so a library in 'My Builds/' or named '*.bin' was missing
+    from artifact.loaded_objects."""
+    import os, shutil
+    from pq_verify.isolate import run
+    so = _stub_kem(tmp_path, None)
+    monkeypatch.syspath_prepend(str(_ISOLATE_TARGETS))
+    for target in (tmp_path / "My Builds" / "libstub.so", tmp_path / "stub.bin"):
+        target.parent.mkdir(exist_ok=True)
+        shutil.copy(so, target)
+        _, loaded = run("isolate_targets", "load", (str(target),), timeout=120)
+        if loaded is None:
+            pytest.skip("no list of mapped objects on this platform")
+        paths = {os.path.realpath(o["path"]) for o in loaded}
+        assert os.path.realpath(target) in paths, (str(target), sorted(paths))
+
+
+_SELF_CHANGING_KEM = r"""
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdio.h>
+static int changed;
+static void change_my_file(void)          /* as a parallel rebuild might */
+{
+    Dl_info info;
+    if (changed || !dladdr((void *)change_my_file, &info) || !info.dli_fname)
+        return;
+    FILE *f = fopen(info.dli_fname, "ab");
+    if (f) { fputc(0, f); fclose(f); }
+    changed = 1;
+}
+int stub_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *c)
+{ (void)pk; (void)sk; (void)c; change_my_file(); return 0; }
+int stub_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek, const uint8_t *m)
+{ (void)ct; (void)ss; (void)ek; (void)m; return 0; }
+int stub_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *dk)
+{ (void)ss; (void)ct; (void)dk; return 0; }
+"""
+
+
+@pytest.mark.parametrize("name", ["libself.so", "self.bin", "My Builds/libself.so"])
+def test_a_library_that_changes_during_the_audit_is_not_verified_whatever_its_name(
+        tmp_path, name):
+    """The after-audit hash was taken only of files /proc/self/maps listed, so
+    a library it missed (named without '.so', or in a directory with a space
+    in its name) could change between the hash and the load and be reported
+    against the old hash. This library rewrites its own file when first
+    called; the audited path is now hashed again whatever its name."""
+    import json as _json, shutil, subprocess, sys
+    if not sys.platform.startswith("linux"):
+        pytest.skip("rewrites a library while it is loaded; macOS code signing may refuse")
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    src = tmp_path / "self.c"
+    src.write_text(_SELF_CHANGING_KEM)
+    so = tmp_path / name
+    so.parent.mkdir(exist_ok=True)
+    subprocess.run([cc, "-shared", "-fPIC", "-O1", "-o", str(so), str(src), "-ldl"],
+                   check=True)
+    rpt = tmp_path / "r.json"
+    code, out = _cli("--audit-kem", str(so), "ML-KEM-768", "--accumulated", "0",
+                     "--json", str(rpt))
+    assert code == 1 and "changed while it was being audited" in out, out[-600:]
+    assert _json.loads(rpt.read_text())["status"] == "CANNOT VERIFY"
+
+
+def test_no_process_a_harness_starts_outlives_the_audit(tmp_path):
+    """Only the harness itself was stopped, so a process it started (here a
+    wrapper script's background job) ran on after the audit. The harness now
+    leads a process group of its own, and the group is stopped."""
+    import shutil, sys
+    pytest.importorskip("kyber_py")
+    pytest.importorskip("dilithium_py")
+    if not shutil.which("sh"):
+        pytest.skip("no POSIX shell")
+    from pq_verify.harness_audit import pqverify_audit_harness
+    pidfile = tmp_path / "helper.pid"
+    ref = _ISOLATE_TARGETS / "crucible_ref_harness.py"
+    cmd = ["sh", "-c", f'sleep 600 & echo $! > "{pidfile}"; exec "{sys.executable}" "{ref}"']
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = pqverify_audit_harness(cmd, "ML-KEM-512", verbose=False, accumulated=0,
+                                       timeout=10)
+        assert r["verified"], r.get("reason")
+        assert _listed_pids(pidfile) and _gone(_listed_pids(pidfile)[0])
+    finally:
+        _kill_listed(pidfile)
+
+
+def test_a_program_that_runs_vendor_code_ends_with_what_it_started(tmp_path):
+    """The Valgrind and exhaustive-test runs captured output through pipes, and
+    a process the vendor code started held them open: a run that had finished
+    was reported as a timeout, and the process lived on. run_group gives the
+    program a process group and files for its output, and ends the group."""
+    import shutil, subprocess, time
+    from pq_verify.isolate import run_group
+    if not shutil.which("sh"):
+        pytest.skip("no POSIX shell")
+    pidfile = tmp_path / "helper.pid"
+    try:
+        t0 = time.monotonic()
+        p = run_group(["sh", "-c", f'sleep 600 & echo $! > "{pidfile}"; echo done'],
+                      timeout=60)
+        assert p.returncode == 0 and p.stdout.strip() == "done"
+        assert time.monotonic() - t0 < 30
+        assert _gone(_listed_pids(pidfile)[0])
+        with pytest.raises(subprocess.TimeoutExpired):
+            run_group(["sh", "-c", f'sleep 600 & echo $! > "{pidfile}"; sleep 600'],
+                      timeout=3)
+        assert _gone(_listed_pids(pidfile)[0])
+    finally:
+        _kill_listed(pidfile)
 
 
 def test_check_no_harness(tmp_path):

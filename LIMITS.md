@@ -26,6 +26,13 @@ produced it says, and nothing on this page.
   library is the threat, audit a build you made from source you reviewed, or
   use the prompt/response path, which runs none of the vendor's code
   ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
+- **Not a file swapped during the audit and put back.** pq-verify hashes the
+  library before the audit and again, by the same path, after it; if the two
+  differ, the result is `CANNOT VERIFY`. Someone who can write to the file
+  while the audit runs could replace it after the first hash and restore it
+  before the second, and the report would name the restored file. Where that
+  matters, audit the library from a read-only mount, so nothing can change it
+  during the run ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
 - **The code path this machine took.** A library that picks its code at run
   time (liboqs's distribution build chooses AVX2 or portable code from the
   CPU's features) is audited on the path the auditing CPU selects. Another

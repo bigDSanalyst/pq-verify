@@ -3,10 +3,64 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.17.2] — 2026-11-09
+
+A bug-fix release for the child process every library audit runs in. Four
+bugs, each found by running a misbehaving stand-in library through it: the
+report could bind a library that changed during the audit to its old hash; a
+crash could be reported as a timeout, an hour late; processes a library
+started outlived the audit; and a library could hold pq-verify past
+`--audit-timeout`. The constant-time runs under Valgrind and the source
+audit's exhaustive test had the second and third faults too. None changes a
+pinned result: the pinned libraries do none of these things. No pinned
+vector or exit code changes.
+
+### Fixed
+
+- **A library that changed during the audit could still be bound to its old
+  hash.** pq-verify hashed the file before the audit and, after it, hashed
+  only the files `/proc/self/maps` listed. That listing split each line at
+  every space and kept only names containing `.so`, so a library in a
+  directory with a space in its name, or named without `.so`, was never
+  hashed again. Changed between the hash and the load, such a library was
+  reported against the old hash: `VERIFIED`, though other bytes ran. The
+  audited path is now hashed again after the run whatever its name, and a
+  difference is `CANNOT VERIFY`; `artifact.loaded_objects` lists every mapped
+  file that holds code, whatever its name or path.
+- **A crash after the library started a process was reported as a timeout,
+  after the whole `--audit-timeout`** (an hour by default). The process
+  inherited the pipe the child reports through, so pq-verify never saw the
+  pipe close. The child's exit is now watched directly: on Linux through a
+  pidfd, which no other process can hold open, and elsewhere by polling its
+  exit status.
+- **Processes a library started outlived the audit, and pq-verify.** The
+  timeout stopped only the child. The child now leads a process group of its
+  own, and the group is stopped at the deadline, after a crash, and when the
+  audit ends. Because a terminal's Ctrl-C or a kill aimed at pq-verify no
+  longer reaches that group, the child ends it itself when pq-verify goes
+  away. A `--audit-harness` harness leads its own group too, so a process it
+  starts (a wrapper script's, say) is stopped with it. A process that leaves
+  the group, as a daemon does, is out of reach; SECURITY.md says how a
+  container covers it.
+- **A library could hold pq-verify past `--audit-timeout`.** Messages from
+  the child were read in pq-verify's main thread, and a read returns only
+  once a whole message has arrived: a library that wrote part of one into the
+  pipe made pq-verify wait for ever. Messages are now read on a thread of
+  their own, and the deadline holds.
+- **The same two faults in the programs that run vendor code outside the
+  child**: the constant-time runs under Valgrind (`--constant-time`) and the
+  source audit's exhaustive test. Their output was captured through pipes,
+  so a process the vendor code started held a finished run open until its
+  timeout, which was then reported, and lived on after it. They now run in a
+  process group of their own and write their output to files, and the group
+  is stopped when they end.
 
 ### Changed
 
+- **LIMITS.md says what the before-and-after hash cannot catch**: a file
+  swapped during the audit and put back before the second hash. SECURITY.md
+  gives a container command with limits on memory, processes and CPU, which
+  pq-verify does not set, and with the library mounted read-only.
 - **v2.17.1 has its own Zenodo deposit**,
   [10.5281/zenodo.24080421](https://doi.org/10.5281/zenodo.24080421).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry

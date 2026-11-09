@@ -54,6 +54,7 @@ import os as _os
 import queue as _queue
 import shlex as _shlex
 import shutil as _shutil
+import signal as _signal
 import subprocess as _sp
 import threading as _threading
 
@@ -83,8 +84,11 @@ class Harness:
         self.timeout = timeout
         self.calls = 0
         try:
+            # A process group of its own, so close() stops the harness and
+            # anything it started (a wrapper script's child, say) together.
             self.proc = _sp.Popen(self.argv, stdin=_sp.PIPE, stdout=_sp.PIPE,
-                                  stderr=_sp.DEVNULL, bufsize=0)
+                                  stderr=_sp.DEVNULL, bufsize=0,
+                                  start_new_session=True)
         except OSError as exc:
             raise HarnessDied(f"cannot start the harness: {exc}") from None
         self._lines = _queue.Queue()
@@ -175,8 +179,16 @@ class Harness:
         try:
             self.proc.wait(timeout=5)
         except _sp.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait()
+            pass
+        # The harness leads its own process group (start_new_session): end
+        # the group, so no process the harness started in it outlives the
+        # audit.
+        try:
+            _os.killpg(self.proc.pid, _signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pass
+        self.proc.kill()
+        self.proc.wait()
 
 
 def _out(outs, key, function):
