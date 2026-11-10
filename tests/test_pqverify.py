@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.17.2"
+    assert pq_verify.__version__ == VERSION == "2.17.3"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
@@ -1453,6 +1453,124 @@ def test_malformed_response_never_crashes_and_never_verifies(name, tmp_path):
     assert r["passed"] <= r["total"]
 
 
+# ----------------------------------------------------------------------
+# Text from a vendor is shown, never obeyed
+#
+# A response, a transcript and a harness's replies are written by the party
+# being checked. Printed raw, an escape sequence in one of their strings
+# erased a line, printed "RESULT: VERIFIED" and hid what followed, and a line
+# break followed by "::" became a GitHub Actions workflow command: a fake
+# annotation, a mask over the real verdict. The exit status and the reports
+# never changed; what a person read did.
+# ----------------------------------------------------------------------
+
+_SPOOF = ("\x1b[2K\r  RESULT: VERIFIED \u2705\x1b[8m\n"
+          "::error title=pq-verify::VERIFIED\n::add-mask::CANNOT VERIFY\u202e")
+
+
+def _acts_on_a_terminal(out):
+    """(characters that would act on a terminal, lines GitHub would run)."""
+    import re
+    bad = re.findall("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029"
+                     "\u202a-\u202e\u2066-\u2069]", out)
+    return bad, [ln for ln in out.split("\n") if ln.lstrip().startswith("::")]
+
+
+def _verdict_lines(out):
+    return [ln.strip() for ln in out.splitlines() if ln.strip().startswith("RESULT:")]
+
+
+def test_shown_escapes_what_would_act_on_a_terminal():
+    from pq_verify.display import shown
+    assert shown("acme ML-KEM 1.0 — ok") == "acme ML-KEM 1.0 — ok"
+    assert shown("a\x1b[2Kb\r\n\t") == "a\\x1b[2Kb\\r\\n\\t"
+    assert shown("x\u202ey\u2028z\x85") == "x\\u202ey\\u2028z\\x85"
+    assert shown("  ::error::x") == "  \\x3a:error::x"
+    assert shown(7) == "7" and shown(None) == "None"
+    cut = shown("a" * 250)
+    assert cut.startswith("a" * 200) and cut.endswith("(50 more characters)")
+
+
+def test_guarded_output_keeps_every_line_from_acting():
+    """The backstop around the command line: whatever reaches print() without
+    shown() still cannot act, however the line arrives in pieces."""
+    import io
+    from pq_verify.display import _Guard
+    buf = io.StringIO()
+    g = _Guard(buf)
+    for chunk in ("  ", "::error::x\n", "ok: a\x1bb\r\n", ":", ":add-mask::y\n",
+                  "\u3000::warning::z\n", "  RESULT: CANNOT VERIFY\n"):
+        assert g.write(chunk) == len(chunk)
+    assert buf.getvalue() == ("  \\x3a:error::x\n"
+                              "ok: a\\x1bb\\r\n"
+                              "\\x3a:add-mask::y\n"
+                              "\u3000\\x3a:warning::z\n"
+                              "  RESULT: CANNOT VERIFY\n")
+
+
+def _spoofed_response(tmp_path):
+    import json as _json
+    p = tmp_path / "response.json"
+    p.write_text(_json.dumps({
+        "parameterSet": "ML-KEM-512", "promptId": _SPOOF, "implementation": _SPOOF,
+        "artifact": {"sha256": _SPOOF},
+        "suites": [{"suite": _SPOOF, "testGroups": [
+                       {"tgId": 1, "tests": [{"tcId": _SPOOF, "ek": "00"}]}]},
+                   {"suite": "ML-KEM-keyGen-FIPS203", "testGroups": [
+                       {"tgId": 1, "tests": [{"tcId": 999999, "ek": "00", "dk": "00"}]}]}]}))
+    return p
+
+
+def test_a_response_cannot_write_to_the_terminal_or_the_ci_log(tmp_path):
+    from pq_verify.response import verify_response
+    p = _spoofed_response(tmp_path)
+    code, out = _cli("--verify-response", str(p), "--json", str(tmp_path / "r.json"))
+    with contextlib.redirect_stdout(io.StringIO()) as direct:     # no guard: shown() alone
+        r = verify_response(str(p), verbose=True)
+    for text in (out, direct.getvalue()):
+        assert _acts_on_a_terminal(text) == ([], [])
+        verdicts = _verdict_lines(text)
+        assert len(verdicts) == 1 and not verdicts[0].startswith("RESULT: VERIFIED"), verdicts
+        assert "\\x1b[2K" in text                      # shown, as text
+    assert code == 1 and r["verified"] is False
+
+
+def test_a_hybrid_transcript_cannot_write_to_the_terminal_or_the_ci_log(tmp_path):
+    import json as _json
+    from pq_verify.hybrid import verify_hybrid
+    p = tmp_path / "transcript.json"
+    p.write_text(_json.dumps({"group": "X25519MLKEM768", "implementation": _SPOOF,
+                              "artifact": _SPOOF, "transcript": {"clientShare": _SPOOF}}))
+    code, out = _cli("--verify-hybrid", str(p))
+    with contextlib.redirect_stdout(io.StringIO()) as direct:
+        r = verify_hybrid(str(p), verbose=True)
+    for text in (out, direct.getvalue()):
+        assert _acts_on_a_terminal(text) == ([], [])
+        verdicts = _verdict_lines(text)
+        assert len(verdicts) == 1 and not verdicts[0].startswith("RESULT: VERIFIED"), verdicts
+        assert "\\x1b[2K" in text
+    assert code == 1 and r["verified"] is False
+
+
+def test_a_harness_cannot_write_to_the_terminal_or_the_ci_log(tmp_path):
+    """The implementation a harness names in its handshake is printed; this
+    one names the spoof, then exits."""
+    import shlex, sys
+    from pq_verify.harness_audit import pqverify_audit_harness
+    script = tmp_path / "spoof_harness.py"
+    script.write_text("import json\n"
+                      f"print(json.dumps({{'implementation': {_SPOOF!r}, "
+                      "'functions': ['ML_KEM_KeyGen']}), flush=True)\n")
+    cmd = [sys.executable, str(script)]
+    code, out = _cli("--audit-harness", shlex.join(cmd), "ML-KEM-512")
+    with contextlib.redirect_stdout(io.StringIO()) as direct:
+        r = pqverify_audit_harness(cmd, "ML-KEM-512", verbose=True, accumulated=0, timeout=10)
+    for text in (out, direct.getvalue()):
+        assert _acts_on_a_terminal(text) == ([], [])
+        assert "\\x1b[2K" in text
+    assert code != 0 and r["verified"] is False
+
+
 def test_oversized_answer_is_a_finding_not_a_crash(tmp_path):
     import json as _json
     p = tmp_path / "r.json"
@@ -2821,6 +2939,9 @@ int stub_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *c)
 int stub_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek,
                         const uint8_t *m) {
     (void)ct; (void)ss; (void)m;
+#if defined(OVERFLOW_CT)
+    ct[1088 + 7] = 0x5A;              /* ML-KEM-768: 8 bytes past the ciphertext */
+#endif
 #if defined(REJECT_ALL)
     (void)ek; return -1;
 #elif defined(MODULUS_CHECK)
@@ -2835,6 +2956,9 @@ int stub_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek,
 }
 int stub_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *dk) {
     (void)ss; (void)ct; (void)dk;
+#if defined(UNDERFLOW_SS)
+    ss[-1] = 0x5A;                    /* one byte before the shared secret */
+#endif
 #if defined(REJECT_ALL)
     return -1;
 #else
@@ -2856,6 +2980,36 @@ def _stub_kem(tmp_path, variant):
     subprocess.run([cc, "-shared", "-fPIC", "-O1", *flags, "-o", str(so),
                     str(src)], check=True)
     return str(so)
+
+
+@pytest.mark.parametrize("variant, where", [("OVERFLOW_CT", "encaps argument 1"),
+                                            ("UNDERFLOW_SS", "decaps argument 1")])
+def test_a_kem_that_writes_outside_its_buffer_is_not_verified(tmp_path, variant, where):
+    """A write past a buffer pq-verify gave the library corrupted the audit's
+    own memory and, short of a crash, went unreported. Every buffer now sits
+    between guard bytes, and a changed guard fails the audit."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(_stub_kem(tmp_path, variant), "ML-KEM-768", accumulated=0)
+    assert r["verified"] is False and r["detail"]["bounds"] == (0, 1)
+    assert r["bounds"]["outside_total"] > 0
+    first = r["bounds"]["outside"][0]
+    assert f"{first['function']} argument {first['argument']}" == where
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert any(f.startswith("stage bounds: the library wrote outside a buffer")
+               for f in doc["findings"])
+    assert "FAIL  bounds" in out.getvalue()
+
+
+def test_a_kem_that_stays_inside_its_buffers_passes_the_bounds_check(tmp_path):
+    from pq_verify.core import pqverify_audit_kem
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(_stub_kem(tmp_path, None), "ML-KEM-768", accumulated=0)
+    assert "bounds" not in r["detail"]                 # no stage: totals as before
+    assert r["bounds"]["outside_total"] == 0 and r["bounds"]["calls"] > 0
+    assert "PASS  bounds" in out.getvalue()
 
 
 @pytest.mark.parametrize("variant, ek, dk", [
@@ -4379,6 +4533,30 @@ def test_dsa_audit_resolves_the_pqcrystals_abi_and_routes_each_interface(tmp_pat
     assert "preHashVerify" not in d and r["not_applicable"]["preHashVerify"][0] == 12
     assert "of its own" in r["not_applicable"]["preHashVerify"][1]
     assert r["verified"] and r["rng"] == []
+
+
+def test_a_dsa_that_signs_correctly_but_writes_past_the_signature_is_not_verified(tmp_path):
+    """Every signature right, and a byte written 4 bytes past the end of the
+    buffer it was given: 2.17.2 called this library VERIFIED, since nothing
+    looked past the end. The guard bytes do, and only they fail."""
+    from pq_verify.dsa_audit import pqverify_audit_dsa
+    from pq_verify.report import to_json_dsa
+    path, keep = _dsa_shim(tmp_path, flags=("-DOVERFLOW_SIG",))
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_dsa(path, "ML-DSA-65", edge=False, accumulated=0)
+    others = {k: v for k, v in r["detail"].items() if k != "bounds"}
+    assert others and all(p == t for p, t in others.values()), others
+    assert r["detail"]["bounds"] == (0, 1) and r["verified"] is False
+    assert r["status"] == "FINDINGS PRESENT"
+    o = r["bounds"]["outside"][0]
+    assert o["bytes"] == 3309 and o["where"] == "after the end" and o["argument"] == 1
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert any("wrote outside a buffer" in f for f in doc["findings"])
+    assert "FAIL  bounds" in out.getvalue()
+    clean, keep2 = _dsa_shim(tmp_path)
+    r2 = _audit_shim(clean, edge=False)
+    assert r2["verified"] and "bounds" not in r2["detail"]
+    assert r2["bounds"]["calls"] > 0 and r2["bounds"]["outside_total"] == 0
 
 
 def test_dsa_audit_catches_a_verifier_that_accepts_everything(tmp_path):
@@ -6448,6 +6626,23 @@ def _slhdsa_audit(so, **kw):
     from pq_verify.slhdsa_audit import pqverify_audit_slhdsa
     with contextlib.redirect_stdout(io.StringIO()):
         return pqverify_audit_slhdsa(so, "SLH-DSA-SHA2-128f", verbose=False, **kw)
+
+
+def test_an_slhdsa_library_that_writes_past_its_secret_key_is_not_verified(tmp_path):
+    """NIST's answers throughout, and a byte written past the 64-byte secret
+    key on seeded key generation. The audit used to leave 64 spare bytes after
+    each buffer and never look at them; the guard bytes are looked at."""
+    from pq_verify.report import to_json_slhdsa_audit
+    r = _slhdsa_audit(_slhdsa_oracle(tmp_path, flags=("-DPQVTEST_OVERFLOW_SK",)))
+    others = {k: v for k, v in r["detail"].items() if k != "bounds"}
+    assert others == _SLHDSA_128F                 # every NIST answer still right
+    assert r["detail"]["bounds"] == (0, 1) and r["verified"] is False
+    o = r["bounds"]["outside"][0]
+    assert (o["function"], o["argument"], o["bytes"], o["where"]) == \
+        ("keypair_seed", 1, 64, "after the end")
+    doc = to_json_slhdsa_audit(r, param_set="SLH-DSA-SHA2-128f")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert any("wrote outside a buffer" in f for f in doc["findings"])
 
 
 def test_slhdsa_audit_a_library_giving_nists_answers_verifies(tmp_path):

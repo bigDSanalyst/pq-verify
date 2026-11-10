@@ -387,6 +387,8 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                 "leak_free": all(p == t for p, t in ct["stages"].values())}
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}
+    if result.get("bounds"):
+        doc["bounds"] = result["bounds"]
     keycheck = result.get("keycheck") or {}
     doc["keycheck"] = keycheck
     findings = []
@@ -422,6 +424,10 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                                   for l in (ct.get("leaks") or {}).get(k[3:], []))
                 findings.append(f"stage {k}: secret-dependent behaviour under Valgrind "
                                 f"memcheck: {where}")
+            continue
+        if k == "bounds":
+            from .bounds import finding as _bounds_finding
+            findings.append(_bounds_finding(result["bounds"]))
             continue
         m = keycheck.get(k)
         if m is None:
@@ -490,6 +496,8 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
         doc["edge"] = {"vectors": edge.get("vectors"),
                        "not_applicable": edge.get("not_applicable", 0),
                        "failures": edge.get("failures", [])}
+    if result.get("bounds"):
+        doc["bounds"] = result["bounds"]
     findings = []
     acvp_fail = result.get("failures") or []
     edge_fail = edge.get("failures") or []
@@ -497,6 +505,10 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
         if k == "accumulated" and v[0] != v[1]:
             findings.append("ML-DSA: stage accumulated: " + (result.get("accumulated") or {})
                             .get("detail", "CCTV accumulated vectors did not match"))
+            continue
+        if k == "bounds":
+            from .bounds import finding as _bounds_finding
+            findings.append("ML-DSA: " + _bounds_finding(result["bounds"]))
             continue
         if k.startswith("ct:") and v[0] != v[1]:
             ct = ct or {}
@@ -668,8 +680,14 @@ def to_json_slhdsa_audit(result, artifact=None, param_set=None, library=None, re
     doc["not_applicable"] = {k: {"count": v[0], "reason": v[1]}
                              for k, v in (result.get("not_applicable") or {}).items()}
     fails = result.get("failures") or []
+    if result.get("bounds"):
+        doc["bounds"] = result["bounds"]
     findings = []
     for k, v in (result.get("detail") or {}).items():
+        if k == "bounds":
+            from .bounds import finding as _bounds_finding
+            findings.append("SLH-DSA: " + _bounds_finding(result["bounds"]))
+            continue
         if v[0] != v[1]:
             first = next((f for f in fails if f["stage"] == k), None)
             where = f"; first: {first['case']}: {first['detail']}" if first else ""

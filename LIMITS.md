@@ -207,10 +207,15 @@ pq-verify's reference and the source it is pinned to would not show.
   with. Beyond refusing repeats (a reused FN-DSA nonce or McEliece error
   vector is a finding), it does not assess a library's own random number
   generator or entropy source.
-- **Memory safety and the surrounding code.** Output-buffer bounds are
-  checked where an audit says so (HQC's `bounds` stage, for one). That is not fuzzing
-  or a review of the rest of the implementation: a passing NTT audit says the
-  transform is correct, not that the library is free of defects elsewhere.
+- **Memory safety and the surrounding code.** The ML-KEM, ML-DSA, SLH-DSA
+  and HQC audits give every buffer they pass the library 64 guard bytes on
+  each side and check them after every call; a write into them fails the
+  `bounds` stage. A write that skips past the guard bytes or lands elsewhere,
+  a read out of bounds and a use of freed memory are not caught: run the
+  library under AddressSanitizer or Valgrind for those. None of this is
+  fuzzing or a review of the rest of the implementation: a passing NTT audit
+  says the transform is correct, not that the library is free of defects
+  elsewhere.
 - **The self-suite.** Of its 160 checks, 54 verify post-quantum cryptography
   directly. The rest check the harness, or are classical and research
   engines, and are never counted as post-quantum evidence

@@ -38,11 +38,21 @@ int pqvtest_dilithium3_ref_keypair(uint8_t *pk, uint8_t *sk) {
   return KP(pk, sk, seed);
 }
 
+/* -DOVERFLOW_SIG: sign correctly, then write past the end of the signature
+   buffer, as an off-by-a-few overflow would. Only guard bytes show it. */
+#ifdef OVERFLOW_SIG
+#define AFTER_SIGN(sig) ((sig)[3309 + 3] = 0x5A)
+#else
+#define AFTER_SIGN(sig) ((void)0)
+#endif
+
 int pqvtest_dilithium3_ref_signature_internal(uint8_t *sig, size_t *siglen,
                                               const uint8_t *m, size_t mlen,
                                               const uint8_t *pre, size_t prelen,
                                               const uint8_t *rnd, const uint8_t *sk) {
-  return SG(sig, siglen, m, mlen, pre, prelen, rnd, sk);
+  int rc = SG(sig, siglen, m, mlen, pre, prelen, rnd, sk);
+  AFTER_SIGN(sig);
+  return rc;
 }
 
 int pqvtest_dilithium3_ref_signature(uint8_t *sig, size_t *siglen,
@@ -55,7 +65,9 @@ int pqvtest_dilithium3_ref_signature(uint8_t *sig, size_t *siglen,
   pre[1] = (uint8_t)ctxlen;
   if (ctxlen) memcpy(pre + 2, ctx, ctxlen);
   randombytes(rnd, 32);
-  return SG(sig, siglen, m, mlen, pre, 2 + ctxlen, rnd, sk);
+  int rc = SG(sig, siglen, m, mlen, pre, 2 + ctxlen, rnd, sk);
+  AFTER_SIGN(sig);
+  return rc;
 }
 
 int pqvtest_dilithium3_ref_verify_internal(const uint8_t *sig, size_t siglen,

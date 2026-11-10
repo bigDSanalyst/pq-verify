@@ -3,6 +3,48 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.3] — 2026-11-10
+
+A bug-fix release, from asking what a misbehaving vendor can do to what
+pq-verify shows and to the audit's own memory. Text from a vendor's file
+could act on the terminal and the CI log instead of appearing in them: the
+exit status and the reports were right, but what a person read could say
+otherwise. And a library that wrote a few bytes outside a buffer it was given
+went unreported unless it crashed, so a library with that defect could be
+`VERIFIED`. No pinned result changes. `--acvp-all` reads no vendor input and
+loads no vendor library, so neither affected it.
+
+### Fixed
+
+- **Text from a vendor could act on the terminal and the CI log.**
+  `--verify-response`, `--verify-hybrid` and `--audit-harness` print strings
+  the vendor wrote: the implementation it names, the hash it asserts, an
+  identifier that did not match. Printed raw, an escape sequence could erase a
+  line, print `RESULT: VERIFIED` and hide the real verdict, and a line break
+  followed by `::` became a GitHub Actions workflow command: an error
+  annotation reading VERIFIED, or a mask over `FINDINGS PRESENT` in the log.
+  Those strings are now printed with their control characters escaped
+  (`\x1b`, `\n`, `\u202e`), and the command line's output passes through a
+  filter that escapes whatever reaches it anyway and keeps any line from
+  starting with `::`.
+- **A library that wrote outside a buffer went unreported unless it
+  crashed.** The ML-KEM, ML-DSA and SLH-DSA audits now give every buffer they
+  pass the library 64 guard bytes on each side and check them after every
+  call, as the HQC audit always has. A changed guard is a failed `bounds`
+  stage, `FINDINGS PRESENT`: a library that signs correctly and then writes
+  a byte just past the end of the signature was `VERIFIED` before. A passing audit's counts
+  are unchanged, and its JSON report gains `bounds` (calls checked, writes
+  found). The SLH-DSA audit's 64 spare bytes after each buffer, never looked
+  at, are gone; the guard bytes take their place and are looked at.
+
+### Changed
+
+- **LIMITS.md** says what the guard bytes do not catch: a write past them or
+  elsewhere, a read out of bounds, a use of freed memory.
+- **SECURITY.md** lists the escaping fix under "Fixed in 2.17.3".
+- The hint for a missing slh-dsa now says `pip install "pq-verify[full]"`,
+  as the hints for kyber-py and dilithium-py do.
+
 ## [2.17.2] — 2026-11-09
 
 A bug-fix release for the child process every library audit runs in. Four

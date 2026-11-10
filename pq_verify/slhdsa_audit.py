@@ -98,6 +98,7 @@ import hashlib as _hashlib
 import os as _os
 import re as _re
 
+from .bounds import Guarded, outside_writes, print_line as print_bounds
 from .dsa_audit import _OQSRNG
 
 # FIPS 205 Table 2: n and the signature size; pk is 2n bytes, sk 4n.
@@ -206,7 +207,10 @@ def _opt(b):
 
 
 class VendorSLHDSA:
-    SLACK = 64          # never trust a size: room to see a write past the end
+    # Buffers are the sizes FIPS 205 gives. The room to see a write past the
+    # end is the guard bytes every call's buffers sit between (pq_verify.bounds),
+    # which are checked; slack bytes here would hide a short overflow.
+    SLACK = 0
 
     def __init__(self, so_path, param_set, symbols=None, prefix=None):
         self.path = _os.path.abspath(so_path)
@@ -243,7 +247,7 @@ class VendorSLHDSA:
                 continue
             f = getattr(self.lib, s)
             f.restype, f.argtypes = sigs[role]
-            self.fn[role] = f
+            self.fn[role] = Guarded(f, role)
 
     def has(self, role):
         return role in self.fn and self.prm is not None
@@ -390,7 +394,7 @@ class VendorSLHDSAOQS:
     """One parameter set of liboqs's SLH-DSA, through the API its users call
     (the oqs convention in the module docstring). Same methods as
     VendorSLHDSA; a call the API cannot express raises NotApplicable."""
-    SLACK = 64
+    SLACK = 0           # as in VendorSLHDSA: the guard bytes are the room past the end
     _ARGS = {"keypair": ("keypair", [_P8, _P8]),
              "sign": ("sign", [_P8, _ct.POINTER(_SZ), _P8, _SZ, _P8]),
              "sign_ctx": ("sign_with_ctx_str", [_P8, _ct.POINTER(_SZ), _P8, _SZ, _P8, _SZ, _P8]),
@@ -413,7 +417,8 @@ class VendorSLHDSAOQS:
                 if prefix + suffix in exported:
                     f = getattr(self.lib, prefix + suffix)
                     f.restype, f.argtypes = _ct.c_int, args
-                    self.fn[(role, ph)], self.names[(role, ph)] = f, prefix + suffix
+                    self.fn[(role, ph)] = Guarded(f, prefix + suffix)
+                    self.names[(role, ph)] = prefix + suffix
         # The internal interface: liboqs exports slhdsa-c's own functions and
         # parameter objects (src/sig/slh_dsa/patches/internal_api.patch).
         self.param_name = param_symbol(param_set)
@@ -428,7 +433,7 @@ class VendorSLHDSAOQS:
             if sym in exported and self.prm is not None:
                 f = getattr(self.lib, sym)
                 f.restype, f.argtypes = res, args
-                self.fn[(role, None)], self.names[(role, None)] = f, sym
+                self.fn[(role, None)], self.names[(role, None)] = Guarded(f, sym), sym
         hook = {"OQS_randombytes_custom_algorithm", "OQS_randombytes_switch_algorithm"}
         self.rng = _OQSDraws(self.lib) if hook <= exported else None
         self._new = self._free = None
@@ -909,6 +914,9 @@ def pqverify_audit_slhdsa(so_path, param_set="SLH-DSA-SHA2-128f", symbols=None, 
         T = run(v, vector_dir, live)
     finally:
         v.close()
+    bounds = outside_writes(*v.fn.values())
+    if bounds["outside_total"]:
+        T.detail["bounds"] = (0, 1)
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
@@ -924,6 +932,7 @@ def pqverify_audit_slhdsa(so_path, param_set="SLH-DSA-SHA2-128f", symbols=None, 
                 print(f"  n/a   {s:15s} {c}: {why}")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+        print_bounds(bounds)
         print("=" * 68)
         status = "VERIFIED" if verified else ("FINDINGS PRESENT" if t_all else "CANNOT VERIFY")
         print(f"  RESULT: {p_all}/{t_all} — {status}"
@@ -934,5 +943,5 @@ def pqverify_audit_slhdsa(so_path, param_set="SLH-DSA-SHA2-128f", symbols=None, 
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "failures": T.failures, "library": v.path, "vectors": source,
-            "standard": "FIPS 205", "param_set": param_set,
+            "standard": "FIPS 205", "param_set": param_set, "bounds": bounds,
             "symbols": v.symbols()}

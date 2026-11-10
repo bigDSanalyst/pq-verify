@@ -37,6 +37,7 @@ import argparse
 import sys
 
 from . import __version__
+from .display import guarded_output, shown
 from .core import (
     main as run_selftest,
     pqverify_acvp,
@@ -399,6 +400,14 @@ def build_parser():
 
 
 def main(argv=None):
+    """The command line. Its output passes through display.guarded_output:
+    text a vendor wrote (a response, a transcript, a harness's replies) is
+    escaped before it reaches a terminal or a CI log, wherever it is printed."""
+    with guarded_output():
+        return _main(argv)
+
+
+def _main(argv=None):
     args = build_parser().parse_args(argv)
 
     # A modifier without the task it modifies used to be ignored, so a typo'd
@@ -1290,7 +1299,7 @@ def main(argv=None):
         if json_doc is not None:
             write(args.json, json_doc)
             print(f"  wrote {args.json}  (report for {reported}; "
-                  f"artifact: {json_doc['artifact']['summary']})")
+                  f"artifact: {shown(json_doc['artifact']['summary'], 400)})")
         else:
             print(f"  note: --json wrote nothing — this task emits no "
                   f"machine-readable report")

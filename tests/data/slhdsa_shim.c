@@ -7,7 +7,8 @@
  * order, and any other input with a stand-in signature.
  * Built with -DPQVTEST_NO_PREHASH it has no pre-hash entry points; with
  * -DPQVTEST_TWO_SIGNERS it exports a second pure signer, which makes that role
- * ambiguous.
+ * ambiguous; with -DPQVTEST_OVERFLOW_SK seeded key generation writes a byte
+ * past the end of the secret key after producing the right one.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -33,7 +34,12 @@ void pqvtest_slhdsa_register(kg_cb a, kgr_cb b, sign_cb c, ver_cb d)
 int slh_keygen_internal(uint8_t *sk, uint8_t *pk, const uint8_t *sk_seed,
                         const uint8_t *sk_prf, const uint8_t *pk_seed, const slh_param_t *prm)
 {
-    (void)prm; return KG(sk, pk, sk_seed, sk_prf, pk_seed);
+    (void)prm;
+    int rc = KG(sk, pk, sk_seed, sk_prf, pk_seed);
+#ifdef PQVTEST_OVERFLOW_SK
+    sk[64 + 2] = 0x5A;     /* a right key, then a byte 3 past the 64-byte sk */
+#endif
+    return rc;
 }
 int slh_keygen(uint8_t *sk, uint8_t *pk, int (*rbg)(uint8_t *, size_t), const slh_param_t *prm)
 {
