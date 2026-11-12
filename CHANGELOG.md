@@ -3,10 +3,41 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.17.4] — 2026-11-13
+
+A maintenance release: pq-verify's page on PyPI, the Python versions CI
+tests, the Action run on GitHub's own runner, and the Coq version the proofs
+are checked with. pq-verify's checks are unchanged; no pinned result or exit
+code changes.
+
+### Fixed
+
+- **Every link on the PyPI page led to a 404.** The README is also the
+  package's description on PyPI, which resolves a relative link against
+  pypi.org: all 47 of them, to AUDITS.md, LIMITS.md and the rest, led nowhere
+  there. They now point at the files on GitHub. A test keeps the README free
+  of relative links, and the link check follows the absolute ones to files and
+  headings that exist.
+
+### Added
+
+- **The Action runs on GitHub's own runner in CI.** Only the command line ran
+  in CI before, not the Action around it.
+  `.github/workflows/action-selftest.yml` uses it as a workflow would: the NIST
+  suites and an `--audit-so` audit of PQClean's ML-KEM-1024 NTT, built at the
+  commit the vendor audits pin, after which the job checks the outputs and
+  that the SARIF reached code scanning; then a hybrid transcript written to set
+  the `verified` output through both of the runner's command forms, on the
+  path where the Action stops early, before it writes any output of its own,
+  so that the output is set only if the transcript set it.
+- **Python 3.14** in CI's test matrix, the release workflow's and the
+  package's classifiers.
 
 ### Changed
 
+- **The docs name the Coq the proofs are checked with**: 8.18.0, the version
+  Ubuntu 24.04 packages. CI fails if the runner's Coq is another, and a test
+  keeps README, LIMITS.md and EVIDENCE.md naming the version CI checks.
 - **v2.17.3 has its own Zenodo deposit**,
   [10.5281/zenodo.24159905](https://doi.org/10.5281/zenodo.24159905).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry

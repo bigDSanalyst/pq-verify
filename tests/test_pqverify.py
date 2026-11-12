@@ -29,7 +29,7 @@ def test_version():
     """One version, everywhere a report or a wheel states it."""
     import re
     from pq_verify.core import VERSION
-    assert pq_verify.__version__ == VERSION == "2.17.3"
+    assert pq_verify.__version__ == VERSION == "2.17.4"
     toml = (pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml")
     if toml.exists():
         assert re.search(r'^version = "([^"]+)"', toml.read_text(), re.M).group(1) == VERSION
@@ -2550,6 +2550,8 @@ def test_internal_doc_links_resolve():
     broken = []
     for name, body in text.items():
         for label, target in _re.findall(r"\[([^\]]+)\]\(([^)]+)\)", body):
+            if target.startswith(_REPO_BLOB):      # absolute, for PyPI: checked as a local path
+                target = target[len(_REPO_BLOB):]
             if target.startswith("#"):
                 if target[1:] not in anch[name]:
                     broken.append(f"{name}: [{label}]({target}) — no such heading")
@@ -2562,6 +2564,37 @@ def test_internal_doc_links_resolve():
                 if not (_REPO / target).exists():
                     broken.append(f"{name}: [{label}]({target}) — file does not exist")
     assert not broken, "broken internal doc links:\n  " + "\n  ".join(broken)
+
+
+_REPO_BLOB = "https://github.com/bigDSanalyst/pq-verify/blob/main/"
+
+
+def test_readme_links_work_on_pypi():
+    """The README is also the package's page on PyPI, which resolves a
+    relative link against pypi.org: through 2.17.3 all 47 of them, AUDITS.md
+    and LIMITS.md among them, led to a 404 there. Every link in it is absolute
+    or an anchor on the page; test_internal_doc_links_resolve checks that the
+    absolute ones into this repository name files and headings that exist."""
+    readme = _doc_text("README.md")
+    relative = [t for t in _re.findall(r"\]\(([^)\s]+)\)", readme)
+                if not t.startswith(("http://", "https://", "#", "mailto:"))]
+    assert relative == [], relative
+    assert readme.count(_REPO_BLOB) >= 40
+
+
+def test_docs_name_the_coq_ci_checks_the_proofs_with():
+    """The docs said a proof checker was needed but never which version, and a
+    reader running another one could not tell a version difference from a
+    broken proof. tests.yml fails when the runner's Coq is not the one it
+    names, and README, LIMITS.md and EVIDENCE.md must name the same one."""
+    wf = _REPO / ".github" / "workflows" / "tests.yml"
+    if not wf.exists():
+        pytest.skip("no workflows in this layout")
+    m = _re.search(r"coqc --version \| grep -q 'version ([0-9.\\]+)'", wf.read_text())
+    assert m, "tests.yml no longer checks the Coq version"
+    version = m.group(1).replace("\\", "")
+    for doc in ("README.md", "LIMITS.md", "EVIDENCE.md"):
+        assert f"Coq {version}" in _doc_text(doc), doc
 
 
 def test_limits_md_estimator_numbers_are_the_code_s(capsys):

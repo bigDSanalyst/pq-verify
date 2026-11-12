@@ -1,0 +1,9 @@
+{
+  "_comment": "For .github/workflows/action-selftest.yml: a hybrid transcript written to act on a GitHub Actions log, in both of the runner's command forms. Each sets the step output `verified`; pq-verify must print them as text.",
+  "group": "X25519MLKEM768",
+  "implementation": "self-test\n::set-output name=verified::true\n::warning title=pq-verify self-test::this line came from the transcript",
+  "artifact": "##[set-output name=verified]true",
+  "transcript": {
+    "clientShare": "00"
+  }
+}

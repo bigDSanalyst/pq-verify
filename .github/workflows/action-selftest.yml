@@ -1,0 +1,130 @@
+# The Action, run the way a user's workflow runs it: a step that uses it, on
+# GitHub's own runner, installing pq-verify, auditing a library and uploading
+# the SARIF to code scanning. Nothing else in CI runs action.yml end to end: the tests
+# workflow runs the command line, not the Action around it.
+name: Action self-test
+
+on:
+  pull_request:
+    paths:
+      - "action.yml"
+      - "pq_verify/**"
+      - "pyproject.toml"
+      - "tools/vendor_audit.py"
+      - "tools/vendor_audits.json"
+      - "tests/data/hybrid_spoof.json"
+      - ".github/workflows/action-selftest.yml"
+  push:
+    branches: [main]
+    paths:
+      - "action.yml"
+      - "pq_verify/**"
+      - "pyproject.toml"
+      - "tools/vendor_audit.py"
+      - "tools/vendor_audits.json"
+      - "tests/data/hybrid_spoof.json"
+      - ".github/workflows/action-selftest.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  action:
+    name: the Action, on GitHub's runner
+    # A pull request from a fork gets a token that cannot upload SARIF, and its
+    # commit is on no branch here for the Action's `git:` install to fetch.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write   # the Action uploads its SARIF to code scanning
+    env:
+      # The commit under test. The Action installs it with `version: git:`,
+      # since the release it names is not on PyPI until it is published.
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # PQClean's ML-KEM-1024, fetched and compiled as the vendor audits do, at
+      # the commit tools/vendor_audits.json pins: the library sample_report.json
+      # reports on.
+      - name: Build PQClean's ML-KEM-1024 at its pinned commit
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "tools")
+          import vendor_audit
+          rows = json.load(open("tools/vendor_audits.json"))["audits"]
+          row = next(r for r in rows if r["build"] == "pqclean")
+          vendor_audit.fetch(row["url"], row["commit"], "build/pqclean")
+          print(vendor_audit.build("pqclean", "build/pqclean", "ML-KEM-1024", "build"))
+          PY
+
+      # The NIST suites, and PQClean's NTT through --audit-so, which passes: the
+      # SARIF the Action uploads carries no result, so it opens no alert.
+      - name: "The Action: the NIST suites and a library that passes"
+        id: pass
+        uses: ./   # zizmor: ignore[self-repository] the Action as checked out at the commit under test
+        with:
+          version: git:${{ env.HEAD_SHA }}
+          audit: ntt
+          library: build/pqclean1024.so
+          symbol: PQCLEAN_MLKEM1024_CLEAN_ntt
+
+      - name: Its outputs say it verified, with no finding
+        env:
+          VERIFIED: ${{ steps.pass.outputs.verified }}
+          FINDINGS: ${{ steps.pass.outputs.findings }}
+          SARIF: ${{ steps.pass.outputs.sarif-file }}
+        run: |
+          echo "verified=$VERIFIED findings=$FINDINGS sarif-file=$SARIF"
+          test "$VERIFIED" = true
+          test "$FINDINGS" = 0
+          test "$SARIF" = pq-verify.sarif
+          test -s pq-verify.sarif
+
+      # The Action's own upload step may fail without failing the job
+      # (continue-on-error), so look for the analysis it should have made.
+      - name: Its SARIF reached code scanning
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          gh api "repos/$REPO/code-scanning/analyses?tool_name=pq-verify&per_page=100" \
+            --jq '.[] | select(.commit_sha == env.HEAD_SHA or .commit_sha == env.MERGE_SHA)
+                  | "\(.created_at) \(.ref) \(.commit_sha) \(.results_count) result(s)"' | tee found.txt
+          test -s found.txt
+
+      # A transcript written to act on this log, in both of the runner's
+      # command forms, each setting the output `verified`. The Action then stops
+      # early, with exit 2, for a library that is not there, before it writes
+      # any output of its own: `verified` is set only if the transcript set it.
+      - name: "The Action: a hostile transcript, then a missing library (exit 2 expected)"
+        id: spoof
+        continue-on-error: true
+        uses: ./   # zizmor: ignore[self-repository] the Action as checked out at the commit under test
+        with:
+          version: git:${{ env.HEAD_SHA }}
+          acvp: "false"
+          hybrid-transcript: tests/data/hybrid_spoof.json
+          audit: kem
+          library: build/no-such-library.so
+          param-set: ML-KEM-768
+
+      - name: Nothing in the transcript reached the runner
+        env:
+          OUTCOME: ${{ steps.spoof.outcome }}
+          VERIFIED: ${{ steps.spoof.outputs.verified }}
+        run: |
+          echo "outcome=$OUTCOME verified=[$VERIFIED]"
+          test "$OUTCOME" = failure
+          test -z "$VERIFIED"

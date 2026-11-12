@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,6 +149,14 @@ jobs:
           sudo apt-get update -qq
           # shellcheck disable=SC2086 # APT is a space-separated package list
           sudo apt-get install -y -qq $APT
+
+      # README, LIMITS.md and EVIDENCE.md name the Coq that checks the proofs;
+      # a new Ubuntu package must change them too, not pass unnoticed.
+      - name: Coq is the version the docs name
+        if: contains(matrix.apt, 'coq')
+        run: |
+          coqc --version
+          coqc --version | grep -q 'version 8\.18\.0'
 
       - name: Install (${{ matrix.profile }})
         env:
