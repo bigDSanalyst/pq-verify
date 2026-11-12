@@ -3,7 +3,7 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.17.3] — 2026-11-10
+## [2.17.3] — 2026-11-12
 
 A bug-fix release, from asking what a misbehaving vendor can do to what
 pq-verify shows and to the audit's own memory. Text from a vendor's file
@@ -23,21 +23,23 @@ about proofs and requirements as exact as LIMITS.md's.
   the vendor wrote: the implementation it names, the hash it asserts, an
   identifier that did not match. Printed raw, an escape sequence could erase a
   line, print `RESULT: VERIFIED` and hide the real verdict, and a line break
-  followed by `::` became a GitHub Actions workflow command: an error
-  annotation reading VERIFIED, or a mask over `FINDINGS PRESENT` in the log.
-  Those strings are now printed with their control characters escaped
-  (`\x1b`, `\n`, `\u202e`), and the command line's output passes through a
-  filter that escapes whatever reaches it anyway and keeps any line from
-  starting with `::`.
-- **A library that wrote outside a buffer went unreported unless it
-  crashed.** The ML-KEM, ML-DSA and SLH-DSA audits now give every buffer they
-  pass the library 64 guard bytes on each side and check them after every
-  call, as the HQC audit always has. A changed guard is a failed `bounds`
-  stage, `FINDINGS PRESENT`: a library that signs correctly and then writes
-  a byte just past the end of the signature was `VERIFIED` before. A passing audit's counts
-  are unchanged, and its JSON report gains `bounds` (calls checked, writes
-  found). The SLH-DSA audit's 64 spare bytes after each buffer, never looked
-  at, are gone; the guard bytes take their place and are looked at.
+  followed by `::`, or `##[` anywhere in a line (the runner's older form,
+  which it still obeys), became a GitHub Actions workflow command: an error
+  annotation reading VERIFIED, a mask over `FINDINGS PRESENT` in the log, an
+  output of the step. Those strings are now printed with their control
+  characters escaped (`\x1b`, `\n`, `\u202e`) and `##[` written `##\x5b`, and
+  the command line's output passes through a filter that does the same to
+  whatever reaches it anyway and keeps any line from starting with `::`.
+- **A library that wrote outside a buffer went unreported unless it crashed.**
+  The ML-KEM, ML-DSA and SLH-DSA audits now give every buffer they pass the
+  library 64 guard bytes on each side and check them after every call, as the
+  HQC audit always has. A changed guard is a failed `bounds` stage, `FINDINGS
+  PRESENT`: a library that signs correctly and then writes a byte just past
+  the end of the signature was `VERIFIED` before. A passing audit's counts are
+  unchanged, and its JSON report gains `bounds` (calls checked, and how many
+  wrote outside a buffer). The SLH-DSA audit's 64 spare bytes after each
+  buffer, never looked at, are gone; the guard bytes take their place and are
+  looked at.
 - **Without a C compiler, the self-suite and `--fndsa` ended in a
   traceback.** The engines are compiled at runtime, and a missing `gcc`
   raised out of the build helper instead of failing the build, so SECURITY.md's

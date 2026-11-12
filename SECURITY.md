@@ -107,12 +107,16 @@ result. Tests in `tests/test_pqverify.py` feed each path such a file.
   the vendor wrote: the implementation it names, the hash it asserts, an
   identifier that did not match. An escape sequence in one could erase a line,
   print `RESULT: VERIFIED` and hide the real verdict; a line break followed by
-  `::` became a GitHub Actions workflow command, such as an error annotation
-  or a mask over the verdict in the log. The exit status and the JSON and
-  SARIF reports were not affected. Those strings are now printed with their
-  control characters escaped, and all of the command line's output passes
-  through a filter that escapes whatever reaches it anyway and keeps any line
-  from starting with `::`.
+  `::`, or `##[` anywhere in a line (the runner's older form, which it still
+  obeys), became a GitHub Actions workflow command: an error annotation, a
+  mask over the verdict in the log, an output of the step. The exit status
+  and the JSON and SARIF reports were not affected, and the Action writes its
+  outputs after pq-verify has run, which replaces any set this way, unless
+  its step stops early, with exit 2, on a configuration error. Those strings
+  are now printed with their control characters escaped and `##[` written
+  `##\x5b`, and all of the command line's output passes through a filter
+  that does the same to whatever reaches it anyway and keeps any line from
+  starting with `::`.
 
 ## Fixed in 2.7.0
 

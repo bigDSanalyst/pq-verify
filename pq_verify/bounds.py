@@ -38,7 +38,7 @@ class Guarded:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "calls", 0)
         object.__setattr__(self, "outside", [])       # the first _KEEP, described
-        object.__setattr__(self, "outside_total", 0)
+        object.__setattr__(self, "outside_total", 0)  # calls that wrote outside
 
     def __getattr__(self, attr):
         return getattr(self._fn, attr)
@@ -67,18 +67,21 @@ class Guarded:
             return self._fn(*call)
         finally:
             self.calls += 1
+            hit = False
             for i, a, raw, n in moved:
                 base = _ct.addressof(raw)
                 before = _ct.string_at(base, GUARD) != _PATTERN
                 after = _ct.string_at(base + GUARD + n, GUARD) != _PATTERN
                 if before or after:
-                    self.outside_total += 1
+                    hit = True
                     if len(self.outside) < _KEEP:
                         self.outside.append({
                             "function": self.name, "argument": i + 1, "bytes": n,
                             "where": ("before the start and after the end" if before and after
                                       else "before the start" if before else "after the end")})
                 _ct.memmove(a, base + GUARD, n)
+            if hit:                    # a call, however many buffers it overran
+                self.outside_total += 1
 
 
 def outside_writes(*fns):

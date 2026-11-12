@@ -1491,13 +1491,19 @@ def test_malformed_response_never_crashes_and_never_verifies(name, tmp_path):
 # A response, a transcript and a harness's replies are written by the party
 # being checked. Printed raw, an escape sequence in one of their strings
 # erased a line, printed "RESULT: VERIFIED" and hid what followed, and a line
-# break followed by "::" became a GitHub Actions workflow command: a fake
-# annotation, a mask over the real verdict. The exit status and the reports
-# never changed; what a person read did.
+# break followed by "::", or "##[" anywhere in a line, became a GitHub Actions
+# workflow command: a fake annotation, a mask over the real verdict, a step
+# output. The exit status and the reports never changed; what a person read
+# did.
 # ----------------------------------------------------------------------
 
 _SPOOF = ("\x1b[2K\r  RESULT: VERIFIED \u2705\x1b[8m\n"
           "::error title=pq-verify::VERIFIED\n::add-mask::CANNOT VERIFY\u202e")
+
+
+# The runner's older form, which GitHub finds anywhere in a line: a step
+# output, then a mask over the verdict.
+_SPOOF += " ##[set-output name=verified]true ##[add-mask]CANNOT VERIFY"
 
 
 def _acts_on_a_terminal(out):
@@ -1505,7 +1511,7 @@ def _acts_on_a_terminal(out):
     import re
     bad = re.findall("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029"
                      "\u202a-\u202e\u2066-\u2069]", out)
-    return bad, [ln for ln in out.split("\n") if ln.lstrip().startswith("::")]
+    return bad, [ln for ln in out.split("\n") if ln.lstrip().startswith("::") or "##[" in ln]
 
 
 def _verdict_lines(out):
@@ -1518,6 +1524,7 @@ def test_shown_escapes_what_would_act_on_a_terminal():
     assert shown("a\x1b[2Kb\r\n\t") == "a\\x1b[2Kb\\r\\n\\t"
     assert shown("x\u202ey\u2028z\x85") == "x\\u202ey\\u2028z\\x85"
     assert shown("  ::error::x") == "  \\x3a:error::x"
+    assert shown("v ##[add-mask]x ###[error]y ####") == "v ##\\x5badd-mask]x ###\\x5berror]y ####"
     assert shown(7) == "7" and shown(None) == "None"
     cut = shown("a" * 250)
     assert cut.startswith("a" * 200) and cut.endswith("(50 more characters)")
@@ -1531,12 +1538,19 @@ def test_guarded_output_keeps_every_line_from_acting():
     buf = io.StringIO()
     g = _Guard(buf)
     for chunk in ("  ", "::error::x\n", "ok: a\x1bb\r\n", ":", ":add-mask::y\n",
-                  "\u3000::warning::z\n", "  RESULT: CANNOT VERIFY\n"):
+                  "\u3000::warning::z\n", "v #", "#[set-output name=verified]true\n",
+                  "#", "#", "#[add-mask]w\n", "x ##", "[error]z\n",
+                  "#" * 64 + "\n",                  # the ACVP summary's rule, as it was
+                  "  RESULT: CANNOT VERIFY\n"):
         assert g.write(chunk) == len(chunk)
     assert buf.getvalue() == ("  \\x3a:error::x\n"
                               "ok: a\\x1bb\\r\n"
                               "\\x3a:add-mask::y\n"
                               "\u3000\\x3a:warning::z\n"
+                              "v ##\\x5bset-output name=verified]true\n"
+                              "###\\x5badd-mask]w\n"
+                              "x ##\\x5berror]z\n"
+                              + "#" * 64 + "\n"
                               "  RESULT: CANNOT VERIFY\n")
 
 
@@ -2971,8 +2985,11 @@ int stub_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *c)
 int stub_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek,
                         const uint8_t *m) {
     (void)ct; (void)ss; (void)m;
-#if defined(OVERFLOW_CT)
+#if defined(OVERFLOW_CT) || defined(OVERFLOW_CT_SS)
     ct[1088 + 7] = 0x5A;              /* ML-KEM-768: 8 bytes past the ciphertext */
+#endif
+#if defined(OVERFLOW_CT_SS)
+    ss[32] = 0x5A;                    /* and, in the same call, past the secret */
 #endif
 #if defined(REJECT_ALL)
     (void)ek; return -1;
@@ -3033,6 +3050,20 @@ def test_a_kem_that_writes_outside_its_buffer_is_not_verified(tmp_path, variant,
     assert any(f.startswith("stage bounds: the library wrote outside a buffer")
                for f in doc["findings"])
     assert "FAIL  bounds" in out.getvalue()
+
+
+def test_a_call_that_writes_outside_two_buffers_counts_once(tmp_path):
+    """The finding says "in X of Y calls", so X counts calls: an encaps that
+    overruns the ciphertext and the shared secret is one call, not two."""
+    from pq_verify.core import pqverify_audit_kem
+    with contextlib.redirect_stdout(io.StringIO()):
+        one = pqverify_audit_kem(_stub_kem(tmp_path, "OVERFLOW_CT"), "ML-KEM-768", accumulated=0)
+        two = pqverify_audit_kem(_stub_kem(tmp_path, "OVERFLOW_CT_SS"), "ML-KEM-768",
+                                 accumulated=0)
+    assert two["bounds"]["calls"] == one["bounds"]["calls"]
+    assert 0 < two["bounds"]["outside_total"] == one["bounds"]["outside_total"] <= two["bounds"]["calls"]
+    assert {(o["function"], o["argument"]) for o in two["bounds"]["outside"]} == {
+        ("encaps", 1), ("encaps", 2)}
 
 
 def test_a_kem_that_stays_inside_its_buffers_passes_the_bounds_check(tmp_path):
