@@ -12,7 +12,9 @@ exit status and the reports were right, but what a person read could say
 otherwise. And a library that wrote a few bytes outside a buffer it was given
 went unreported unless it crashed, so a library with that defect could be
 `VERIFIED`. No pinned result changes. `--acvp-all` reads no vendor input and
-loads no vendor library, so neither affected it.
+loads no vendor library, so neither affected it. The release also fixes a
+traceback where no C compiler is installed, and makes the README's claims
+about proofs and requirements as exact as LIMITS.md's.
 
 ### Fixed
 
@@ -36,9 +38,36 @@ loads no vendor library, so neither affected it.
   are unchanged, and its JSON report gains `bounds` (calls checked, writes
   found). The SLH-DSA audit's 64 spare bytes after each buffer, never looked
   at, are gone; the guard bytes take their place and are looked at.
+- **Without a C compiler, the self-suite and `--fndsa` ended in a
+  traceback.** The engines are compiled at runtime, and a missing `gcc`
+  raised out of the build helper instead of failing the build, so SECURITY.md's
+  promise that checks needing an engine are reported as not run did not hold
+  there. A missing compiler is now a failed build: `--fndsa` runs its other
+  186 checks and names the native-engine check as not run, and the
+  self-suite reports each engine as not built, in a run marked degraded.
 
 ### Changed
 
+- **The README tells proofs from tests, as LIMITS.md does.** It said "the
+  full implementation is proven byte-exact against NIST's own bytes" and that
+  the NTT layers carry Coq proofs "for every input". Matching NIST's vectors
+  shows agreement on those inputs, not a proof; the Coq proofs cover the
+  forward NTTs and the modular reductions, over every input in range, as the
+  algorithms are written in Coq. The README now says exactly that, and its
+  `Proven` heading, over mostly test results, is now `Results`.
+- **The README's other absolute claims are narrowed.** "Nothing in
+  production negotiates bare ML-KEM" became what the hybrid checks need: a
+  hybrid TLS group joins ML-KEM to ECDH, and ACVP's vectors do not cover how.
+  HYBRID.md, the hybrid module and the demo notebook said it too, with "every
+  deployment ... runs a hybrid group"; they now say what browsers and the
+  large servers deploy.
+  "It does not compute PQC" became "a verification tool, not a cryptographic
+  library to deploy".
+- **The quick start says what its commands need.** It said "Python 3.9+,
+  `gcc`, and nothing else". The commands it lists need Python and the `[full]`
+  packages, no compiler, except `--fndsa`, which builds one C engine; the
+  self-suite needs `gcc` and `g++`. Requirements gains `--constant-time`
+  (Valgrind with its headers, and a C compiler).
 - **LIMITS.md** says what the guard bytes do not catch: a write past them or
   elsewhere, a read out of bounds, a use of freed memory.
 - **SECURITY.md** lists the escaping fix under "Fixed in 2.17.3".

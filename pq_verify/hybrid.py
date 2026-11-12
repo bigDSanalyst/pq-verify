@@ -1,9 +1,9 @@
 """
 pq_verify.hybrid — RFC 10024 hybrid key-agreement conformance.
 
-Nothing in production negotiates bare ML-KEM. Every deployment that has
-actually turned post-quantum TLS on runs a *hybrid* group: X25519MLKEM768 is
-what Chrome, Firefox, OpenSSL, BoringSSL and the large CDNs agree on today.
+Post-quantum TLS as browsers and the large servers deploy it runs a *hybrid*
+group: X25519MLKEM768 is what Chrome, Firefox, OpenSSL, BoringSSL and the
+large CDNs agree on today.
 
 The ML-KEM half of that handshake is covered by ``--acvp`` and ``--audit-kem``.
 The *composition* is not — and the composition is where the bugs are, because

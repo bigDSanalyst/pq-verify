@@ -712,8 +712,14 @@ def _cc(compiler, flags, out, src):
         attempts.append([("-mcpu=native" if f == "-march=native" else f) for f in flags])
         attempts.append([f for f in flags if f != "-march=native"])
     for used in attempts:
-        proc = subprocess.run([compiler, *used, '-o', out, src],
-                              capture_output=True, text=True)
+        try:
+            proc = subprocess.run([compiler, *used, '-o', out, src],
+                                  capture_output=True, text=True)
+        except OSError as exc:
+            # No such compiler: a build that failed, which every caller
+            # reports as a missing engine, not a traceback.
+            return subprocess.CompletedProcess([compiler], 127, "",
+                                               f"{compiler}: {exc.strerror or exc}")
         if proc.returncode == 0:
             ENGINE_FLAGS[os.path.basename(out)] = {
                 "flags": " ".join(used),

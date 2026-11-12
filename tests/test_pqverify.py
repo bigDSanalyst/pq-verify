@@ -1368,6 +1368,38 @@ def test_engine_compilation_does_not_use_a_shell():
         assert "os.system(" not in line, f"core.py:{i} shells out: {line.strip()[:80]}"
 
 
+def test_a_missing_compiler_is_a_failed_build_not_a_crash(tmp_path):
+    """The engines compile at runtime. Without gcc on PATH, subprocess raised
+    FileNotFoundError out of the build helper, so the self-suite and --fndsa
+    ended in a traceback, where SECURITY.md says the checks that need an
+    engine are reported as not run. A missing compiler is now a failed build,
+    which every caller reports that way."""
+    from pq_verify import core
+    src = tmp_path / "e.c"
+    src.write_text("int f(void) { return 0; }\n")
+    proc = core._cc("pqv-no-such-compiler", "-O1 -shared -fPIC", str(tmp_path / "e.so"), str(src))
+    assert proc.returncode != 0 and "pqv-no-such-compiler" in proc.stderr
+
+
+def test_fndsa_without_a_compiler_says_what_did_not_run(tmp_path):
+    """End to end, in a process of its own (the engines build once per
+    process) with nothing on PATH: no traceback, and the native-engine check
+    is named as not run, in a run reported as degraded."""
+    import os, pathlib, subprocess, sys
+    root = pathlib.Path(__file__).resolve().parent.parent
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    p = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+         "from pq_verify.cli import main; sys.exit(main(['--fndsa']))", str(root)],
+        capture_output=True, text=True, timeout=600, cwd=str(tmp_path),
+        env={"PATH": str(empty), "HOME": str(tmp_path)})
+    out = p.stdout + p.stderr
+    assert "Traceback" not in out, out[-1500:]
+    assert "native Z_q engine: not run (no working gcc)" in out
+    assert "DEGRADED RUN" in out and "engines unavailable: zq" in out
+
+
 def test_acvp_gate_fails_when_the_reference_implementations_are_missing(
         monkeypatch):
     """A broken dependency install must not report green.
