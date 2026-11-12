@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -226,7 +226,7 @@ jobs:
             echo '```'
             echo ""
             echo "Built by \`.github/workflows/release.yml\` from commit \`$SHA\`,"
-            echo "after the full suite and all 1566 NIST ACVP vectors passed on Python 3.9 through 3.13."
+            echo "after the full suite and all 1566 NIST ACVP vectors passed on Python 3.9 through 3.14."
             echo "An SPDX SBOM is attached and attested."
           } >> NOTES.md
 

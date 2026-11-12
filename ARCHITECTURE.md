@@ -460,12 +460,12 @@ pq_verify/
                            bouncycastle/: the Crucible-protocol harness for Bouncy
                            Castle's Java provider
   vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
-tests/test_pqverify.py     pytest suite (run on 3.9-3.13 in CI)
+tests/test_pqverify.py     pytest suite (run on 3.9-3.14 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor
 pyproject.toml             Build config + console-script entry point
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
-sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.17.3)
+sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.17.4)
 docs/                      CFL.md, DQBF.md, ECC.md, SEA.md: the research and classical
                            engines; REPINNING.md: updating the pinned NIST vectors
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md

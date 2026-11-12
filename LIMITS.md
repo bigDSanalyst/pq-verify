@@ -176,7 +176,9 @@ with no axiom and nothing admitted):
 | `pq_verify/coq/Reduce.v` | `montgomery_reduce` (ML-KEM and ML-DSA), `barrett_reduce` and `reduce32` are congruent to their input and within bound for every input in range, with no intermediate overflowing its C type |
 
 These are proofs about the algorithms as written in Coq, not about any
-vendor's compiled code.
+vendor's compiled code. CI checks them with Coq 8.18.0, the version Ubuntu
+24.04 packages, and fails if that version changes; no other version is tested,
+and a newer Coq or Rocq may need changes to the proof scripts.
 
 `--audit-source` proves something about a library's own C source, by CBMC,
 in C's semantics as CBMC models them. For ML-KEM: that four of its

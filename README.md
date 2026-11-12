@@ -1,4 +1,4 @@
-# pq-verify v2.17.3 — PQC Implementation Verification
+# pq-verify v2.17.4 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -15,7 +15,7 @@ You deploy post-quantum cryptography. pq-verify checks that **your** implementat
 
 - **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-slhdsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases where they exist, and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
 - **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
-- **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The FIPS 203 and FIPS 204 forward NTTs and their modular reductions carry Coq proofs over every input in range, about the algorithms as written in Coq ([what is proved, and what is only tested](LIMITS.md#proofs-and-tests)). This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
+- **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The FIPS 203 and FIPS 204 forward NTTs and their modular reductions carry Coq proofs over every input in range, about the algorithms as written in Coq ([what is proved, and what is only tested](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#proofs-and-tests)). This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
 
 Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: a CMVP certificate is issued by NIST and the Canadian Centre for Cyber Security, after an accredited laboratory has tested the module.
 
@@ -31,7 +31,7 @@ Layers of an audit:
 |-------|-------------------|-----|
 | **Correctness** | Does the NTT compute the FIPS definition? | Field-native verification + non-circular KAT |
 | **NIST vectors** | Does it match NIST's published vectors? | ML-KEM 240/240 + ML-DSA 615/615 + SLH-DSA 624/624 (keyGen and sigVer) + LMS 87/87 = 1566/1566 ACVP vectors (pinned); SLH-DSA sigGen 624/624 opt-in |
-| **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](LIMITS.md#parameter-security)) |
+| **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#parameter-security)) |
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
 Plus per-layer algebraic protection allocation: which NTT layers are worth
@@ -49,7 +49,7 @@ it.
 - **160/160** self-test across 6 field-native engines, of which **54 verify
   PQC directly**; the others check the harness itself or are classical and
   research engines, never counted as PQC evidence
-  ([how the checks are tracked](ARCHITECTURE.md#engines-and-where-they-are-heading)).
+  ([how the checks are tracked](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#engines-and-where-they-are-heading)).
   A check whose optional dependency is missing reports `⊘ SKIPPED`, never a
   pass and never a failure
 - **NIST ACVP**, every vector passing: ML-KEM 240/240, ML-DSA 615/615,
@@ -62,11 +62,11 @@ it.
   forward NTTs compute the map they are defined to and that their modular
   reductions stay in bound, over every input in range. They are about the
   algorithms as written in Coq, not about compiled code; the rest is tested
-  ([LIMITS.md](LIMITS.md#proofs-and-tests))
+  ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#proofs-and-tests))
 
 All of it on commodity hardware (Google Colab CPU); each item in full, with
 the native full-KEM, non-circular KAT and lattice-estimator results, is in
-[ARCHITECTURE.md](ARCHITECTURE.md#proven-in-detail).
+[ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#proven-in-detail).
 
 ---
 
@@ -125,7 +125,7 @@ thing: Sign's rejection loop branches on secret-derived values by design, so
 only the library's own declarations of what is public can tell those branches
 from a leak. Build the library with them compiled in and pq-verify's shim in
 front of them; any other build is reported CANNOT VERIFY, never a pass
-([CONSTANT-TIME.md](CONSTANT-TIME.md)). For mldsa-native:
+([CONSTANT-TIME.md](https://github.com/bigDSanalyst/pq-verify/blob/main/CONSTANT-TIME.md)). For mldsa-native:
 
 ```bash
 H=$(python3 -c 'import os, pq_verify; print(os.path.join(os.path.dirname(pq_verify.__file__), "harness"))')
@@ -150,7 +150,7 @@ pq-verify --audit-slhdsa liboqs.so SLH-DSA-SHA2-128f   # its pure and 12 HashSLH
 The public API is what your application calls; a backend's prefix
 (`PQCP_MLKEM_NATIVE_MLKEM768_C_`, for one) audits the code a CPU without
 AVX2 runs. liboqs 0.16.0 passes all of it, per implementation, rebuilt and
-re-audited in CI ([AUDITS.md](AUDITS.md)).
+re-audited in CI ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
 
 For an implementation that cannot be loaded — an HSM, a sealed vendor binary,
 a build with the transform inlined — ask it the questions instead:
@@ -180,7 +180,7 @@ pq-verify --verify-hybrid hybrid.json                        # RFC 10024 composi
 `DEMO.ipynb` runs the same thing in Colab if you prefer a notebook.
 
 The Python API, and the other install routes, are in
-[ARCHITECTURE.md](ARCHITECTURE.md#public-api).
+[ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#public-api).
 
 ---
 
@@ -214,13 +214,13 @@ the library, with your user's privileges, so a library that corrupts memory or
 is built to deceive the audit can change its own verdict. A harness
 (`--audit-harness`) is a process of its own, with your user's privileges too.
 Audit a binary you do not trust in a container or a VM
-([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)). The child records
+([SECURITY.md](https://github.com/bigDSanalyst/pq-verify/blob/main/SECURITY.md#what-pq-verify-does-on-purpose)). The child records
 every shared object the audit mapped (`artifact.loaded_objects`: path, inode,
 sha256), so the binding covers the vendor library *and* what it pulled in — a
 libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
 `LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). The
 audited file is hashed before the run and again after it; if they differ, the
-verdict is `CANNOT VERIFY` ([LIMITS.md](LIMITS.md) says what that cannot catch).
+verdict is `CANNOT VERIFY` ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md) says what that cannot catch).
 
 **Never ship a test build.** The randomness harness and the pqv_hbs adapters
 make a library deterministic and stateless on purpose. `pq-verify
@@ -241,7 +241,7 @@ pq-verify --verify-response response.json --fresh-key audit.key
 
 How fresh questions are derived and checked, LMS key-reuse detection, the
 `scope` field, and how incomplete or unanswerable runs are reported:
-[ARCHITECTURE.md](ARCHITECTURE.md#what-a-result-is-bound-to-in-depth).
+[ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#what-a-result-is-bound-to-in-depth).
 
 ---
 
@@ -252,7 +252,7 @@ appear as annotations on the pull request, and the build fails on any result
 that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.3
+- uses: bigDSanalyst/pq-verify@v2.17.4
   with:
     audit: dsa                       # kem | dsa | slhdsa | fndsa | hbs | ntt
     library: build/libmldsa65.so
@@ -263,7 +263,7 @@ With no library at all, it runs the NIST ACVP suites against pq-verify's own
 reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.3
+- uses: bigDSanalyst/pq-verify@v2.17.4
 ```
 
 | Input | Default | Purpose |
@@ -277,13 +277,17 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.3` installs that release; and `git:<ref>` installs a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.4` installs that release; and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
 template substitution, and every action the Action uses is pinned to a commit.
 So is every action in this repository's own workflows, and a zizmor job fails
-CI on any workflow finding.
+CI on any workflow finding. CI also runs the Action itself, as a workflow
+would, on GitHub's runner: the NIST suites and an audit of PQClean's NTT with
+its SARIF uploaded to code scanning, and a hybrid transcript written to set the
+`verified` output through the runner's workflow commands, which must set
+nothing.
 Pin the Action itself to a full release tag, as the examples above do, or to a
 commit SHA. Do not use `@v1`: it marks the first upload and does not move to
 new releases. On v2.16.0 or earlier, also set `version` (for example
@@ -292,7 +296,7 @@ pq-verify otherwise.
 
 The library runs inside the job, with the job's permissions and any secrets in
 its environment, and it can make the audit report a pass it did not earn
-([LIMITS.md](LIMITS.md#what-a-pass-is-about)). Audit only a build the job would
+([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#what-a-pass-is-about)). Audit only a build the job would
 run anyway, and never a pull request's build under `pull_request_target`.
 
 **Exit status** of the CLI, since 2.10.0: `0` verified, `1` a task found
@@ -300,7 +304,7 @@ problems or could not verify, `2` bad input. Gating is the default;
 `--no-fail` reports without gating. Before 2.10.0 every task exited 0 unless
 `--fail-on-finding` was passed, which the Action did not pass for its ACVP
 step. A complete workflow is in
-[`example-workflow.yml`](example-workflow.yml).
+[`example-workflow.yml`](https://github.com/bigDSanalyst/pq-verify/blob/main/example-workflow.yml).
 
 ---
 
@@ -342,7 +346,7 @@ controls that correctly fail. Three have findings, each named in the table:
 PQClean's ML-KEM accepts NIST's invalid keys, xmss-reference has two
 key-state defects, and the HQC submitters' AVX2 Reed–Muller decoder has two
 defects. The rest verify clean. Exact commits, build commands and per-check
-output are in [AUDITS.md](AUDITS.md).
+output are in [AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md).
 
 | Implementation | What was audited | Result |
 |---|---|---|
@@ -357,11 +361,11 @@ output are in [AUDITS.md](AUDITS.md).
 | Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness (no external μ or 256-byte contexts, which the harness protocol cannot carry): NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 4,755/4,755; ML-DSA 1,368/1,368; every mutant caught |
 | slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
-| XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](AUDITS.md)); every mutant caught |
+| XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)); every mutant caught |
 | pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
 | BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
 | PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding, **constant-time Encaps and Decaps**; 24 mutants, including liboqs's wrapper and 7 planted leaks | 404/404 each; constant time 20/20 each; every mutant caught |
-| PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words, and the inner decoder against its own symmetries with no reference decoder; 10 mutants | references 9,836/9,836; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](AUDITS.md)); the symmetry check finds both on its own; every mutant caught |
+| PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words, and the inner decoder against its own symmetries with no reference decoder; 10 mutants | references 9,836/9,836; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)); the symmetry check finds both on its own; every mutant caught |
 
 The **full scheme** rows drive the library's own code with every NIST ACVP
 vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
@@ -372,7 +376,7 @@ independently computed FIPS reference.
 
 Every pinned library also carries **mutants**, one planted bug each, which CI
 requires the audit to fail; how `--audit-dsa` reaches each FIPS 204 interface,
-and randomised APIs, is in [ARCHITECTURE.md](ARCHITECTURE.md#how---audit-dsa-reaches-each-interface).
+and randomised APIs, is in [ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#how---audit-dsa-reaches-each-interface).
 
 ---
 
@@ -405,7 +409,7 @@ whose body is not in the source given, which CBMC would take to do nothing,
 and source holding CBMC directives or inline assembly. One of PQClean's
 parameter sets takes about 8 minutes for ML-KEM and 23 for ML-DSA. It needs
 `cbmc` and a C compiler, and for ML-DSA `z3` and Kissat. What it proves and
-what it does not is in [SOURCE-AUDIT.md](SOURCE-AUDIT.md).
+what it does not is in [SOURCE-AUDIT.md](https://github.com/bigDSanalyst/pq-verify/blob/main/SOURCE-AUDIT.md).
 
 ### Accumulated vectors: 10 000 random cases, one digest
 
@@ -418,7 +422,7 @@ passes every NIST, Wycheproof and CCTV vector and is caught here). Coverage is
 probabilistic: bugs rarer than about 1 in 10 000 operations may not be hit.
 ML-DSA digests are C2SP CCTV's; ML-KEM's are Go's, because CCTV's published
 ML-KEM digests turn out to be the FIPS 203 draft
-([details](pq_verify/accumulated.py)). `--accumulated 0` skips them.
+([details](https://github.com/bigDSanalyst/pq-verify/blob/main/pq_verify/accumulated.py)). `--accumulated 0` skips them.
 
 ### Any language: Crucible-protocol harnesses
 
@@ -438,12 +442,12 @@ So is Bouncy Castle's Java provider, through pq-verify's own harness
 (`pq_verify/harness/bouncycastle/`), which feeds it NIST's seeds through the
 API users call and names the jar it loaded, with its sha256; CI pins that jar
 by sha256 and plants five bugs in its sources, all caught
-([AUDITS.md](AUDITS.md#bouncy-castle-java-through-pq-verifys-harness)).
+([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md#bouncy-castle-java-through-pq-verifys-harness)).
 A harness is untrusted: its message convention is settled against NIST, its
 determinism is tested, and a crash, or a reply that is not the protocol's, is
 CANNOT VERIFY, never a refusal. The
 library behind a harness is not hashed, and the report says so
-([AUDITS.md](AUDITS.md#any-language-through-crucible-protocol-harnesses)).
+([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md#any-language-through-crucible-protocol-harnesses)).
 
 ### Draft track: FN-DSA (FIPS 206)
 
@@ -466,7 +470,7 @@ keys, every secret key solves the NTRU equation `f·G − g·F = q` and meets
 both Gram–Schmidt bounds (checked in exact integer and rational arithmetic),
 and its signatures verify under pq-verify's verifier with no nonce reused.
 PQClean's Falcon passes; eight planted bugs in its source each fail the audit
-in CI ([AUDITS.md](AUDITS.md)).
+in CI ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
 
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
@@ -497,10 +501,10 @@ its own entry points (the NIST API, or liboqs's `OQS_KEM_classic_mceliece_*`):
 | encaps | its ciphertexts decode under pq-verify's decoder to weight exactly t, the key is SHAKE256(1 ‖ e ‖ C), its own Decap agrees, no error vector repeats |
 | decaps | ciphertexts built against its own key — weight t at random positions, in the identity part, in the T part and through the support's zero element; weight t−1 (decodable, must be rejected, also through the zero element), t+1, C = 0, random C, another key's ciphertext — each decapsulated to the exact key pq-verify computes |
 | padding | mceliece6960119 only, where mt and k end mid-byte: a ciphertext or public key with a padding bit set is refused, as the submitters' reference does |
-| ct:encaps, ct:decaps | with `--constant-time`: Decaps with the whole private key secret and Encaps with its randomness secret, under Valgrind memcheck; a secret-dependent branch or memory address fails, except inside the error-vector sampler, whose declassified rejection checks are listed instead ([AUDITS.md](AUDITS.md#constant-time---constant-time)) |
+| ct:encaps, ct:decaps | with `--constant-time`: Decaps with the whole private key secret and Encaps with its randomness secret, under Valgrind memcheck; a secret-dependent branch or memory address fails, except inside the error-vector sampler, whose declassified rejection checks are listed instead ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md#constant-time---constant-time)) |
 
 PQClean's reference passes all ten sets; eight planted bugs each fail the
-audit in CI ([AUDITS.md](AUDITS.md)). Encapsulation's error-vector sampling
+audit in CI ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)). Encapsulation's error-vector sampling
 is checked for validity and repetition, not distribution.
 
 A pass means the library computes Classic McEliece exactly. It says nothing
@@ -545,7 +549,7 @@ Built vectors, not random ones: four planted Berlekamp–Massey bugs fail on
 decryptions; the Hankel-built patterns trigger three of them every time.
 The blocks between two codewords found a defect in the submitters' AVX2
 decoder that 40 800 random and noisy blocks did not trigger once
-([AUDITS.md](AUDITS.md)). rm-symmetry finds it again with no reference
+([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)). rm-symmetry finds it again with no reference
 decoder at all: a maximum-likelihood decoder commutes with every symmetry of
 its code, and that one's answer follows how the codewords are numbered. It
 certifies symmetry, not correctness: a defect that is itself symmetric (every
@@ -575,7 +579,7 @@ byte-for-byte** and still be wrong, because ACVP never sees the concatenation.
 given ephemeral test keys, both halves of the shared secret recomputed. When a
 check fails it tests the other order and names the root cause. Commands are in
 the [Quick start](#quick-start); what is checked, and how, is in
-[HYBRID.md](HYBRID.md).
+[HYBRID.md](https://github.com/bigDSanalyst/pq-verify/blob/main/HYBRID.md).
 
 ---
 
@@ -583,11 +587,11 @@ the [Quick start](#quick-start); what is checked, and how, is in
 
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
 
-The forward NTTs and the modular reductions are proved in Coq, over every input in range. Everything else, end to end, is tested byte for byte against NIST's pinned vectors, which shows agreement on those inputs, not on every input ([LIMITS.md](LIMITS.md#proofs-and-tests)). Each claim here says which of the two it rests on.
+The forward NTTs and the modular reductions are proved in Coq, over every input in range. Everything else, end to end, is tested byte for byte against NIST's pinned vectors, which shows agreement on those inputs, not on every input ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#proofs-and-tests)). Each claim here says which of the two it rests on.
 
 Everything pq-verify does not check — schemes, side channels, parameter
 security, which paths are proved and which are only tested — is collected in
-[LIMITS.md](LIMITS.md).
+[LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md).
 
 ### Side channels are not measured
 
@@ -613,7 +617,7 @@ timing -- KyberSlash's secret division -- so the report lists the library's
 integer divisions for a reviewer instead; it cannot check key generation
 (the public matrix seed is derived from the secret seed); and it measures
 nothing physical. The report records exactly that scope, and without the flag
-claims nothing ([the report fields](ARCHITECTURE.md#side-channel-report-fields)).
+claims nothing ([the report fields](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#side-channel-report-fields)).
 
 **`--audit-dsa ... --constant-time` does the same for ML-DSA's key generation
 and signing**, where it needs more: Sign branches on secret-derived values by
@@ -631,7 +635,7 @@ length and place still are. Six controls planted in mldsa-native (a branch on a
 coefficient's sign, declassifications too early or of the wrong value, a secret
 table read, a hardware division) give exactly their specified results in CI. A
 build without those declarations is CANNOT VERIFY.
-[CONSTANT-TIME.md](CONSTANT-TIME.md) is the specification, with its scope: it
+[CONSTANT-TIME.md](https://github.com/bigDSanalyst/pq-verify/blob/main/CONSTANT-TIME.md) is the specification, with its scope: it
 does not see the values a computation produces, the leak Berzati et al.
 exploited on ML-DSA's signing.
 `--leakage` is not an exception: it is a design input computed from the NTT's
@@ -643,12 +647,12 @@ structure, not an observation of execution.
 
 Releases are built by `.github/workflows/release.yml` on GitHub's runners, from
 a reviewed commit, after the full suite and all 1566 NIST ACVP vectors pass on
-Python 3.9 through 3.13. Each artifact carries **SLSA build provenance** and an
+Python 3.9 through 3.14. Each artifact carries **SLSA build provenance** and an
 attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.17.3-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.17.4-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
@@ -668,22 +672,22 @@ purl and each file the wheel installs with its SHA-256, and no dependency.
 
 ## How it works
 
-[ARCHITECTURE.md](ARCHITECTURE.md) holds what is not needed to run an audit:
+[ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md) holds what is not needed to run an audit:
 
-- [Engines and where they are heading](ARCHITECTURE.md#engines-and-where-they-are-heading):
+- [Engines and where they are heading](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#engines-and-where-they-are-heading):
   the PQC, harness, classical and research tracks, and why only the first is
   PQC evidence
-- [The six field-native engines](ARCHITECTURE.md#architecture--six-field-native-engines)
-  and the [specification front-end](ARCHITECTURE.md#specification-front-end)
-- [Deterministic by default](ARCHITECTURE.md#deterministic-by-default): the
+- [The six field-native engines](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#architecture--six-field-native-engines)
+  and the [specification front-end](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#specification-front-end)
+- [Deterministic by default](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#deterministic-by-default): the
   pinned NIST vectors and how they are re-pinned
-- [The Python API](ARCHITECTURE.md#public-api)
-- [What a result is bound to, in depth](ARCHITECTURE.md#what-a-result-is-bound-to-in-depth)
-  and the [side-channel report fields](ARCHITECTURE.md#side-channel-report-fields)
-- [What's in this package](ARCHITECTURE.md#whats-in-this-package)
+- [The Python API](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#public-api)
+- [What a result is bound to, in depth](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#what-a-result-is-bound-to-in-depth)
+  and the [side-channel report fields](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#side-channel-report-fields)
+- [What's in this package](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#whats-in-this-package)
 
 Third-party audit results, build commands and every planted bug are in
-[AUDITS.md](AUDITS.md); hybrid composition in [HYBRID.md](HYBRID.md).
+[AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md); hybrid composition in [HYBRID.md](https://github.com/bigDSanalyst/pq-verify/blob/main/HYBRID.md).
 
 ---
 
@@ -691,7 +695,7 @@ Third-party audit results, build commands and every planted bug are in
 
 **Minimum (core engines; self-suite checks that need the packages below report as skipped):**
 - Python 3.9+ — **every version of the declared range (3.9, 3.10, 3.11, 3.12,
-  3.13) runs the full test suite and all 1566 ACVP vectors in CI.** The floor is
+  3.13, 3.14) runs the full test suite and all 1566 ACVP vectors in CI.** The floor is
   3.9 rather than 3.8 because `pq-verify[full]` cannot resolve below it:
   `kyber-py` and `dilithium-py` both require `>=3.9`. `requires-python` and the
   code are held together mechanically — a module that stops parsing at the
@@ -705,7 +709,9 @@ Third-party audit results, build commands and every planted bug are in
 - `kyber-py` — **required** for `pqverify_acvp()` (the byte-exact NIST reference) and the FIPS 203 roundtrip tests
 - `dilithium-py` — **required** for `pqverify_mldsa_acvp()` (the 615 ML-DSA vectors)
 - `slh-dsa` — **required** for the 624 SLH-DSA vectors and the live roundtrip (parameters still validate without it)
-- `coq` — required for the Coq certificate verification tests
+- `coq` — required for the Coq certificate verification tests and
+  `--proofs`. CI checks the proofs with Coq 8.18.0, the version Ubuntu 24.04
+  packages; no other version is tested
 - `sympy` — required for the Engine-6 Conjecture 7 exact-rational test (without it that check reports as skipped, not failed)
 - `cryptominisat` — the CMS5 speed-comparison benchmark (without it that check reports as skipped)
 
@@ -720,7 +726,7 @@ runs the library under memcheck.
 
 **For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler, and
 for ML-DSA also `z3` and Kissat, which solves the NTT proofs. Ubuntu does not
-package Kissat; [SOURCE-AUDIT.md](SOURCE-AUDIT.md) says how to build it.
+package Kissat; [SOURCE-AUDIT.md](https://github.com/bigDSanalyst/pq-verify/blob/main/SOURCE-AUDIT.md) says how to build it.
 Without it, ML-KEM's NTT runs with CBMC's built-in MiniSat, more slowly.
 
 **Optional:**
@@ -728,7 +734,7 @@ Without it, ML-KEM's NTT runs with CBMC's built-in MiniSat, more slowly.
 
 **Deliberately NOT required** (a deployment advantage):
 - No numpy, scipy, or PyTorch — pure Python + ctypes + inline C
-- No SageMath — the `pqverify_params` lattice estimator is self-contained (ML-KEM's lattice-estimator values are pinned; custom parameters use a calibrated formula, [close but not exact](LIMITS.md#parameter-security))
+- No SageMath — the `pqverify_params` lattice estimator is self-contained (ML-KEM's lattice-estimator values are pinned; custom parameters use a calibrated formula, [close but not exact](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#parameter-security))
 
 ---
 
@@ -758,11 +764,11 @@ a customer or a deployment sees their code:
 The deliverable is evidence, not certification: a CMVP certificate is issued
 by NIST and the Canadian Centre for Cyber Security, after an accredited
 laboratory has tested the module. What pq-verify has found in public
-libraries is in [AUDITS.md](AUDITS.md); what it cannot check is in
-[LIMITS.md](LIMITS.md); how each requirement maps to a check is in
-[ARCHITECTURE.md](ARCHITECTURE.md#mapping-to-requirements); and each claim,
+libraries is in [AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md); what it cannot check is in
+[LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md); how each requirement maps to a check is in
+[ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#mapping-to-requirements); and each claim,
 with the command that reproduces it and the CI job that re-runs it, is in
-[EVIDENCE.md](EVIDENCE.md). To discuss an audit, see [Contact](#contact).
+[EVIDENCE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/EVIDENCE.md). To discuss an audit, see [Contact](#contact).
 
 ---
 
