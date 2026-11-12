@@ -29,8 +29,8 @@ import sys
 # What acts on a terminal or a log viewer instead of appearing in it: C0
 # controls but tab and newline, DEL and the C1 controls, the Unicode line and
 # paragraph separators, and the bidirectional controls that reorder text.
-_ACTS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f؜‎‏"
-                   "  ‪-‮⁦-⁩]")
+_ACTS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f"
+                   "\u2028\u2029\u202a-\u202e\u2066-\u2069]")
 _NAMED = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
 
