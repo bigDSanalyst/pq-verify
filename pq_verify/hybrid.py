@@ -1,9 +1,9 @@
 """
 pq_verify.hybrid — RFC 10024 hybrid key-agreement conformance.
 
-Nothing in production negotiates bare ML-KEM. Every deployment that has
-actually turned post-quantum TLS on runs a *hybrid* group: X25519MLKEM768 is
-what Chrome, Firefox, OpenSSL, BoringSSL and the large CDNs agree on today.
+Post-quantum TLS as browsers and the large servers deploy it runs a *hybrid*
+group: X25519MLKEM768 is what Chrome, Firefox, OpenSSL, BoringSSL and the
+large CDNs agree on today.
 
 The ML-KEM half of that handshake is covered by ``--acvp`` and ``--audit-kem``.
 The *composition* is not — and the composition is where the bugs are, because
@@ -59,6 +59,7 @@ import json
 import os
 
 from .core import DEGRADED, VERSION, check_decapsulation_key
+from .display import shown
 from .core import _KEM_SIZES as _CORE_KEM_SIZES          # (ek, dk, ct, ss)
 
 PROMPT_SCHEMA = "pq-verify/hybrid-prompt"
@@ -656,7 +657,7 @@ def _artifact_field(meta):
         claimed = a
     summary = "none — vendor-supplied transcript"
     if isinstance(claimed, str) and claimed.strip():
-        summary += (f" (vendor asserts sha256 {claimed.strip()}, "
+        summary += (f" (vendor asserts sha256 {shown(claimed.strip(), 80)}, "
                     f"not verified by pq-verify)")
     else:
         claimed = None
@@ -1090,17 +1091,17 @@ def verify_hybrid(transcript_path, verbose=True):
 
 
 def _print(res):
-    group = res["group"] or "(unknown group)"
+    group = shown(res["group"] or "(unknown group)")
     print("=" * 68)
     print(f"  HYBRID COMPOSITION — {group}")
     print("=" * 68)
-    print(f"  transcript: {os.path.basename(res['transcript_file'])}")
+    print(f"  transcript: {shown(os.path.basename(res['transcript_file']))}")
     print(f"  sha256    : {res['transcript_sha256'] or '(unreadable)'}")
     print(f"  spec      : {res['specification']}"
           + (f"   codepoint {res['codepoint']}" if res["codepoint"] else ""))
     if res.get("implementation"):
-        print(f"  claimed   : {res['implementation']}")
-    print(f"  artifact  : {res['artifact']['summary']}")
+        print(f"  claimed   : {shown(res['implementation'])}")
+    print(f"  artifact  : {shown(res['artifact']['summary'], 400)}")
     if res["checks"]:
         print("-" * 68)
         for c in res["checks"]:
@@ -1112,9 +1113,9 @@ def _print(res):
                 mark = "PASS"
             else:
                 mark = "**FAIL**"
-            print(f"  {mark:12s} {c['name']}")
+            print(f"  {mark:12s} {shown(c['name'])}")
             if c["detail"]:
-                print(f"               {c['detail']}")
+                print(f"               {shown(c['detail'], 400)}")
     print("-" * 68)
     print(f"  checked   : {res['passed']} of {res['total']} runnable checks"
           + (f"   ({res['skipped']} not checked — no input)"
@@ -1124,7 +1125,7 @@ def _print(res):
     if res["findings"]:
         print("-" * 68)
         for f in res["findings"][:_MAX_LISTED]:
-            print(f"    - {f}")
+            print(f"    - {shown(f, 400)}")
         if len(res["findings"]) > _MAX_LISTED:
             print(f"    … and {len(res['findings']) - _MAX_LISTED} more")
     print("=" * 68)

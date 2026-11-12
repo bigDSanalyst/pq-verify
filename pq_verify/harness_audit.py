@@ -58,6 +58,8 @@ import signal as _signal
 import subprocess as _sp
 import threading as _threading
 
+from .display import shown
+
 DEFAULT_CALL_TIMEOUT = 60          # seconds per request
 # A reply carries at most a few keys and a signature: tens of kilobytes in
 # hex. A longer line is a protocol break, not something to buffer.
@@ -631,8 +633,8 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
         if verbose:
             print("=" * 68)
             print(f"  HARNESS AUDIT (Crucible protocol) — {param_set}")
-            print(f"  harness : {' '.join(argv)}")
-            print(f"  reports : {h.implementation}")
+            print(f"  harness : {shown(' '.join(argv), 400)}")
+            print(f"  reports : {shown(h.implementation)}")
             print(f"  vectors : {base['vectors']}")
             print("=" * 68)
         runner = run_kem if kem else run_dsa
@@ -641,7 +643,7 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
         calls = h.calls
     except HarnessDied as exc:
         if verbose:
-            print(f"  CANNOT VERIFY: {exc}")
+            print(f"  CANNOT VERIFY: {shown(exc, 400)}")
         return dict(base, verified=False, status="CANNOT VERIFY", reason=str(exc),
                     passed=0, total=0, detail={}, not_applicable={},
                     not_applicable_total=0, failures=[])
@@ -668,11 +670,11 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
         for s, (p, t) in tally.items():
             print(f"  {'PASS' if p == t else 'FAIL'}  {s:16s} {p}/{t}")
         for s, (c, why) in na.items():
-            print(f"  n/a   {s:16s} {c}: {why}")
+            print(f"  n/a   {s:16s} {c}: {shown(why, 400)}")
         for f in failures[:5]:
-            print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+            print(f"        ✗ {f['stage']} {shown(f['case'])}: {shown(f['detail'], 400)}")
         for n in notes:
-            print(f"  note: {n}")
+            print(f"  note: {shown(n, 400)}")
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable)" if na_all else ""))

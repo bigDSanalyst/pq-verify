@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pq-verify v2.17.2 — Unified Post-Quantum & ECC Master Audit
+pq-verify v2.17.3 — Unified Post-Quantum & ECC Master Audit
 ==========================================================
 Six field-native C/C++ engines. Six test phases. One file. Zero uploads.
 
@@ -35,7 +35,7 @@ import os, sys, ctypes, time, random, json, math, hashlib, struct, itertools
 import atexit, shutil, subprocess, tempfile
 from datetime import datetime, timezone
 
-VERSION = "2.17.2"
+VERSION = "2.17.3"
 
 # Status glyphs as names rather than escapes inlined into f-string expressions.
 # A backslash inside an f-string expression is PEP 701 syntax (Python 3.12+);
@@ -712,8 +712,14 @@ def _cc(compiler, flags, out, src):
         attempts.append([("-mcpu=native" if f == "-march=native" else f) for f in flags])
         attempts.append([f for f in flags if f != "-march=native"])
     for used in attempts:
-        proc = subprocess.run([compiler, *used, '-o', out, src],
-                              capture_output=True, text=True)
+        try:
+            proc = subprocess.run([compiler, *used, '-o', out, src],
+                                  capture_output=True, text=True)
+        except OSError as exc:
+            # No such compiler: a build that failed, which every caller
+            # reports as a missing engine, not a traceback.
+            return subprocess.CompletedProcess([compiler], 127, "",
+                                               f"{compiler}: {exc.strerror or exc}")
         if proc.returncode == 0:
             ENGINE_FLAGS[os.path.basename(out)] = {
                 "flags": " ".join(used),
@@ -7231,7 +7237,7 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
     except ImportError:
         DEGRADED['deps'].append('slh-dsa')
         DEGRADED['skipped_checks'].append('SLH-DSA ACVP')
-        print("  slh-dsa required:  pip install slh-dsa   (module name: slhdsa)")
+        print('  slh-dsa required:  pip install "pq-verify[full]"')
         return None
 
     modes = ((['keyGen'] if keygen else []) + (['sigVer'] if sigver else [])
@@ -7509,6 +7515,11 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     f_kp = getattr(lib, kp); f_kp.restype = _ct.c_int
     f_en = getattr(lib, en); f_en.restype = _ct.c_int
     f_de = getattr(lib, de); f_de.restype = _ct.c_int
+    # Every call, here and in the edge-case and accumulated runs, gets its
+    # buffers inside guard bytes; a write outside one fails the audit.
+    from .bounds import Guarded, outside_writes, print_line as print_bounds
+    f_kp, f_en, f_de = (Guarded(f_kp, "keypair"), Guarded(f_en, "encaps"),
+                        Guarded(f_de, "decaps"))
 
     # ---- NIST vectors (same source resolution as pqverify_acvp) ----
     import json as _j
@@ -7630,6 +7641,9 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
             ct_res = {'unavailable': str(exc)}
             tally['ct:unavailable'] = (0, 1)
 
+    bounds = outside_writes(f_kp, f_en, f_de)
+    if bounds['outside_total']:
+        tally['bounds'] = (0, 1)
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     if verbose:
@@ -7681,6 +7695,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                     print(f"        \u2717 {lk['kind']} in {lk['function']} "
                           f"({lk['count']} report(s))")
             print(f"        {_ct.division_note(ct_res)}")
+        print_bounds(bounds)
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
@@ -7693,7 +7708,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
             'keycheck': keycheck, 'edge': edge_res, 'accumulated': acc_res,
-            'constant_time': ct_res,
+            'constant_time': ct_res, 'bounds': bounds,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 

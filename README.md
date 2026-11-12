@@ -1,4 +1,4 @@
-# pq-verify v2.17.2 — PQC Implementation Verification
+# pq-verify v2.17.3 — PQC Implementation Verification
 
 [![PyPI](https://img.shields.io/pypi/v/pq-verify.svg)](https://pypi.org/project/pq-verify/)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -15,11 +15,11 @@ You deploy post-quantum cryptography. pq-verify checks that **your** implementat
 
 - **A library you can load** (`--audit-kem`, `--audit-dsa`, `--audit-slhdsa`, `--audit-hbs`, `--audit-so`): pq-verify drives the vendor's own entry points with every NIST ACVP vector, Wycheproof's edge cases where they exist, and malformed inputs, in a child process with a timeout, and binds the verdict to the sha256 of every shared object that ran.
 - **An implementation you cannot load** — an HSM, a sealed binary, a remote service (`--emit-prompt SET --fresh-key K`): fresh ACVP questions derived from a seed only the auditor holds, in NIST's own format. Their answers exist nowhere until pq-verify computes them, so a correct response had to be computed, not copied.
-- **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The NTT layers carry Coq proofs for every input. This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
+- **pq-verify itself**: its reference chain passes every pinned NIST ACVP vector: the 1566 of its default run (ML-KEM, ML-DSA, SLH-DSA, LMS), and SLH-DSA's 624 sigGen vectors on request. The FIPS 203 and FIPS 204 forward NTTs and their modular reductions carry Coq proofs over every input in range, about the algorithms as written in Coq ([what is proved, and what is only tested](LIMITS.md#proofs-and-tests)). This is what makes its verdicts on your code worth trusting; it is not a verdict on your code.
 
 Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a certificate: a CMVP certificate is issued by NIST and the Canadian Centre for Cyber Security, after an accredited laboratory has tested the module.
 
-It does not compute PQC. It checks the implementations that do, from liboqs and Bouncy Castle to your own code; [those audited so far](#implementations-pq-verify-has-audited) are listed below.
+It is a verification tool, not a cryptographic library to deploy: it checks the implementations that do the work, from liboqs and Bouncy Castle to your own code; [those audited so far](#implementations-pq-verify-has-audited) are listed below.
 
 ---
 
@@ -44,7 +44,7 @@ it.
 
 ---
 
-## Proven
+## Results
 
 - **160/160** self-test across 6 field-native engines, of which **54 verify
   PQC directly**; the others check the harness itself or are classical and
@@ -58,8 +58,11 @@ it.
   `--slhdsa-siggen`
 - **LMS/HSS and XMSS/XMSS^MT** (SP 800-208, CNSA 2.0's firmware-signing
   schemes) against every other pinned source, `--lms-xmss`
-- **Proofs for every input** (`pq-verify --proofs`, Coq) of the FIPS 203 and
-  FIPS 204 NTTs and their modular reductions
+- **Coq proofs** (`pq-verify --proofs`) that the FIPS 203 and FIPS 204
+  forward NTTs compute the map they are defined to and that their modular
+  reductions stay in bound, over every input in range. They are about the
+  algorithms as written in Coq, not about compiled code; the rest is tested
+  ([LIMITS.md](LIMITS.md#proofs-and-tests))
 
 All of it on commodity hardware (Google Colab CPU); each item in full, with
 the native full-KEM, non-circular KAT and lattice-estimator results, is in
@@ -78,8 +81,11 @@ pq-verify --mceliece           # Classic McEliece reference vs the KATs, NOT a F
 pq-verify --hqc                # HQC's error-correcting code vs the submitters' decoders, ~2 s
 ```
 
-That is the whole installation. It is a command-line tool: Python 3.9+, `gcc`,
-and nothing else. No notebook, no network, no service. The NIST vectors ship
+That is the whole installation. It is a command-line tool and runs offline: no
+notebook, no network, no service. The commands above need Python 3.9+ and the
+packages `[full]` installs, nothing more, except `--fndsa`, which builds a
+small C engine with `gcc` for one of its checks. The self-suite needs `gcc`
+and `g++`; [Requirements](#requirements) has the rest. The NIST vectors ship
 inside the package, so air-gapped environments work out of the box.
 
 Edge cases, offline: C2SP's [Wycheproof](https://github.com/C2SP/wycheproof)
@@ -161,8 +167,9 @@ it, so the result carries `artifact: none` ([below](#what-a-result-is-bound-to))
 Use it when the alternative is no verification at all, not when you can point
 at a file.
 
-Nothing in production negotiates bare ML-KEM. To check the part ACVP cannot
-see — how the two halves of a hybrid key agreement are put together:
+A hybrid TLS key agreement such as X25519MLKEM768 joins ML-KEM to ECDH, and
+ACVP's algorithm-level vectors do not cover how the two halves are put
+together. To check that part:
 
 ```bash
 pq-verify --emit-hybrid-prompt X25519MLKEM768 --prompt-out hybrid.json
@@ -245,7 +252,7 @@ appear as annotations on the pull request, and the build fails on any result
 that did not verify — including one that could not run.
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.2
+- uses: bigDSanalyst/pq-verify@v2.17.3
   with:
     audit: dsa                       # kem | dsa | slhdsa | fndsa | hbs | ntt
     library: build/libmldsa65.so
@@ -256,7 +263,7 @@ With no library at all, it runs the NIST ACVP suites against pq-verify's own
 reference chain:
 
 ```yaml
-- uses: bigDSanalyst/pq-verify@v2.17.2
+- uses: bigDSanalyst/pq-verify@v2.17.3
 ```
 
 | Input | Default | Purpose |
@@ -270,7 +277,7 @@ reference chain:
 | `hybrid-transcript` | — | transcript to check against RFC 10024 (see `--emit-hybrid-prompt`) |
 | `fail-on-finding` | `true` | fail the step on any result that did not verify; `false` reports only |
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
-| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.2` installs that release; and `git:<ref>` installs a ref from source |
+| `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.17.3` installs that release; and `git:<ref>` installs a ref from source |
 
 Outputs: `verified` (true only if every task that ran verified), `findings`,
 `sarif-file`. Every input reaches the shell through the environment, never by
@@ -550,9 +557,8 @@ sources with default visibility. Not a side-channel review.
 
 ## Hybrid key agreement (RFC 10024)
 
-Nothing in production negotiates bare ML-KEM: post-quantum TLS runs a
-**hybrid** group, and ACVP never sees how its two halves are concatenated.
-RFC 10024 does not use one order:
+A **hybrid** TLS group joins ML-KEM to ECDH, and ACVP never sees how its two
+halves are concatenated. RFC 10024 does not use one order:
 
 | Group | Codepoint | Key share | Shared secret |
 |---|---|---|---|
@@ -577,7 +583,7 @@ the [Quick start](#quick-start); what is checked, and how, is in
 
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
 
-The algebraic core is proven natively where the proof is exact; the full implementation is proven byte-exact against NIST's own bytes. We make the claims we can prove.
+The forward NTTs and the modular reductions are proved in Coq, over every input in range. Everything else, end to end, is tested byte for byte against NIST's pinned vectors, which shows agreement on those inputs, not on every input ([LIMITS.md](LIMITS.md#proofs-and-tests)). Each claim here says which of the two it rests on.
 
 Everything pq-verify does not check — schemes, side channels, parameter
 security, which paths are proved and which are only tested — is collected in
@@ -642,7 +648,7 @@ attested **SPDX SBOM**. Check them yourself, trusting nothing this repository
 says:
 
 ```bash
-gh attestation verify pq_verify-2.17.2-py3-none-any.whl --repo bigDSanalyst/pq-verify
+gh attestation verify pq_verify-2.17.3-py3-none-any.whl --repo bigDSanalyst/pq-verify
 ```
 
 That tells you which workflow built the file, from which commit, on whose
@@ -707,6 +713,10 @@ Third-party audit results, build commands and every planted bug are in
 apt-get install -y coq cryptominisat gcc g++
 pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 ```
+
+**For `--constant-time`:** Valgrind with its headers (`valgrind/memcheck.h`;
+`apt install valgrind`) and a C compiler, which builds the small driver that
+runs the library under memcheck.
 
 **For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler, and
 for ML-DSA also `z3` and Kissat, which solves the NTT proofs. Ubuntu does not

@@ -60,6 +60,7 @@ import json
 import os
 import zlib
 
+from .display import shown
 from .core import (
     DEGRADED,
     VERSION,
@@ -605,7 +606,7 @@ def _artifact_field(meta):
         claimed = a
     summary = "none — vendor-supplied response"
     if isinstance(claimed, str) and claimed.strip():
-        summary += (f" (vendor asserts sha256 {claimed.strip()}, "
+        summary += (f" (vendor asserts sha256 {shown(claimed.strip(), 80)}, "
                     f"not verified by pq-verify)")
     else:
         claimed = None
@@ -822,18 +823,18 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         DEGRADED["skipped_checks"].append(
             f"response coverage ({param_set}: {res['unanswered']} unanswered)")
     if res["unknown"]:
-        shown = res["unknown"][:_MAX_LISTED]
+        listed = res["unknown"][:_MAX_LISTED]
         res["findings"].append(
             f"cannot verify: {len(res['unknown'])} answer(s) reference tcIds "
-            f"that are not in this prompt ({', '.join(shown)}"
-            f"{', …' if len(res['unknown']) > len(shown) else ''})")
+            f"that are not in this prompt ({', '.join(listed)}"
+            f"{', …' if len(res['unknown']) > len(listed) else ''})")
 
     if res["duplicates"]:
-        shown = res["duplicates"][:_MAX_LISTED]
+        listed = res["duplicates"][:_MAX_LISTED]
         res["findings"].append(
             f"response: {len(res['duplicates'])} question(s) answered more than "
-            f"once ({', '.join(shown)}"
-            f"{', …' if len(res['duplicates']) > len(shown) else ''}) — two "
+            f"once ({', '.join(listed)}"
+            f"{', …' if len(res['duplicates']) > len(listed) else ''}) — two "
             f"answers to one question make the response ambiguous")
 
     failed = res["answered"] - res["passed"]
@@ -852,12 +853,12 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
 
 def _print(res):
     print("=" * 68)
-    print(f"  ACVP RESPONSE VERIFICATION — {res['parameter_set'] or '(unknown)'}")
+    print(f"  ACVP RESPONSE VERIFICATION — {shown(res['parameter_set'] or '(unknown)')}")
     print("=" * 68)
-    print(f"  response  : {os.path.basename(res['response_file'])}")
+    print(f"  response  : {shown(os.path.basename(res['response_file']))}")
     print(f"  sha256    : {res['response_sha256'] or '(unreadable)'}")
     print(f"  vectors   : {res['vector_source']}")
-    print(f"  promptId  : {res['prompt_id'] or '(not computed)'}")
+    print(f"  promptId  : {shown(res['prompt_id'] or '(not computed)')}")
     print(f"  binding   : {res['prompt_binding']}"
           + {"confirmed": "  (answers this exact question set)",
              "absent": "  (response carried no promptId — answers still "
@@ -866,8 +867,8 @@ def _print(res):
             .get(res["prompt_binding"], ""))
     impl = res.get("implementation")
     if impl:
-        print(f"  claimed   : {impl}")
-    print(f"  artifact  : {res['artifact']['summary']}")
+        print(f"  claimed   : {shown(impl)}")
+    print(f"  artifact  : {shown(res['artifact']['summary'], 400)}")
     if res["detail"]:
         print("-" * 68)
         for label, (ok, ans, tot) in res["detail"].items():
@@ -879,7 +880,7 @@ def _print(res):
                 mark, note = "PARTIAL", f"  ({ans} answered)"
             else:
                 mark, note = "PASS", ""
-            print(f"  {mark:9s} {label:44s} {ok:4d}/{tot}{note}")
+            print(f"  {mark:9s} {shown(label):44s} {ok:4d}/{tot}{note}")
     print("-" * 68)
     print(f"  answered  : {res['answered']} of {res['questions']} asked"
           + (f"   ({res['unanswered']} unanswered)" if res["unanswered"] else ""))
@@ -894,7 +895,7 @@ def _print(res):
     if res["findings"]:
         print("-" * 68)
         for f in res["findings"][:_MAX_LISTED]:
-            print(f"    - {f}")
+            print(f"    - {shown(f, 400)}")
         if len(res["findings"]) > _MAX_LISTED:
             print(f"    … and {len(res['findings']) - _MAX_LISTED} more")
     print("=" * 68)

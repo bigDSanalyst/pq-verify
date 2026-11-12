@@ -4,9 +4,9 @@
 composition of a hybrid key agreement. The [README](README.md#hybrid-key-agreement-rfc-10024)
 has the short version.
 
-Nothing in production negotiates bare ML-KEM. Every deployment that has turned
-post-quantum TLS on runs a **hybrid** group, and `X25519MLKEM768` is what
-Chrome, Firefox, OpenSSL, BoringSSL and the large CDNs agree on today.
+Post-quantum TLS as browsers and the large servers deploy it runs a
+**hybrid** group: `X25519MLKEM768` is what Chrome, Firefox, OpenSSL,
+BoringSSL and the large CDNs agree on today.
 
 The ML-KEM half of that handshake is covered by `--acvp` and `--audit-kem`.
 The **composition** is not — and the composition is where the bugs are,

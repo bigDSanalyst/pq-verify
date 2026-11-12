@@ -61,6 +61,8 @@ import ctypes as _ct
 import os as _os
 import re as _re
 
+from .bounds import Guarded, outside_writes, print_line as print_bounds
+
 # (pk, sk, sig) bytes per FIPS 204 Table 2
 DSA_SIZES = {
     'ML-DSA-44': (1312, 2560, 2420),
@@ -286,7 +288,8 @@ class VendorDSA:
             if s and role != 'rng':
                 f = getattr(self.lib, s)
                 f.restype = _ct.c_int
-                self._fn[role] = f
+                # Each call's buffers sit between guard bytes (pq_verify.bounds).
+                self._fn[role] = Guarded(f, role)
         self._rng = None
         if self.sym.get('rng'):
             self._rng = _HarnessRNG(self.lib)
@@ -920,6 +923,9 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
         for op, st in ct_stages.items():
             tally['ct:' + op] = st
 
+    bounds = outside_writes(*v._fn.values())
+    if bounds['outside_total']:
+        tally['bounds'] = (0, 1)
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     na_all = sum(c for c, _ in na.values()) + (edge_res or {}).get('not_applicable', 0)
@@ -966,6 +972,7 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
             print(f"        ✗ randomness: {r}")
         if ct_res is not None:
             _print_constant_time(ct_res)
+        print_bounds(bounds)
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
@@ -979,6 +986,6 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
             'not_applicable_total': na_all, 'via': via, 'abi': v.abi,
             'harness': v.has('rng'), 'failures': failures,
             'rng': list(v.rng_findings), 'edge': edge_res, 'library': v.path,
-            'accumulated': acc_res, 'constant_time': ct_res,
+            'accumulated': acc_res, 'constant_time': ct_res, 'bounds': bounds,
             'vectors': _vector_label(_local, *dirs),
             'symbols': {k: s for k, s in v.sym.items() if s}}

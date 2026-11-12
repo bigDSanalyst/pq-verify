@@ -3,6 +3,79 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.3] — 2026-11-12
+
+A bug-fix release, from asking what a misbehaving vendor can do to what
+pq-verify shows and to the audit's own memory. Text from a vendor's file
+could act on the terminal and the CI log instead of appearing in them: the
+exit status and the reports were right, but what a person read could say
+otherwise. And a library that wrote a few bytes outside a buffer it was given
+went unreported unless it crashed, so a library with that defect could be
+`VERIFIED`. No pinned result changes. `--acvp-all` reads no vendor input and
+loads no vendor library, so neither affected it. The release also fixes a
+traceback where no C compiler is installed, and makes the README's claims
+about proofs and requirements as exact as LIMITS.md's.
+
+### Fixed
+
+- **Text from a vendor could act on the terminal and the CI log.**
+  `--verify-response`, `--verify-hybrid` and `--audit-harness` print strings
+  the vendor wrote: the implementation it names, the hash it asserts, an
+  identifier that did not match. Printed raw, an escape sequence could erase a
+  line, print `RESULT: VERIFIED` and hide the real verdict, and a line break
+  followed by `::`, or `##[` anywhere in a line (the runner's older form,
+  which it still obeys), became a GitHub Actions workflow command: an error
+  annotation reading VERIFIED, a mask over `FINDINGS PRESENT` in the log, an
+  output of the step. Those strings are now printed with their control
+  characters escaped (`\x1b`, `\n`, `\u202e`) and `##[` written `##\x5b`, and
+  the command line's output passes through a filter that does the same to
+  whatever reaches it anyway and keeps any line from starting with `::`.
+- **A library that wrote outside a buffer went unreported unless it crashed.**
+  The ML-KEM, ML-DSA and SLH-DSA audits now give every buffer they pass the
+  library 64 guard bytes on each side and check them after every call, as the
+  HQC audit always has. A changed guard is a failed `bounds` stage, `FINDINGS
+  PRESENT`: a library that signs correctly and then writes a byte just past
+  the end of the signature was `VERIFIED` before. A passing audit's counts are
+  unchanged, and its JSON report gains `bounds` (calls checked, and how many
+  wrote outside a buffer). The SLH-DSA audit's 64 spare bytes after each
+  buffer, never looked at, are gone; the guard bytes take their place and are
+  looked at.
+- **Without a C compiler, the self-suite and `--fndsa` ended in a
+  traceback.** The engines are compiled at runtime, and a missing `gcc`
+  raised out of the build helper instead of failing the build, so SECURITY.md's
+  promise that checks needing an engine are reported as not run did not hold
+  there. A missing compiler is now a failed build: `--fndsa` runs its other
+  186 checks and names the native-engine check as not run, and the
+  self-suite reports each engine as not built, in a run marked degraded.
+
+### Changed
+
+- **The README tells proofs from tests, as LIMITS.md does.** It said "the
+  full implementation is proven byte-exact against NIST's own bytes" and that
+  the NTT layers carry Coq proofs "for every input". Matching NIST's vectors
+  shows agreement on those inputs, not a proof; the Coq proofs cover the
+  forward NTTs and the modular reductions, over every input in range, as the
+  algorithms are written in Coq. The README now says exactly that, and its
+  `Proven` heading, over mostly test results, is now `Results`.
+- **The README's other absolute claims are narrowed.** "Nothing in
+  production negotiates bare ML-KEM" became what the hybrid checks need: a
+  hybrid TLS group joins ML-KEM to ECDH, and ACVP's vectors do not cover how.
+  HYBRID.md, the hybrid module and the demo notebook said it too, with "every
+  deployment ... runs a hybrid group"; they now say what browsers and the
+  large servers deploy.
+  "It does not compute PQC" became "a verification tool, not a cryptographic
+  library to deploy".
+- **The quick start says what its commands need.** It said "Python 3.9+,
+  `gcc`, and nothing else". The commands it lists need Python and the `[full]`
+  packages, no compiler, except `--fndsa`, which builds one C engine; the
+  self-suite needs `gcc` and `g++`. Requirements gains `--constant-time`
+  (Valgrind with its headers, and a C compiler).
+- **LIMITS.md** says what the guard bytes do not catch: a write past them or
+  elsewhere, a read out of bounds, a use of freed memory.
+- **SECURITY.md** lists the escaping fix under "Fixed in 2.17.3".
+- The hint for a missing slh-dsa now says `pip install "pq-verify[full]"`,
+  as the hints for kyber-py and dilithium-py do.
+
 ## [2.17.2] — 2026-11-09
 
 A bug-fix release for the child process every library audit runs in. Four

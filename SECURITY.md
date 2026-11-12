@@ -97,6 +97,27 @@ Other things that are deliberate, not bugs:
   estimator. That is a modelling disagreement; open a normal issue with the
   parameters so it can be compared.
 
+## Fixed in 2.17.3
+
+Found by asking what a vendor's own files can do to the person reading the
+result. Tests in `tests/test_pqverify.py` feed each path such a file.
+
+- **Vendor text acting on the terminal and the CI log (CWE-150, CWE-117).**
+  `--verify-response`, `--verify-hybrid` and `--audit-harness` print strings
+  the vendor wrote: the implementation it names, the hash it asserts, an
+  identifier that did not match. An escape sequence in one could erase a line,
+  print `RESULT: VERIFIED` and hide the real verdict; a line break followed by
+  `::`, or `##[` anywhere in a line (the runner's older form, which it still
+  obeys), became a GitHub Actions workflow command: an error annotation, a
+  mask over the verdict in the log, an output of the step. The exit status
+  and the JSON and SARIF reports were not affected, and the Action writes its
+  outputs after pq-verify has run, which replaces any set this way, unless
+  its step stops early, with exit 2, on a configuration error. Those strings
+  are now printed with their control characters escaped and `##[` written
+  `##\x5b`, and all of the command line's output passes through a filter
+  that does the same to whatever reaches it anyway and keeps any line from
+  starting with `::`.
+
 ## Fixed in 2.7.0
 
 Both were found by auditing this repository against its own standards, and both
