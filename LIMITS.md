@@ -162,8 +162,9 @@ about the library is claimed.
       within about one point of 1/2, a σ within about half a percent;
     - so does one that shows only under other keys, after more signatures,
       or for particular messages;
-    - a correct library fails it about once in 10^8 audits, if the normal
-      approximations hold.
+    - a correct library fails it about twice in 10^8 audits of FN-DSA-512
+      and once in 10^8 of FN-DSA-1024, mostly on the centring test, whose
+      chi-square has a heavier tail than a normal one.
   - **Not checked at all:** the FFT, `ffSampling` as such, and timing.
 - **Classic McEliece.** Encapsulation's error vectors are checked for
   weight, validity and repetition, not for their distribution. A pass says

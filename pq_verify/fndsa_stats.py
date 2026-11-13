@@ -20,10 +20,13 @@ sampler gives:
     centred    the 2n per-coefficient means: chi-square on 2n degrees of freedom
     scale      the variance, against sigma^2
     symmetric  as many positive coefficients as negative
-A test fails beyond 6 standard deviations (the chi-square one-sided). If
-the normal approximations hold, a correct library fails one about once in
-10^8 audits; on PQClean's Falcon, 26 keys (20 of FN-DSA-512, 6 of
-FN-DSA-1024, 1,000 signatures each) stayed within 3.3.
+A test fails beyond 6 standard deviations (the chi-square one-sided). A
+correct library fails one about twice in 10^8 audits of FN-DSA-512 and
+once in 10^8 of FN-DSA-1024, mostly on the chi-square: its exact tail at 6
+standard deviations is 1.4e-8 on 1,024 degrees of freedom and 7.1e-9 on
+2,048, against 2.0e-9 for each of the other two, which are near normal. On
+PQClean's Falcon, 26 keys (20 of FN-DSA-512, 6 of FN-DSA-1024, 1,000
+signatures each) stayed within 3.3.
 
 On PQClean's Falcon-512 with 1,000 signatures, both planted defects still
 sign validly:
