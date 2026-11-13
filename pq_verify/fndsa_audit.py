@@ -518,6 +518,11 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
                 print(f"  n/a   {s:12s} {c}: {why}")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+        zs = [(k, c["z"]) for k, c in sampler.get("checks", {}).items() if c["z"] is not None]
+        if zs:
+            print(f"  sampler: {sampler['signatures']} signatures under one key; "
+                  + ", ".join(f"{k} z = {z:+.2f}" for k, z in zs)
+                  + f" (limit {fndsa_stats.THRESHOLD:g})")
         if impls:
             print(f"  fpr_*: inputs from seed {fpr['seed']}"
                   + (" (supplied)" if fpr["seed_supplied"] else ""))

@@ -6900,6 +6900,37 @@ def test_fndsa_cli_sampler_options(tmp_path):
     assert code == 0 and "not asked (--fndsa-signatures 0)" in out
 
 
+def test_fndsa_report_prints_the_sampler_z_scores(tmp_path, monkeypatch):
+    # The shim cannot sign, so the stage's result is stood in for: this tests
+    # the report line alone (the vendor-audits job runs the stage on PQClean).
+    from pq_verify import fndsa_stats
+    from pq_verify.fndsa_audit import pqverify_audit_fndsa
+
+    def stand_in(v, tally, signatures=fndsa_stats.SIGNATURES):
+        zs = {"valid": None, "centred": -0.09, "scale": 0.51, "symmetric": 1.96}
+        for name in fndsa_stats.CHECKS:
+            tally.rec("sampler", True, f"{name}: stand-in", "")
+        return {"signatures_asked": signatures, "signatures": signatures,
+                "threshold": fndsa_stats.THRESHOLD,
+                "checks": {k: {"ok": True, "z": z, "detail": ""} for k, z in zs.items()}}
+
+    def report(so):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            r = pqverify_audit_fndsa(so, "FN-DSA-512", verbose=True)
+        return r, buf.getvalue()
+
+    so = _fndsa_shim(tmp_path)
+    monkeypatch.setattr(fndsa_stats, "run", stand_in)
+    r, out = report(so)
+    assert r["detail"]["sampler"] == (4, 4)
+    assert ("sampler: 1000 signatures under one key; centred z = -0.09, "
+            "scale z = +0.51, symmetric z = +1.96 (limit 6)") in out
+    monkeypatch.undo()
+    r, out = report(so)                 # the stage did not run: no such line
+    assert "sampler" not in r["detail"] and "under one key;" not in out
+
+
 # ----------------------------------------------------------------------
 # --audit-slhdsa: a third-party SLH-DSA library (FIPS 205). The shim in
 # tests/data/slhdsa_shim.c has slhdsa-c's API and answers from NIST's own
