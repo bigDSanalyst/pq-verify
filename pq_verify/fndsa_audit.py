@@ -18,6 +18,10 @@ checked against pq_verify.fndsa (the reference verifier, itself checked by
     sign       vendor signatures: pq-verify's verifier accepts each one, the
                vendor's own verifier accepts it, the encoding is canonical
                and in range, and no nonce repeats
+    sampler    N more signatures (1,000 by default) under one vendor key:
+               every one valid, and their coefficients centred, of variance
+               sigma^2 and symmetric, within 6 standard deviations of what an
+               exact sampler gives (pq_verify.fndsa_stats)
     fpr_*      Falcon's emulated floating point, when the library exports it
                (PQClean's and the reference's clean builds): fpr_scaled, add,
                mul, div and sqrt against exact rounding to nearest, ties to
@@ -29,7 +33,9 @@ Falcon's signatures are randomised (a fresh 40-byte nonce, a Gaussian
 sampler), and there are no final FIPS 206 vectors, so signing is checked for
 what every valid signature must satisfy, not byte-for-byte. A signer that
 reuses a nonce, or emits a vector outside the norm bound or a non-canonical
-encoding, fails; a subtly biased sampler would not, and the report says so.
+encoding, fails. A sampler biased in the signatures' first two moments fails
+the sampler stage; one biased in a way that keeps them would not, and the
+report says so.
 
 Calling conventions, by symbol name:
   nist   the NIST API, as PQClean and Falcon's reference export it:
@@ -49,7 +55,7 @@ SETS = {"FN-DSA-512": 9, "FN-DSA-1024": 10}
 # secret key: header 0x50 + logn, f and g at FG_BITS[logn] bits, F at 8 bits
 SK_BYTES = {9: 1281, 10: 2305}
 FG_BITS = {9: 6, 10: 5}
-STAGES = ("verify", "open", "reject", "keyGen", "sign")
+STAGES = ("verify", "open", "reject", "keyGen", "sign", "sampler")
 
 _ROLES = {
     "keypair": r"(?:crypto_sign_keypair|_keypair)$",
@@ -442,16 +448,18 @@ def run(v):
 
 
 def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True,
-                         prefix=None, fpr_seed=None):
+                         prefix=None, fpr_seed=None, signatures=None):
     """Audit a third-party FN-DSA library; see the module docstring.
 
     Returns None when it cannot be audited at all (an ambiguous symbol, or no
     entry point). Otherwise a dict with 'detail' {stage: (p, t)},
     'not_applicable' {stage: (count, reason)}, 'via', 'failures', and 'fpr'
     (the arithmetic stages' seed and what they bound). fpr_seed (32 bytes)
-    replays an earlier run's arithmetic inputs.
+    replays an earlier run's arithmetic inputs. signatures: how many the
+    sampler stage asks for (default fndsa_stats.SIGNATURES; 0 skips it, as
+    not applicable).
     """
-    from . import fndsa_fpr
+    from . import fndsa_fpr, fndsa_stats
     from .core import DEGRADED
     v = VendorFNDSA(so_path, param_set, symbols=symbols, prefix=prefix)
     if v.ambiguous:
@@ -475,6 +483,8 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
         print(f"  vectors : {F.sources()}")
         print("=" * 68)
     T = run(v)
+    sampler = fndsa_stats.run(v, T, fndsa_stats.SIGNATURES if signatures is None
+                              else signatures)
     fpr = fndsa_fpr.run(v.path, v.exported, v.set, T, prefix=v.prefix, seed=fpr_seed)
     if fpr["reference"] not in (None, "confirmed"):
         DEGRADED["skipped_checks"].append(f"FN-DSA emulated arithmetic ({param_set})")
@@ -484,7 +494,7 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
     verified = p_all == t_all and t_all > 0
     via = {"verify": v.sym.get("verify"), "reject": v.sym.get("verify"),
            "open": v.sym.get("open"), "keyGen": v.sym.get("keypair"),
-           "sign": v.sym.get("sign")}
+           "sign": v.sym.get("sign"), "sampler": v.sym.get("sign")}
     impls = fpr["implementations"]
     for op, st in zip(fndsa_fpr.OPS, fndsa_fpr.STAGES):
         names = [i["symbols"][op] for i in impls if op in i["symbols"]]
@@ -508,6 +518,11 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
                 print(f"  n/a   {s:12s} {c}: {why}")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+        zs = [(k, c["z"]) for k, c in sampler.get("checks", {}).items() if c["z"] is not None]
+        if zs:
+            print(f"  sampler: {sampler['signatures']} signatures under one key; "
+                  + ", ".join(f"{k} z = {z:+.2f}" for k, z in zs)
+                  + f" (limit {fndsa_stats.THRESHOLD:g})")
         if impls:
             print(f"  fpr_*: inputs from seed {fpr['seed']}"
                   + (" (supplied)" if fpr["seed_supplied"] else ""))
@@ -522,14 +537,16 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
         print(f"  {F.DRAFT_NOTE}")
         print("  Signing is checked for validity, encoding and nonce reuse, not")
-        print("  byte-for-byte; a biased sampler is out of scope. Not a side-channel review.")
+        print("  byte-for-byte, and the sampler by the moments of its signatures: a bias")
+        print("  that keeps them passes. Not a side-channel review.")
         if impls:
-            print("  The emulated arithmetic is checked function by function; the FFT and")
-            print("  the sampler built on it are not.")
+            print("  The emulated arithmetic is checked function by function; the FFT")
+            print("  built on it is not.")
         print("=" * 68)
     return {"verified": verified, "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "padded": v.padded, "failures": T.failures, "library": v.path,
             "vectors": F.sources(), "track": "draft", "standard": "FIPS 206 (draft)",
-            "symbols": {k: s for k, s in v.sym.items() if s}, "fpr": fpr}
+            "symbols": {k: s for k, s in v.sym.items() if s}, "fpr": fpr,
+            "sampler": sampler}

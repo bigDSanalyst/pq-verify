@@ -3835,6 +3835,10 @@
             24,
             24
           ],
+          "sampler": [
+            4,
+            4
+          ],
           "fpr_scaled": [
             1214,
             1214
@@ -3880,6 +3884,10 @@
           "sign": [
             24,
             24
+          ],
+          "sampler": [
+            4,
+            4
           ],
           "fpr_scaled": [
             1214,
@@ -4034,6 +4042,28 @@
           ],
           "only": true,
           "kat_unchanged": true
+        },
+        {
+          "name": "the sampler's sign bit is 1 with probability 136/256, not 1/2",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/sign.c",
+          "find": "b = (int)prng_get_u8(&spc->p) & 1;",
+          "replace": "b = (int)(prng_get_u8(&spc->p) < 136);",
+          "fails": [
+            "sampler"
+          ],
+          "only": true
+        },
+        {
+          "name": "the signer draws with a sigma 2% low",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/fpr.h",
+          "find": "    4573606369665796042,",
+          "replace": "    4573745496616038304,",
+          "fails": [
+            "sampler"
+          ],
+          "only": true
         }
       ]
     },
@@ -4066,6 +4096,10 @@
           "sign": [
             24,
             24
+          ],
+          "sampler": [
+            4,
+            4
           ]
         },
         "FN-DSA-1024": {
@@ -4084,6 +4118,10 @@
           "sign": [
             24,
             24
+          ],
+          "sampler": [
+            4,
+            4
           ]
         }
       },
@@ -4133,6 +4171,10 @@
           "sign": [
             24,
             24
+          ],
+          "sampler": [
+            4,
+            4
           ]
         },
         "FN-DSA-1024": {
@@ -4151,6 +4193,10 @@
           "sign": [
             24,
             24
+          ],
+          "sampler": [
+            4,
+            4
           ]
         }
       },

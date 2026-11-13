@@ -810,8 +810,20 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   the sampler's bounds, fails here even when its public key is right.
 - **sign:** the library's signatures verify under pq-verify's verifier and
   its own, are in range and canonically encoded, and never reuse a nonce.
-  Signing is randomised, so it is checked for validity, not byte-for-byte; a
-  subtly biased sampler is out of scope.
+  Signing is randomised, so it is checked for validity, not byte-for-byte.
+- **Signature statistics (`sampler`):** 1,000 more signatures of distinct
+  messages under one key from the library's own keypair
+  (`pq_verify/fndsa_stats.py`). For each, s1 is recomputed exactly; the
+  2n coefficients of all of them must be centred on 0 (a chi-square on the
+  2n means), of variance σ² taken over all of them, and symmetric, each
+  within 6 standard deviations of what an exact sampler gives. A biased
+  sampler still signs validly: this is the stage that sees one. On
+  PQClean's Falcon, 45 keys stayed within 3.3 standard deviations. A
+  defect that keeps these moments passes: a base sampler with one row of
+  its table zeroed, so that every value above 6 comes out one less (about
+  one draw in 4,000), does (measured). So does a covariance of the wrong
+  shape: a sampling tree 2% wider on one side and 2% narrower on the other
+  passed on 4 keys (measured).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report
@@ -832,11 +844,11 @@ the arithmetic stages for liboqs, one line each: the audit binds its
 Falcon, which computes on the CPU's floating point and exports no `fpr_*`.
 
 <!-- vendor-audits-fndsa:begin -->
-| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 38,692/38,692 | 14 | 11/11 | 38,935/38,935 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
+| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 8/8 | 38,692/38,692 | 14 | 13/13 | 38,943/38,943 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
@@ -874,6 +886,17 @@ this:
 
 The coefficient mutant stays within 2^-50 of the true value, so only the
 bit-for-bit comparison catches it.
+
+Two more change the sampler, and fail the signature statistics and nothing
+else (`"only"`); their signatures all verify:
+- the sampler's sign bit is 1 with probability 136/256, not 1/2: the
+  coefficient means drift by 53 to 61 standard deviations (9 keys);
+- the signer draws with a σ 2% low: the variance sits 21 to 27 below
+  (8 keys).
+
+These do change PQClean's known-answer output. They stand for what the KAT
+cannot reach: a library whose signing randomness pq-verify does not control,
+or whose KATs were generated from its own sampler.
 
 ## Classic McEliece library audit — not a FIPS standard, with mutants
 

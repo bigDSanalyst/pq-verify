@@ -513,17 +513,25 @@ not show in Falcon's known-answer tests. A tie rounded away from zero,
 truncation, or one ApproxExp coefficient off by one each leave PQClean's NIST
 KAT output byte for byte the same.
 
-PQClean's Falcon passes. Eleven planted bugs in its source each fail the audit
-in CI, the three arithmetic ones in the arithmetic stages only
+Its sampler is checked by its output: 1,000 signatures under one of the
+library's keys must be centred on 0, symmetric, and of variance σ² over all
+their coefficients. A sampler whose sign bit leans 53:47, or whose σ is 2%
+low, still signs validly; on every key tried, each failed this by more than
+21 standard deviations.
+
+PQClean's Falcon passes. Thirteen planted bugs in its source each fail the
+audit in CI. The three arithmetic ones fail only the arithmetic stages, and
+the two sampler ones only the statistics
 ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
 
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
-and lives in one section of `pq_verify/fndsa.py`. Of signing, only the
-emulated arithmetic is checked. The FFT, the Gaussian sampler and the
-statistics of the signatures, where Falcon implementations also go wrong, are
-not ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
+and lives in one section of `pq_verify/fndsa.py`. Of signing, the emulated
+arithmetic is checked, and the sampler through the first moments of its
+signatures. The FFT is not, nor the shape of their covariance, nor a sampler
+defect that keeps those moments
+([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
 
 ---
 
