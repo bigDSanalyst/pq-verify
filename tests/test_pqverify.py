@@ -11206,6 +11206,9 @@ def _contained_or_skip():
 
 def _contained_lib(tmp_path, act=None, path=None, k=2, defines=()):
     import shutil, subprocess
+    # Skip before compiling: contained_acts.c is Linux code (O_TMPFILE, /proc),
+    # and where the worker cannot run, its compile error says nothing.
+    _contained_or_skip()
     data = pathlib.Path(__file__).resolve().parent / "data"
     so = tmp_path / f"lib{act or 'ref'}{k}{''.join(d.split('=')[0] for d in defines)}.so"
     cmd = [shutil.which("cc") or "gcc", "-std=gnu11", "-O1", "-fPIC", "-shared", f"-DK={k}",
