@@ -58,6 +58,32 @@ versioning](https://semver.org/spec/v2.0.0.html).
     list, not a proof), or an answer to a library that computes correctly only
     while it is audited. ML-KEM on x86-64 Linux only; elsewhere `CANNOT
     VERIFY`. SECURITY.md and LIMITS.md say the rest.
+- **FN-DSA: Falcon's emulated floating point, checked exactly (`--audit-fndsa`,
+  draft track).** Clean builds of Falcon compute binary64 with integer code
+  and export it as functions. Where a library does, six new stages hold each
+  function to an exact reference (`pq_verify/fndsa_fpr.py`):
+  - `fpr_scaled`, `fpr_add`, `fpr_mul`, `fpr_div` and `fpr_sqrt` to the exact
+    result, rounded to nearest with ties to even, in rational arithmetic;
+  - `fpr_expm_p63` to the reference's ApproxExp, bit for bit.
+
+  About 19,000 questions from Falcon's domain, sums and products built to fall
+  exactly halfway among them, drawn from a seed the report records;
+  `--fresh-seed` replays one. The reference is checked against this machine's
+  IEEE-754 arithmetic, and ApproxExp against exp to 60 digits, before any
+  answer is judged; if either check fails, the stages do not run.
+  - **Three new mutants in PQClean's Falcon:** a tie rounded away from zero,
+    truncation instead of rounding, and one ApproxExp coefficient one unit
+    off. With each, PQClean's NIST KAT and test-vector outputs keep the
+    SHA-256 its `META.yml` pins, and every other stage of the audit passes.
+    CI requires each to fail the arithmetic stages it names and nothing else,
+    and rebuilds both of PQClean's generators from the mutated tree to check
+    the hashes (`tools/vendor_audit.py`, `"only"` and `"kat_unchanged"`).
+  - **Not applicable** to builds on the CPU's floating point (AVX2, AArch64,
+    liboqs on a CPU with AVX2), which export no `fpr_*`: one line in the
+    report says so, and the stages are never counted as passed.
+  - **Not checked:** the primitives Falcon inlines, the sign of a zero
+    result, the FFT, the sampler and the statistics of the signatures.
+    LIMITS.md lists it all.
 
 ### Changed
 

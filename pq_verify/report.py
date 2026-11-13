@@ -657,6 +657,9 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
             findings.append(f"FN-DSA (draft): stage {k}: {v[0]}/{v[1]}{where}")
     doc["failures"] = fails
     doc["findings"] = findings
+    # The emulated-arithmetic stages: their seed (to replay the inputs), the
+    # functions they bound, and the check on pq-verify's own reference.
+    doc["arithmetic"] = result.get("fpr")
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "not_applicable": result.get("not_applicable_total", 0),
                       "findings": len(findings)}
