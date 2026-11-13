@@ -6784,6 +6784,123 @@ def test_fndsa_cli_reports_and_replays_the_arithmetic(tmp_path):
 
 
 # ----------------------------------------------------------------------
+# FN-DSA: the statistics of a library's signatures (pq_verify.fndsa_stats),
+# the sampler stage of --audit-fndsa. No stand-in can sign (a short (s1, s2)
+# needs the trapdoor), so the tests drive the statistics with synthetic
+# vectors, and collect() with pinned signatures; PQClean's real signer and
+# its planted sampler defects are the vendor audits'.
+# ----------------------------------------------------------------------
+
+def _sampler_acc(rows, logn=9):
+    from pq_verify import fndsa_stats as St
+    acc = St.accumulator(logn)
+    for s in rows:
+        St.add(acc, s)
+    return acc
+
+
+def _gaussian_rows(seed, count, scale=1.0, shift=None, flip=0.0, logn=9):
+    import random
+    from pq_verify.fndsa_stats import SIGMA
+    rng = random.Random(seed)
+    d, sigma = 2 << logn, SIGMA[logn] * scale
+    rows = []
+    for _ in range(count):
+        s = [round(rng.gauss(0, sigma)) for _ in range(d)]
+        if shift:
+            s = [x + shift[j] for j, x in enumerate(s)]
+        if flip:
+            s = [-x if x < 0 and rng.random() < flip else x for x in s]
+        rows.append(s)
+    return rows
+
+
+def _sampler_checks(acc, asked):
+    from pq_verify.fndsa_stats import analyse
+    return {name: (ok, z, detail) for name, ok, z, detail in analyse(acc, asked)}
+
+
+def test_sampler_statistics_pass_an_exact_gaussian():
+    res = _sampler_checks(_sampler_acc(_gaussian_rows(2026, 400)), 400)
+    assert set(res) == {"valid", "centred", "scale", "symmetric"}
+    assert all(ok for ok, _z, _d in res.values()), res
+    assert "400 of 400" in res["valid"][2]
+
+
+def test_sampler_statistics_catch_drift_scale_and_asymmetry():
+    """Each planted departure fails its own test by a wide margin and, where
+    it leaves the others alone, only that test."""
+    from pq_verify.fndsa_stats import THRESHOLD
+    d = 1024
+    drift = [10 if j % 2 else -10 for j in range(d)]       # centred off; sign balance kept
+    res = _sampler_checks(_sampler_acc(_gaussian_rows(7, 400, shift=drift)), 400)
+    assert not res["centred"][0] and res["centred"][1] > 4 * THRESHOLD
+    assert res["scale"][0] and res["symmetric"][0]
+    res = _sampler_checks(_sampler_acc(_gaussian_rows(8, 400, scale=0.96)), 400)
+    assert not res["scale"][0] and res["scale"][1] < -4 * THRESHOLD
+    assert res["centred"][0] and res["symmetric"][0]
+    res = _sampler_checks(_sampler_acc(_gaussian_rows(9, 400, flip=0.1)), 400)
+    assert not res["symmetric"][0] and res["symmetric"][1] > 4 * THRESHOLD
+
+
+def test_sampler_collect_recomputes_s1_and_refuses_what_does_not_verify(monkeypatch):
+    """collect() on pinned FN-DSA-512 signatures: a signer that returns one
+    valid signature over and over is valid and wildly off-centre (a
+    deterministic sampler); one whose signatures do not belong to the
+    message, raise, or carry the wrong header, is invalid."""
+    from pq_verify import fndsa as F, fndsa_stats as St
+    pk, msg, sig = next((pk, m, b) for _n, _l, kind, pk, m, b in F.load_vectors()
+                        if kind == "sig" and pk[0] == 0x09)
+
+    class Signer:
+        def __init__(self, answer):
+            self.answer, self.calls = answer, 0
+
+        def sign(self, sk, m):
+            self.calls += 1
+            out = self.answer(self.calls)
+            if isinstance(out, Exception):
+                raise out
+            return out
+
+    monkeypatch.setattr(St, "_message", lambda i: msg)
+    acc = St.collect(Signer(lambda i: sig), pk, b"", 120)
+    res = _sampler_checks(acc, 120)
+    assert res["valid"][0] and acc["count"] == 120 and acc["largest_norm"] > 0
+    assert not res["centred"][0] and res["centred"][1] > 1000
+    monkeypatch.setattr(St, "_message", lambda i: b"another message " + bytes([i % 256]))
+    answers = {1: RuntimeError("signing returned an error"), 2: b"\x31" + sig[1:]}
+    acc = St.collect(Signer(lambda i: answers.get(i, sig)), pk, b"", 5)
+    res = _sampler_checks(acc, 5)
+    assert acc["count"] == 0 and acc["invalid"] == 5
+    assert not res["valid"][0] and "signing returned an error" in res["valid"][2]
+    assert all(not res[k][0] and "too few" in res[k][2]
+               for k in ("centred", "scale", "symmetric"))
+
+
+def test_fndsa_audit_sampler_stage_is_not_applicable_without_a_signer(tmp_path):
+    so = _fndsa_shim(tmp_path)
+    r = _fndsa_audit(so)
+    assert "sampler" not in r["detail"]
+    assert r["not_applicable"]["sampler"] == [4, "no keypair and signing entry points"]
+    r = _fndsa_audit(so, signatures=0)
+    assert r["not_applicable"]["sampler"] == [4, "not asked (--fndsa-signatures 0)"]
+    assert r["sampler"]["signatures_asked"] == 0
+
+
+def test_fndsa_cli_sampler_options(tmp_path):
+    code, out = _cli("--fndsa-signatures", "1000", "--fndsa")
+    assert code == 2 and "--audit-fndsa" in out
+    so = _fndsa_shim(tmp_path)
+    _IN_PROCESS_SHIMS.add(so)
+    for bad in ("50", "-1", "100001"):
+        code, out = _cli("--audit-fndsa", so, "FN-DSA-512", "--fndsa-signatures", bad)
+        assert code == 2 and "between 100 and 100000" in out
+    code, out = _cli("--audit-fndsa", so, "FN-DSA-512", "--fndsa-signatures", "0")
+    assert code == 0 and "not asked (--fndsa-signatures 0)" in out
+
+
+# ----------------------------------------------------------------------
 # --audit-slhdsa: a third-party SLH-DSA library (FIPS 205). The shim in
 # tests/data/slhdsa_shim.c has slhdsa-c's API and answers from NIST's own
 # expected results, keyed by its inputs; each fault below plants one bug.

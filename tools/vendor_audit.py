@@ -1455,9 +1455,9 @@ def hbs_markdown(rows):
 
 def fndsa_markdown(rows):
     lines = ["| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected "
-             "| keyGen | sign | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught "
-             "| Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) "
+             "| Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(*stages):
             p = sum(row["results"][ps].get(st, [0, 0])[0] for ps in row["sets"] for st in stages)
@@ -1474,7 +1474,8 @@ def fndsa_markdown(rows):
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             sets, cell("verify"), cell("open"), cell("reject"), cell("keyGen"),
-            cell("sign"), cell(*arithmetic) if arithmetic else "n/a", f"{na:,}",
+            cell("sign"), cell("sampler"), cell(*arithmetic) if arithmetic else "n/a",
+            f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED** (draft)' if p == t else 'findings'} |"]))
     return "\n".join(lines)

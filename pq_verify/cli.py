@@ -329,6 +329,11 @@ def build_parser():
     p.add_argument("--fndsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-fndsa: bind ROLE (keypair, sign, verify, open) "
                         "to SYM; repeatable")
+    p.add_argument("--fndsa-signatures", type=int, metavar="N",
+                   help="with --audit-fndsa: how many signatures the sampler stage "
+                        "asks for under one key (default 1000, at least 100; 0 skips "
+                        "the stage, reported as not applicable). Fewer signatures "
+                        "resolve less bias")
     p.add_argument("--slhdsa-symbol", action="append", default=[], metavar="ROLE=SYM",
                    help="with --audit-slhdsa: bind ROLE (keypair_seed, keypair, "
                         "sign_internal, verify_internal, sign, verify, sign_prehash, "
@@ -446,6 +451,7 @@ def _main(argv=None):
             ("--hqc-seed", args.hqc_seed, args.audit_hqc),
             ("--dsa-symbol", args.dsa_symbol, args.audit_dsa),
             ("--fndsa-symbol", args.fndsa_symbol, args.audit_fndsa),
+            ("--fndsa-signatures", args.fndsa_signatures is not None, args.audit_fndsa),
             ("--slhdsa-symbol", args.slhdsa_symbol, args.audit_slhdsa),
             ("--constant-time", args.constant_time,
              args.audit_kem or args.audit_dsa or args.audit_mceliece),
@@ -469,6 +475,7 @@ def _main(argv=None):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
+                       "--fndsa-signatures": "--audit-fndsa",
                        "--slhdsa-symbol": "--audit-slhdsa",
                        "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-slhdsa, "
                                           "--audit-fndsa, --audit-mceliece, --audit-hqc "
@@ -765,6 +772,11 @@ def _main(argv=None):
                       f"of {', '.join(_FN_ROLES)}")
                 return 2
             _syms[role] = sym
+        if args.fndsa_signatures is not None and not (
+                args.fndsa_signatures == 0 or 100 <= args.fndsa_signatures <= 100000):
+            print("  --fndsa-signatures must be 0 (skip the sampler stage) or between "
+                  "100 and 100000")
+            return 2
         _fpr_seed = None
         if args.fresh_seed:
             try:
@@ -786,7 +798,8 @@ def _main(argv=None):
         try:
             fna_result, _loaded, fna_reason = _isolated(
                 args, "pq_verify.fndsa_audit", "pqverify_audit_fndsa", _p, _ps,
-                symbols=_syms, prefix=args.symbol_prefix, fpr_seed=_fpr_seed)
+                symbols=_syms, prefix=args.symbol_prefix, fpr_seed=_fpr_seed,
+                signatures=args.fndsa_signatures)
             _bound = _bind_loaded(fna_artifact, _loaded)
             fna_reason = fna_reason or _bound
             if fna_reason:

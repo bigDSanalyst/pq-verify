@@ -832,11 +832,11 @@ the arithmetic stages for liboqs, one line each: the audit binds its
 Falcon, which computes on the CPU's floating point and exports no `fpr_*`.
 
 <!-- vendor-audits-fndsa:begin -->
-| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 38,692/38,692 | 14 | 11/11 | 38,935/38,935 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
+| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 8/8 | 38,692/38,692 | 14 | 13/13 | 38,943/38,943 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit

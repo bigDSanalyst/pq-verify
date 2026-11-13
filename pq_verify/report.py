@@ -660,6 +660,8 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
     # The emulated-arithmetic stages: their seed (to replay the inputs), the
     # functions they bound, and the check on pq-verify's own reference.
     doc["arithmetic"] = result.get("fpr")
+    # The sampler stage: how many signatures, and each test's z and detail.
+    doc["sampler"] = result.get("sampler")
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "not_applicable": result.get("not_applicable_total", 0),
                       "findings": len(findings)}
