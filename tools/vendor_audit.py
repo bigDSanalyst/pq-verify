@@ -429,6 +429,41 @@ def build_fndsa(recipe, src, param_set, out_dir, tag=""):
     return str(so)
 
 
+def falcon_kat_sha256(src, scheme, out_dir, tag=""):
+    """{kind: (the SHA-256 of what the generator prints, the one META.yml
+    pins)} for PQClean's two known-answer generators of
+    crypto_sign/<scheme>/clean in this tree: the NIST KAT (100 key pairs and
+    signed messages, from NIST's DRBG) and PQClean's deterministic test
+    vectors (detached signatures among them). Each is built as PQClean's
+    test/Makefile builds it, and run."""
+    import hashlib
+    import re
+    src = Path(src)
+    d = src / "crypto_sign" / scheme / "clean"
+    common = src / "common"
+    ns = "PQCLEAN_" + scheme.upper().replace("-", "") + "_CLEAN"
+    meta = (src / "crypto_sign" / scheme / "META.yml").read_text()
+    out = {}
+    for kind, main, rng in (("nistkat", "nistkat.c", "nistkatrng.c"),
+                            ("testvectors", "testvectors.c", "notrandombytes.c")):
+        exe = Path(out_dir) / f"{kind}-{scheme}{tag}"
+        cmd = [os.environ.get("CC", "gcc"), "-O2", "-std=c99", "-I", str(common), "-I", str(d),
+               f"-DPQCLEAN_NAMESPACE={ns}", str(src / "test" / "crypto_sign" / main),
+               *(str(common / f) for f in ("aes.c", "sha2.c", "fips202.c",
+                                            "nistseedexpander.c", "sp800-185.c")),
+               str(src / "test" / "common" / rng),
+               *sorted(str(p) for p in d.glob("*.c")), "-o", str(exe)]
+        subprocess.run(cmd, check=True, capture_output=True)     # a build failure raises
+        ran = subprocess.run([str(exe)], capture_output=True, timeout=900)
+        # A generator that stops with an error has seen the bug (the test
+        # vectors verify their own signatures): it did not print the pinned output.
+        got = (hashlib.sha256(ran.stdout).hexdigest() if ran.returncode == 0
+               else f"exit status {ran.returncode}")
+        pinned = re.search(rf"^{kind}-sha256:\s*([0-9a-f]{{64}})\s*$", meta, re.M)
+        out[kind] = (got, pinned.group(1) if pinned else None)
+    return out
+
+
 # ─────────────────────────────── audit ───────────────────────────────
 
 def audit_dsa(so, param_set, prefix=None):
@@ -963,8 +998,11 @@ def check_hbs(rows, workdir):
 
 def check_fndsa(rows, workdir):
     """FN-DSA (draft track): each row's sets as recorded, and every mutant
-    failed in the stages it names."""
+    failed in the stages it names. A mutant marked "only" passes every other
+    stage; one marked "kat_unchanged" leaves the output of PQClean's NIST KAT
+    and test-vector generators as its META.yml pins them."""
     failures = 0
+    clean_kat = {}
     for row in rows:
         src = Path(workdir) / row["build"] / row["commit"][:12]
         try:
@@ -1011,11 +1049,47 @@ def check_fndsa(rows, workdir):
             missed = [f"{st} {p}/{t}" for st in m["fails"]
                       for p, t in [(got or {"results": {}})["results"].get(st, (0, 0))]
                       if not (t and p < t)]
-            if got is not None and not missed:
-                bad = sorted(s for s, (p, t) in got["results"].items() if p < t)
-                print(f"  caught {label}: fails {', '.join(bad)}")
+            bad = sorted(s for s, (p, t) in (got or {"results": {}})["results"].items()
+                         if p < t)
+            # "only": the bug is invisible to every other stage -- the reason
+            # the stages it names exist. A mutant another stage also catches
+            # no longer shows that.
+            extra = [s for s in bad if s not in m["fails"]] if m.get("only") else []
+            kat = ""
+            if got is not None and not missed and not extra and m.get("kat_unchanged"):
+                # The point of such a mutant: the known-answer tests cannot see
+                # it. Checked here, not taken on trust: both generators, built
+                # from the mutated tree, must print what META.yml pins, as the
+                # unmodified tree's do.
+                scheme = m["file"].split("/")[1]
+                try:
+                    if scheme not in clean_kat:
+                        clean_kat[scheme] = falcon_kat_sha256(src, scheme, workdir)
+                    mutated = falcon_kat_sha256(msrc, scheme, workdir, tag=f"-fnmut{i}")
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    print(f"  ERROR  {label}: PQClean's KAT generator: {e}")
+                    return 2
+                short = lambda h: h if h.startswith("exit") else f"{h[:16]}..."  # noqa: E731
+                seen = [f"{kind}: {short(mine)} (unmodified {short(clean_kat[scheme][kind][0])}, "
+                        f"META.yml {short(str(pinned))})"
+                        for kind, (mine, pinned) in mutated.items()
+                        if not (pinned and clean_kat[scheme][kind][0] == pinned == mine)]
+                if seen:
+                    failures += 1
+                    print(f"  DIFF   {label}: recorded as invisible to PQClean's known-answer "
+                          f"tests, but " + "; ".join(seen))
+                    continue
+                kat = ("; PQClean's NIST KAT and test vectors unchanged "
+                       "(META.yml's sha256)")
+            if got is not None and not missed and not extra:
+                print(f"  caught {label}: fails {', '.join(bad)}"
+                      + ("; every other stage passes" if m.get("only") else "") + kat)
                 continue
             failures += 1
+            if extra and not missed:
+                print(f"  DIFF   {label}: also fails {', '.join(extra)}, recorded as seen "
+                      f"only by {', '.join(m['fails'])}")
+                continue
             print(f"  MISSED {label}: the audit did not fail "
                   + (", ".join(missed) if got else "(could not audit it)")
                   + ". pq-verify cannot see this bug class.")
@@ -1381,13 +1455,16 @@ def hbs_markdown(rows):
 
 def fndsa_markdown(rows):
     lines = ["| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected "
-             "| keyGen | sign | Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| keyGen | sign | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught "
+             "| Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
-        def cell(stage):
-            p = sum(row["results"][ps].get(stage, [0, 0])[0] for ps in row["sets"])
-            t = sum(row["results"][ps].get(stage, [0, 0])[1] for ps in row["sets"])
-            return f"{p}/{t}" if t else "n/a"
+        def cell(*stages):
+            p = sum(row["results"][ps].get(st, [0, 0])[0] for ps in row["sets"] for st in stages)
+            t = sum(row["results"][ps].get(st, [0, 0])[1] for ps in row["sets"] for st in stages)
+            return f"{p:,}/{t:,}" if t else "n/a"
+        arithmetic = sorted({st for ps in row["sets"] for st in row["results"][ps]
+                             if st.startswith("fpr_")})
         p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
                 for i in (0, 1))
         na = sum(row["not_applicable"][ps] for ps in row["sets"])
@@ -1397,7 +1474,8 @@ def fndsa_markdown(rows):
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             sets, cell("verify"), cell("open"), cell("reject"), cell("keyGen"),
-            cell("sign"), f"{na:,}", f"{len(muts)}/{len(muts)}" if muts else "—",
+            cell("sign"), cell(*arithmetic) if arithmetic else "n/a", f"{na:,}",
+            f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED** (draft)' if p == t else 'findings'} |"]))
     return "\n".join(lines)
 

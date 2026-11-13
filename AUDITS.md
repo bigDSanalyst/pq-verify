@@ -812,16 +812,31 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   its own, are in range and canonically encoded, and never reuse a nonce.
   Signing is randomised, so it is checked for validity, not byte-for-byte; a
   subtly biased sampler is out of scope.
+- **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
+  emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
+  1,214 to 10,006 questions from Falcon's domain, from a seed the report
+  records, and every answer is compared with an exact reference. The
+  reference is checked first against this machine's own floating point.
+  - `fpr_scaled`, `fpr_add`, `fpr_mul`, `fpr_div`, `fpr_sqrt`: the exact
+    result rounded to nearest, ties to even. The questions include sums and
+    products built to land exactly halfway between two doubles, and
+    operands within three binades of each other.
+  - `fpr_expm_p63`: the reference's ApproxExp bit for bit, its 13
+    coefficients and its integer arithmetic. Most questions are near
+    x = ln 2 and ccs = 1, where a changed coefficient shows most often.
 
 A wrong-length public key is **not applicable**: neither the NIST API nor
-liboqs takes a key length, so the library would read past the buffer.
+liboqs takes a key length, so the library would read past the buffer. So are
+the arithmetic stages for liboqs, one line each: the audit binds its
+`OQS_SIG_falcon_*` API, and on a CPU with AVX2 liboqs runs PQClean's AVX2
+Falcon, which computes on the CPU's floating point and exports no `fpr_*`.
 
 <!-- vendor-audits-fndsa:begin -->
-| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 14 | 8/8 | 243/243 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 30 | 1/1 | 227/227 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 30 | 1/1 | 227/227 **VERIFIED** (draft) |
+| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 38,692/38,692 | 14 | 11/11 | 38,935/38,935 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | n/a | 42 | 1/1 | 227/227 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
@@ -836,6 +851,29 @@ the test suite checks it on constructed keys instead.
 The first version of the audit missed the range-check mutant (its test key
 changed value mod q, so the norm check refused it); the mutant is why the
 `w + q` case exists.
+
+Three more mutants change Falcon's arithmetic and nothing else:
+- the emulation rounds a tie away from zero instead of to even (one constant
+  in `fpr.h`);
+- it truncates instead of rounding;
+- one of ApproxExp's 13 coefficients is one unit off (`fpr.c`).
+
+None of them is visible to PQClean's own known-answer tests. Built with each
+one, PQClean's NIST KAT generator (100 key pairs and signatures) and its
+deterministic test vectors give outputs whose SHA-256 equals the
+`nistkat-sha256` and `testvectors-sha256` in Falcon-512's `META.yml`, exactly
+as the unmodified code's do. A last-bit change almost never moves a sampled
+integer. Every other stage of the audit passes them too. CI checks all of
+this:
+- each mutant must fail the arithmetic stages it names and nothing else
+  (`"only"` in `tools/vendor_audits.json`);
+- both generators are rebuilt from the mutated tree and their output hashed
+  (`"kat_unchanged"`). A generator that stops with an error, as the test
+  vectors do on a signature they cannot verify, counts as having seen the
+  bug.
+
+The coefficient mutant stays within 2^-50 of the true value, so only the
+bit-for-bit comparison catches it.
 
 ## Classic McEliece library audit — not a FIPS standard, with mutants
 

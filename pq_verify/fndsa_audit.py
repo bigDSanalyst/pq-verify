@@ -18,6 +18,12 @@ checked against pq_verify.fndsa (the reference verifier, itself checked by
     sign       vendor signatures: pq-verify's verifier accepts each one, the
                vendor's own verifier accepts it, the encoding is canonical
                and in range, and no nonce repeats
+    fpr_*      Falcon's emulated floating point, when the library exports it
+               (PQClean's and the reference's clean builds): fpr_scaled, add,
+               mul, div and sqrt against exact rounding to nearest, ties to
+               even; fpr_expm_p63 against the reference's ApproxExp, bit for
+               bit (pq_verify.fndsa_fpr). Not applicable to a build on the
+               CPU's floating point, which exports none of them
 
 Falcon's signatures are randomised (a fresh 40-byte nonce, a Gaussian
 sampler), and there are no final FIPS 206 vectors, so signing is checked for
@@ -105,8 +111,8 @@ class VendorFNDSA:
         self.logn = SETS[param_set]
         _, self.n, _, self.pk_len, self.padded_len, self.max_sig = F.PARAMS[self.logn]
         self.lib = _ct.CDLL(self.path)
-        self.sym, self.ambiguous = resolve_symbols(exported_symbols(self.path),
-                                                   param_set, symbols, prefix)
+        self.exported, self.prefix = exported_symbols(self.path), prefix
+        self.sym, self.ambiguous = resolve_symbols(self.exported, param_set, symbols, prefix)
         names = [s for s in self.sym.values() if s]
         self.abi = "oqs" if any(s.lower().startswith("oqs_") for s in names) else "nist"
         self.padded = any("padded" in s.lower() for s in names)
@@ -314,13 +320,17 @@ def ntru_checks(f, g, F_, logn):
 
 class _Tally:
     def __init__(self):
-        self.detail, self.na, self.failures = {}, {}, []
+        self.detail, self.na, self.failures, self._failed = {}, {}, [], set()
 
     def rec(self, stage, ok, case, detail=""):
         p, t = self.detail.get(stage, (0, 0))
         self.detail[stage] = (p + int(bool(ok)), t + 1)
-        if not ok and len(self.failures) < 50:
+        # The first 50 failures, and the first of every failing stage: the
+        # arithmetic stages can fail thousands of times, and a stage after
+        # them must still have an example in the report.
+        if not ok and (len(self.failures) < 50 or stage not in self._failed):
             self.failures.append({"stage": stage, "case": case, "detail": detail})
+            self._failed.add(stage)
 
     def not_applicable(self, stage, count, why):
         c, _ = self.na.get(stage, (0, why))
@@ -432,13 +442,16 @@ def run(v):
 
 
 def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True,
-                         prefix=None):
+                         prefix=None, fpr_seed=None):
     """Audit a third-party FN-DSA library; see the module docstring.
 
     Returns None when it cannot be audited at all (an ambiguous symbol, or no
     entry point). Otherwise a dict with 'detail' {stage: (p, t)},
-    'not_applicable' {stage: (count, reason)}, 'via', 'failures'.
+    'not_applicable' {stage: (count, reason)}, 'via', 'failures', and 'fpr'
+    (the arithmetic stages' seed and what they bound). fpr_seed (32 bytes)
+    replays an earlier run's arithmetic inputs.
     """
+    from . import fndsa_fpr
     from .core import DEGRADED
     v = VendorFNDSA(so_path, param_set, symbols=symbols, prefix=prefix)
     if v.ambiguous:
@@ -462,6 +475,9 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
         print(f"  vectors : {F.sources()}")
         print("=" * 68)
     T = run(v)
+    fpr = fndsa_fpr.run(v.path, v.exported, v.set, T, prefix=v.prefix, seed=fpr_seed)
+    if fpr["reference"] not in (None, "confirmed"):
+        DEGRADED["skipped_checks"].append(f"FN-DSA emulated arithmetic ({param_set})")
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
@@ -469,16 +485,36 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
     via = {"verify": v.sym.get("verify"), "reject": v.sym.get("verify"),
            "open": v.sym.get("open"), "keyGen": v.sym.get("keypair"),
            "sign": v.sym.get("sign")}
+    impls = fpr["implementations"]
+    for op, st in zip(fndsa_fpr.OPS, fndsa_fpr.STAGES):
+        names = [i["symbols"][op] for i in impls if op in i["symbols"]]
+        via[st] = names[0] if len(names) == 1 else (
+            f"{len(names)} implementations" if names else None)
     if verbose:
-        for s in STAGES:
+        # The six arithmetic stages share one reason when none applies: one line.
+        fpr_na = [T.na[s] for s in fndsa_fpr.STAGES if s in T.na]
+        one_line = (len(fpr_na) == len(fndsa_fpr.STAGES)
+                    and len({why for _c, why in fpr_na}) == 1)
+        for s in STAGES + fndsa_fpr.STAGES:
             if s in T.detail:
                 p, t = T.detail[s]
-                print(f"  {'PASS' if p == t else 'FAIL'}  {s:8s} {p}/{t}   via {via[s]}")
+                print(f"  {'PASS' if p == t else 'FAIL'}  {s:12s} {p}/{t}   via {via[s]}")
             if s in T.na:
+                if one_line and s in fndsa_fpr.STAGES:
+                    if s == fndsa_fpr.STAGES[0]:
+                        print(f"  n/a   {'fpr_*':12s} {len(fpr_na)}: {fpr_na[0][1]}")
+                    continue
                 c, why = T.na[s]
-                print(f"  n/a   {s:8s} {c}: {why}")
+                print(f"  n/a   {s:12s} {c}: {why}")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+        if impls:
+            print(f"  fpr_*: inputs from seed {fpr['seed']}"
+                  + (" (supplied)" if fpr["seed_supplied"] else ""))
+            print("         the reference agreed with this machine's IEEE-754 on every "
+                  "case; its ApproxExp")
+            print(f"         is within {fpr['reference_approx_exp_error'] / 2 ** 63:.1e} "
+                  "of ccs exp(-x) on those checked")
         print("=" * 68)
         status = "VERIFIED (draft)" if verified else (
             "FINDINGS PRESENT" if t_all else "CANNOT VERIFY")
@@ -487,10 +523,13 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
         print(f"  {F.DRAFT_NOTE}")
         print("  Signing is checked for validity, encoding and nonce reuse, not")
         print("  byte-for-byte; a biased sampler is out of scope. Not a side-channel review.")
+        if impls:
+            print("  The emulated arithmetic is checked function by function; the FFT and")
+            print("  the sampler built on it are not.")
         print("=" * 68)
     return {"verified": verified, "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "padded": v.padded, "failures": T.failures, "library": v.path,
             "vectors": F.sources(), "track": "draft", "standard": "FIPS 206 (draft)",
-            "symbols": {k: s for k, s in v.sym.items() if s}}
+            "symbols": {k: s for k, s in v.sym.items() if s}, "fpr": fpr}

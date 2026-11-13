@@ -460,6 +460,7 @@ pq_verify/
   hbs_audit.py             LMS/HSS and XMSS library audit
   fndsa.py                 FN-DSA (Falcon) verification, FIPS 206 draft track
   fndsa_audit.py           FN-DSA library audit, draft track
+  fndsa_fpr.py             Falcon's emulated floating point (fpr_*) against exact rounding
   mceliece.py              Classic McEliece reference (not a FIPS standard)
   mceliece_audit.py        Classic McEliece library audit
   hqc.py                   HQC's error-correcting code (standard not final)

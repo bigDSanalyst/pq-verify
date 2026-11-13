@@ -6380,17 +6380,21 @@ def test_fndsa_cli_reports_the_draft_track(tmp_path):
 _FNDSA_KEEP = []          # ctypes callbacks must outlive the library calls
 
 
-def _fndsa_shim(tmp_path, accept=None, padded_too=False):
-    """accept(pk, msg, sig) -> bool decides verify; default: pq-verify's own."""
+def _fndsa_shim(tmp_path, accept=None, padded_too=False, fpr=None):
+    """accept(pk, msg, sig) -> bool decides verify; default: pq-verify's own.
+    fpr: a tuple of -D defines (empty for the correct one) links in
+    tests/data/fpr_stub.c, Falcon's emulated arithmetic as PQClean exports it."""
     import ctypes as C, shutil, subprocess
     from pq_verify import fndsa as F
     if not shutil.which("gcc"):
         pytest.skip("gcc not available")
     root = pathlib.Path(__file__).resolve().parent.parent
     so = tmp_path / f"libfndsashim{len(list(tmp_path.glob('*.so')))}.so"
+    stub = ([] if fpr is None else
+            ["-std=gnu11", *(f"-D{d}" for d in fpr), str(root / "tests" / "data" / "fpr_stub.c")])
     subprocess.run(["gcc", "-O1", "-fPIC", "-shared", "-o", str(so),
                     *(["-DPQVTEST_PADDED_TOO"] if padded_too else []),
-                    str(root / "tests" / "data" / "fndsa_shim.c")],
+                    str(root / "tests" / "data" / "fndsa_shim.c"), *stub, "-lm"],
                    check=True, capture_output=True)
     lib = C.CDLL(str(so))
     U8, SZ, PSZ = C.POINTER(C.c_uint8), C.c_size_t, C.POINTER(C.c_size_t)
@@ -6564,11 +6568,202 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
         for m in row["mutants"]:
             assert m["set"] in row["sets"]
             assert m["fails"] and set(m["fails"]) <= set(row["results"][m["set"]]), m["name"]
+            # invisible to the KAT is checked against PQClean's own generator,
+            # and means something only for a bug no other stage sees
+            if m.get("kat_unchanged"):
+                assert m.get("only") and row["build"] == "pqclean-falcon", m["name"]
+    arithmetic = [m for r in rows for m in r["mutants"]
+                  if all(s.startswith("fpr_") for s in m["fails"])]
+    assert len(arithmetic) == 3 and all(m.get("kat_unchanged") for m in arithmetic)
     text = (root / "AUDITS.md").read_text()
     published = text.split(mod.FNDSA_BEGIN, 1)[1].split(mod.FNDSA_END, 1)[0].strip()
     assert published == mod.fndsa_markdown(rows).strip(), (
         "AUDITS.md is out of date: paste the FN-DSA table from "
         "`python3 tools/vendor_audit.py --markdown` between the vendor-audits-fndsa markers")
+
+
+# ----------------------------------------------------------------------
+# FN-DSA: Falcon's emulated floating point (pq_verify.fndsa_fpr), the fpr_*
+# stages of --audit-fndsa. tests/data/fpr_stub.c exports the functions under
+# PQClean's names, computed on the CPU's IEEE-754 arithmetic, with the three
+# defects the vendor audits plant in PQClean's own source as -D options.
+# ----------------------------------------------------------------------
+
+_FPR_COUNTS = {"scaled": 1214, "add": 3010, "mul": 2005, "div": 1805, "sqrt": 1306,
+               "expm_p63": 10006}
+
+
+def _fpr_na(r):
+    return {s: why for s, (_c, why) in r["not_applicable"].items() if s.startswith("fpr_")}
+
+
+def test_fpr_reference_rounds_exactly():
+    from fractions import Fraction as Fr
+    from pq_verify import fndsa_fpr as P
+    one = 0x3FF0000000000000
+    assert P.decode(one) == 1 and P.encode(Fr(1)) == one and P.encode(Fr(-1)) == P.SIGN | one
+    assert P.decode(1) is None and P.decode(0x7FF0000000000000) is None   # subnormal, infinity
+    # 1 + 2^-53 lies halfway between 1 and 1 + 2^-52: to the even one, 1
+    assert P.encode(1 + Fr(1, 2 ** 53)) == one
+    # (1 + 2^-52) + 2^-53 is halfway again; now the even one is above
+    assert P.encode(1 + Fr(1, 2 ** 52) + Fr(1, 2 ** 53)) == one + 2
+    assert P.encode(-(1 + Fr(1, 2 ** 52) + Fr(1, 2 ** 53))) == P.SIGN | (one + 2)
+    # just below halfway, and just above
+    assert P.encode(1 + Fr(1, 2 ** 53) - Fr(1, 2 ** 200)) == one
+    assert P.encode(1 + Fr(1, 2 ** 53) + Fr(1, 2 ** 200)) == one + 1
+    # a carry out of the mantissa; and outside Falcon's domain, no answer
+    assert P.encode(2 - Fr(1, 2 ** 54)) == 0x4000000000000000
+    assert P.encode(Fr(2) ** 1024) is None and P.encode(Fr(1, 2 ** 1023)) is None
+    assert P.sqrt_rounded(0x4010000000000000) == P.bits(2.0)
+    assert P.sqrt_rounded(P.bits(2.0)) == P.bits(math.sqrt(2.0))
+    assert P.sqrt_rounded(P.SIGN | one) is None
+    # ApproxExp at its corners: exp(0) * 1/2 is 2^62 exactly; ccs = 0 gives 0
+    assert P.approx_exp(0, 0x3FE0000000000000) == 1 << 62
+    assert P.approx_exp(0, 0) == 0
+
+
+@pytest.mark.parametrize("seed", [bytes(32), bytes(range(32)), b"\xff" * 32])
+def test_fpr_reference_agrees_with_ieee754_and_exp(seed):
+    """What the stage relies on before it judges a library: on every case
+    it asks, the exact reference equals this machine's IEEE-754 answer, and
+    ApproxExp lies within 2^-50 of exp. The counts do not depend on the seed."""
+    from pq_verify import fndsa_fpr as P
+    asked = P.cases(seed)
+    ok, worst = P.check_reference(asked)
+    assert ok, worst
+    assert 0 < worst <= P.EXPM_TOLERANCE
+    assert {op: len(v) for op, v in asked.items()} == _FPR_COUNTS
+    # the built ties are ties: halfway, so rounding them is a choice
+    from fractions import Fraction as Fr
+    halfway = 0
+    for x, y in asked["add"]:
+        v = P.decode(x) + P.decode(y)
+        w = P.encode(v)
+        if v and w is not None:
+            lo = P.decode(w)
+            other = P.decode(w + 1 if (v > lo) == (lo > 0) else w - 1)
+            halfway += v == (lo + other) / 2
+    assert halfway > 500, halfway
+
+
+def test_fndsa_audit_checks_the_emulated_arithmetic(tmp_path):
+    r = _fndsa_audit(_fndsa_shim(tmp_path, fpr=()))
+    assert r["verified"], r["failures"][:3]
+    for op, n in _FPR_COUNTS.items():
+        assert r["detail"]["fpr_" + op] == (n, n)
+        assert r["via"]["fpr_" + op] == f"PQCLEAN_FALCON512_CLEAN_fpr_{op}"
+    f = r["fpr"]
+    assert f["reference"] == "confirmed" and len(bytes.fromhex(f["seed"])) == 32
+    assert not f["seed_supplied"]
+    assert [i["prefix"] for i in f["implementations"]] == ["PQCLEAN_FALCON512_CLEAN_"]
+    assert not _fpr_na(r)
+
+
+@pytest.mark.parametrize("mutant,failing", [
+    ("MUT_TIES_AWAY", {"fpr_scaled", "fpr_add", "fpr_mul"}),
+    ("MUT_TRUNC", {"fpr_scaled", "fpr_add", "fpr_mul", "fpr_div", "fpr_sqrt"}),
+    ("MUT_EXPM_COEFF", {"fpr_expm_p63"}),
+])
+def test_fndsa_audit_catches_each_planted_arithmetic_defect(tmp_path, mutant, failing):
+    """The defects the vendor audits plant in PQClean's Falcon, here in the
+    stand-in: each fails its arithmetic stages and nothing else. On PQClean
+    itself none of them changes the NIST known-answer output (AUDITS.md)."""
+    r = _fndsa_audit(_fndsa_shim(tmp_path, fpr=(mutant,)))
+    assert not r["verified"]
+    assert {s for s, (p, t) in r["detail"].items() if p < t} == failing
+    # every failing stage has an example, however many failed before it
+    assert {f["stage"] for f in r["failures"]} == failing
+    first = next(f for f in r["failures"] if f["stage"] in failing)
+    assert first["case"].startswith("PQCLEAN_FALCON512_CLEAN_fpr_")
+    if mutant == "MUT_EXPM_COEFF":
+        # still within 2^-50 of the true value: only the bit-exact check sees it
+        assert "the reference" in first["detail"] and "beyond" not in first["detail"]
+    else:
+        assert "correctly rounded" in first["detail"] and "in the last place" in first["detail"]
+
+
+def test_fndsa_audit_arithmetic_that_is_not_there_is_not_applicable(tmp_path):
+    """No fpr_* exported (a build on the CPU's floating point): the stages
+    are not applicable, with the reason, and never counted as passed. A build
+    that exports fpr_expm_p63 alone, taking doubles, is not the emulation and
+    is not called with words."""
+    from pq_verify.fndsa_fpr import STAGES
+    r = _fndsa_audit(_fndsa_shim(tmp_path))
+    assert not any(s.startswith("fpr_") for s in r["detail"]) and r["verified"]
+    assert set(_fpr_na(r)) == set(STAGES)
+    assert all("no Falcon emulated-arithmetic" in w for w in _fpr_na(r).values())
+    r = _fndsa_audit(_fndsa_shim(tmp_path, fpr=("NATIVE_EXPM_ONLY",)))
+    assert not any(s.startswith("fpr_") for s in r["detail"])
+    assert all("but not fpr_add, fpr_mul, fpr_div" in w for w in _fpr_na(r).values())
+    assert r["fpr"]["not_emulated"] and not r["fpr"]["implementations"]
+
+
+def test_fndsa_audit_arithmetic_named_for_the_other_set_is_not_used(tmp_path):
+    """fpr_* named for Falcon-1024 does not serve an FN-DSA-512 audit; a
+    name without a set (the reference's falcon_inner_) serves both."""
+    r = _fndsa_audit(_fndsa_shim(tmp_path, fpr=("FPR_NS=PQCLEAN_FALCON1024_CLEAN_",)))
+    assert not any(s.startswith("fpr_") for s in r["detail"])
+    r = _fndsa_audit(_fndsa_shim(tmp_path, fpr=("FPR_NS=falcon_inner_",)))
+    assert r["detail"]["fpr_add"] == (3010, 3010)
+    assert r["via"]["fpr_add"] == "falcon_inner_fpr_add"
+
+
+def test_fpr_seed_is_recorded_and_replays_the_same_inputs(tmp_path):
+    so = _fndsa_shim(tmp_path, fpr=("MUT_EXPM_COEFF",))
+    seed = bytes(range(32))
+    a, b = _fndsa_audit(so, fpr_seed=seed), _fndsa_audit(so, fpr_seed=seed)
+    assert a["fpr"]["seed"] == seed.hex() and a["fpr"]["seed_supplied"]
+    assert a["failures"] == b["failures"] and a["detail"] == b["detail"]
+    c = _fndsa_audit(so)
+    assert c["fpr"]["seed"] != seed.hex() and not c["fpr"]["seed_supplied"]
+    assert c["detail"]["fpr_expm_p63"][1] == a["detail"]["fpr_expm_p63"][1] == 10006
+
+
+def test_fpr_reference_that_cannot_be_confirmed_stops_the_stage(tmp_path, monkeypatch):
+    """If the reference and this machine's floating point disagree, or
+    ApproxExp strays from exp, no answer is judged: not applicable with the
+    reason, and the run degraded -- never a pass, never a finding."""
+    from pq_verify import fndsa_fpr as P
+    from pq_verify.core import DEGRADED
+    monkeypatch.setitem(DEGRADED, "skipped_checks", [])
+    real = P.hardware
+    monkeypatch.setattr(P, "hardware", lambda op, a, b=None: real(op, a, b) ^ (op == "div"))
+    so = _fndsa_shim(tmp_path, fpr=())
+    r = _fndsa_audit(so)
+    assert not any(s.startswith("fpr_") for s in r["detail"]) and r["verified"]
+    assert all("could not be confirmed" in w for w in _fpr_na(r).values())
+    assert "disagree on fpr_div" in r["fpr"]["reference"]
+    assert DEGRADED["skipped_checks"] == ["FN-DSA emulated arithmetic (FN-DSA-512)"]
+    monkeypatch.setattr(P, "hardware", real)
+    monkeypatch.setattr(P, "EXPM_C", P.EXPM_C[:6] + (P.EXPM_C[6] + (1 << 40),) + P.EXPM_C[7:])
+    r = _fndsa_audit(so)
+    assert "beyond 2^-50" in r["fpr"]["reference"]
+    assert not any(s.startswith("fpr_") for s in r["detail"])
+
+
+def test_fndsa_cli_reports_and_replays_the_arithmetic(tmp_path):
+    import json as _json
+    from pq_verify.report import to_json_fndsa_audit
+    so = _fndsa_shim(tmp_path, fpr=("MUT_TRUNC",))
+    _IN_PROCESS_SHIMS.add(so)
+    out, seed = tmp_path / "r.json", "ab" * 32
+    code, text = _cli("--audit-fndsa", so, "FN-DSA-512", "--fresh-seed", seed,
+                      "--json", str(out))
+    assert code != 0 and "FAIL  fpr_div" in text and f"seed {seed} (supplied)" in text
+    doc = _json.loads(out.read_text())
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert doc["arithmetic"]["seed"] == seed and doc["arithmetic"]["seed_supplied"]
+    assert doc["stages"]["fpr_div"]["total"] == 1805 > doc["stages"]["fpr_div"]["passed"]
+    assert any(f.startswith("FN-DSA (draft): stage fpr_sqrt:") for f in doc["findings"])
+    code, text = _cli("--audit-fndsa", so, "FN-DSA-512", "--fresh-seed", "abc")
+    assert code == 2 and "64 hexadecimal digits" in text
+    code, text = _cli("--fresh-seed", seed, "--fndsa")
+    assert code == 2 and "--audit-contained or --audit-fndsa" in text
+    # the stand-in with no arithmetic: one line says why, the run still verifies
+    plain = _fndsa_shim(tmp_path)
+    _IN_PROCESS_SHIMS.add(plain)
+    code, text = _cli("--audit-fndsa", plain, "FN-DSA-512")
+    assert code == 0 and text.count("n/a   fpr_*") == 1 and "FAIL" not in text
 
 
 # ----------------------------------------------------------------------

@@ -240,7 +240,10 @@ def build_parser():
                         "--audit-fndsa lib.so FN-DSA-512. Pinned signatures verify, "
                         "malformed ones are refused, its keys are canonical and "
                         "match their secret keys, its signatures verify under "
-                        "pq-verify's verifier and never reuse a nonce")
+                        "pq-verify's verifier and never reuse a nonce. Where it exports "
+                        "Falcon's emulated floating point (fpr_*, as clean builds do), "
+                        "each function is checked against exact rounding and "
+                        "ApproxExp is checked bit for bit")
     p.add_argument("--audit-mceliece", nargs=2, metavar=("PATH", "PARAM_SET"),
                    help="NOT A FIPS STANDARD: audit a Classic McEliece library in PATH "
                         "through its own entry points, e.g. --audit-mceliece lib.so "
@@ -291,10 +294,11 @@ def build_parser():
                         "x86-64, needs a C compiler. Derandomised entry points, as "
                         "--audit-kem")
     p.add_argument("--fresh-seed", metavar="HEX",
-                   help="with --audit-contained: derive the fresh questions from this "
-                        "64-digit seed (the one an earlier report recorded) instead of "
-                        "drawing a new one, to reproduce a result. The report says the "
-                        "seed was supplied")
+                   help="with --audit-contained or --audit-fndsa: derive the fresh "
+                        "questions (--audit-contained) or the emulated-arithmetic "
+                        "inputs (--audit-fndsa) from this 64-digit seed, the one an "
+                        "earlier report recorded, instead of drawing a new one, to "
+                        "reproduce a result. The report says the seed was supplied")
     p.add_argument("--constant-time", action="store_true",
                    help="with --audit-kem or --audit-mceliece: run Encaps and Decaps "
                         "under Valgrind memcheck with the secret inputs marked, and fail "
@@ -454,7 +458,7 @@ def _main(argv=None):
             ("--fresh-key", args.fresh_key,
              args.emit_prompt or args.verify_response),
             ("--fresh-count", args.fresh_count, args.fresh_key or args.audit_contained),
-            ("--fresh-seed", args.fresh_seed, args.audit_contained),
+            ("--fresh-seed", args.fresh_seed, args.audit_contained or args.audit_fndsa),
             ("--source-include", args.source_include, args.audit_source),
             ("--source-symbol", args.source_symbol, args.audit_source),
             ("--audit-timeout", args.audit_timeout is not None,
@@ -478,7 +482,7 @@ def _main(argv=None):
                        "--constant-time": "--audit-kem, --audit-dsa or --audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key or --audit-contained",
-                       "--fresh-seed": "--audit-contained",
+                       "--fresh-seed": "--audit-contained or --audit-fndsa",
                        "--kem-keypair": "--audit-kem or --audit-contained",
                        "--kem-encaps": "--audit-kem or --audit-contained",
                        "--kem-decaps": "--audit-kem or --audit-contained",
@@ -761,6 +765,16 @@ def _main(argv=None):
                       f"of {', '.join(_FN_ROLES)}")
                 return 2
             _syms[role] = sym
+        _fpr_seed = None
+        if args.fresh_seed:
+            try:
+                _fpr_seed = bytes.fromhex(args.fresh_seed)
+            except ValueError:
+                _fpr_seed = b""
+            if len(_fpr_seed) != 32:
+                print("  --fresh-seed takes 64 hexadecimal digits, the seed an earlier "
+                      "report recorded")
+                return 2
         fna_ran = _ps
         ran_task = True
         try:
@@ -772,7 +786,7 @@ def _main(argv=None):
         try:
             fna_result, _loaded, fna_reason = _isolated(
                 args, "pq_verify.fndsa_audit", "pqverify_audit_fndsa", _p, _ps,
-                symbols=_syms, prefix=args.symbol_prefix)
+                symbols=_syms, prefix=args.symbol_prefix, fpr_seed=_fpr_seed)
             _bound = _bind_loaded(fna_artifact, _loaded)
             fna_reason = fna_reason or _bound
             if fna_reason:

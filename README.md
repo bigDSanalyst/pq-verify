@@ -504,15 +504,26 @@ malformed input is refused, its keys are canonical and match their secret
 keys, every secret key solves the NTRU equation `f·G − g·F = q` and meets
 both Gram–Schmidt bounds (checked in exact integer and rational arithmetic),
 and its signatures verify under pq-verify's verifier with no nonce reused.
-PQClean's Falcon passes; eight planted bugs in its source each fail the audit
-in CI ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
+
+Where the library exports Falcon's emulated floating point, as clean builds
+do, each `fpr_*` function is also held to an exact reference. Rounding must be
+to nearest, ties to even, and ApproxExp must match the reference bit for bit.
+That arithmetic is what signing is built on, and a subtle mistake in it need
+not show in Falcon's known-answer tests. A tie rounded away from zero,
+truncation, or one ApproxExp coefficient off by one each leave PQClean's NIST
+KAT output byte for byte the same.
+
+PQClean's Falcon passes. Eleven planted bugs in its source each fail the audit
+in CI, the three arithmetic ones in the arithmetic stages only
+([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
 
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
-and lives in one section of `pq_verify/fndsa.py`. Signing — floating-point FFT
-and a Gaussian sampler, where Falcon implementations actually go wrong — is
-not checked until the final standard's vectors exist.
+and lives in one section of `pq_verify/fndsa.py`. Of signing, only the
+emulated arithmetic is checked. The FFT, the Gaussian sampler and the
+statistics of the signatures, where Falcon implementations also go wrong, are
+not ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
 
 ---
 

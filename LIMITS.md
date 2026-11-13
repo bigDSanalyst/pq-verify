@@ -134,9 +134,26 @@ about the library is claimed.
 - **FN-DSA (draft).** Verification is checked against pinned vectors and
   malformed inputs. A library's signatures are checked for validity under
   pq-verify's verifier, with no nonce reused, not byte for byte: signing is
-  randomised. The Gaussian sampler's distribution and the floating-point
-  FFT's precision are not checked. Framing (headers, padding, context
-  strings) follows Falcon round 3 and may change in the final standard.
+  randomised. Framing (headers, padding, context strings) follows Falcon
+  round 3 and may change in the final standard.
+  - **Emulated floating point (`fpr_*`).** Where a library exports Falcon's
+    emulation of binary64 (PQClean's clean build and the reference built with
+    `FALCON_FPEMU` do), `fpr_scaled`, `fpr_add`, `fpr_mul`, `fpr_div` and
+    `fpr_sqrt` are held to exact rounding to nearest, ties to even, and
+    `fpr_expm_p63` to the reference's ApproxExp bit for bit, on about 19,000
+    inputs from a seed recorded in the report. That is a test, not a proof: a
+    defect confined to inputs that are not drawn passes. Not checked:
+    - the sign of a zero result (either is accepted: Falcon's emulation does
+      not promise IEEE's rule);
+    - the primitives Falcon inlines (`fpr_of`, `fpr_rint`, `fpr_floor`,
+      `fpr_trunc`, `fpr_sub`, `fpr_inv`, `fpr_lt` and the rest): they cannot
+      be called on their own;
+    - a build on the CPU's floating point (PQClean's AVX2 and AArch64
+      Falcon, liboqs on a CPU with AVX2), or one that hides the symbols: the
+      stages are not applicable, and say so;
+    - inputs outside Falcon's own domain: subnormals, infinities, NaNs.
+  - **Not checked at all:** the FFT, `ffSampling`, the Gaussian sampler's
+    distribution, the statistics of the signatures, and timing.
 - **Classic McEliece.** Encapsulation's error vectors are checked for
   weight, validity and repetition, not for their distribution. A pass says
   the library computes the scheme exactly, not that the scheme or a

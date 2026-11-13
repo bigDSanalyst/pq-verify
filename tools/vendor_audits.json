@@ -3834,6 +3834,30 @@
           "sign": [
             24,
             24
+          ],
+          "fpr_scaled": [
+            1214,
+            1214
+          ],
+          "fpr_add": [
+            3010,
+            3010
+          ],
+          "fpr_mul": [
+            2005,
+            2005
+          ],
+          "fpr_div": [
+            1805,
+            1805
+          ],
+          "fpr_sqrt": [
+            1306,
+            1306
+          ],
+          "fpr_expm_p63": [
+            10006,
+            10006
           ]
         },
         "FN-DSA-1024": {
@@ -3856,6 +3880,30 @@
           "sign": [
             24,
             24
+          ],
+          "fpr_scaled": [
+            1214,
+            1214
+          ],
+          "fpr_add": [
+            3010,
+            3010
+          ],
+          "fpr_mul": [
+            2005,
+            2005
+          ],
+          "fpr_div": [
+            1805,
+            1805
+          ],
+          "fpr_sqrt": [
+            1306,
+            1306
+          ],
+          "fpr_expm_p63": [
+            10006,
+            10006
           ]
         }
       },
@@ -3944,6 +3992,48 @@
             "keyGen",
             "sign"
           ]
+        },
+        {
+          "name": "the emulated floating point rounds a tie away from zero, not to even",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/fpr.h",
+          "find": "x += (0xC8U >> f) & 1;",
+          "replace": "x += (0xCCU >> f) & 1;",
+          "fails": [
+            "fpr_scaled",
+            "fpr_add",
+            "fpr_mul"
+          ],
+          "only": true,
+          "kat_unchanged": true
+        },
+        {
+          "name": "the emulated floating point truncates instead of rounding",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/fpr.h",
+          "find": "x += (0xC8U >> f) & 1;",
+          "replace": "x += 0;",
+          "fails": [
+            "fpr_scaled",
+            "fpr_add",
+            "fpr_mul",
+            "fpr_div",
+            "fpr_sqrt"
+          ],
+          "only": true,
+          "kat_unchanged": true
+        },
+        {
+          "name": "one of ApproxExp's 13 coefficients is one unit off",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/fpr.c",
+          "find": "0x002D82D8305B0FEAu,",
+          "replace": "0x002D82D8305B0FEBu,",
+          "fails": [
+            "fpr_expm_p63"
+          ],
+          "only": true,
+          "kat_unchanged": true
         }
       ]
     },
@@ -3998,8 +4088,8 @@
         }
       },
       "not_applicable": {
-        "FN-DSA-512": 15,
-        "FN-DSA-1024": 15
+        "FN-DSA-512": 21,
+        "FN-DSA-1024": 21
       },
       "mutants": [
         {
@@ -4065,8 +4155,8 @@
         }
       },
       "not_applicable": {
-        "FN-DSA-512": 15,
-        "FN-DSA-1024": 15
+        "FN-DSA-512": 21,
+        "FN-DSA-1024": 21
       },
       "mutants": [
         {
