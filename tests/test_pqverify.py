@@ -10931,6 +10931,48 @@ _SA_EX_OK = {"checks": {n: {"cases": 1, "wrong": 0, "first": None}
              "model": {"arithmetic_shift": True, "narrowing_wraps": True}}
 
 
+def test_source_audit_log_does_not_say_failed_for_what_passes():
+    """A reach run's false assertion must be violated, and a conversion that
+    wraps is a note: the log says REACHED and NOTED there, not FAILED. Its word
+    agrees with judge(): FAILED only where a property failed that counts."""
+    reached = {"file": "h", "line": 1, "text": "reach: the end of the harness is reachable"}
+    narrow = {"file": "/s/ntt.c", "line": 89,
+              "text": "arithmetic overflow on signed type conversion"}
+    wrap = {"file": "/s/reduce.c", "line": 18,
+            "text": "arithmetic overflow on signed to unsigned type conversion"}
+    ub = {"file": "/s/poly.c", "line": 123, "text": "array.coeffs upper bound"}
+    cases = [
+        (_sa_check("ntt", "reach", "FAILED", [reached]), "REACHED"),
+        (_sa_check("ntt", "reach"), "UNREACHED"),                     # vacuous
+        (_sa_check("ntt", "reach", "FAILED", [ub]), "FAILED"),        # not the reach assertion
+        (_sa_check("montgomery_reduce", "conv", "FAILED", [narrow, wrap]), "NOTED"),
+        (_sa_check("ntt", "conv", "FAILED", [narrow], contracts=True), "FAILED"),
+        (_sa_check("poly_reduce", "conv", "FAILED", [narrow, ub]), "FAILED"),
+        (_sa_check("poly_reduce", "ub", "FAILED", [ub]), "FAILED"),
+        (_sa_check("ntt", "ub"), "VERIFIED"),
+        (_sa_check("ntt", "ub", "TIMEOUT"), "TIMEOUT"),
+        (_sa_check("ntt", "reach", "ERROR"), "ERROR"),
+    ]
+    for r, word in cases:
+        assert _sa.log_word(r) == word, (r, word)
+        findings, notes, cannot = _sa.judge("/s", [r], _SA_EX_OK)
+        if word == "FAILED" and r["profile"] != "reach":
+            assert findings
+        if word == "NOTED":
+            assert notes and not findings
+        if word in ("REACHED", "VERIFIED"):
+            assert not findings and not cannot
+        if word in ("UNREACHED", "TIMEOUT", "ERROR"):
+            assert cannot
+    lines = [_sa.log_line(dict(r, seconds=11.6, solver="kissat")) for r, _ in cases[:5]]
+    assert "reach REACHED" in lines[0] and "an input reaches its end" in lines[0]
+    assert "FAILED" not in lines[0] and "failed" not in lines[0]
+    assert "reach UNREACHED" in lines[1] and "no input reaches its end" in lines[1]
+    assert "conv  NOTED" in lines[3] and "2 noted" in lines[3] and "FAILED" not in lines[3]
+    assert "conv  FAILED" in lines[4] and "1 failed" in lines[4]
+    assert len({ln.index(" s  kissat") for ln in lines}) == 1      # the columns line up
+
+
 def test_source_audit_judge_decides_each_case():
     reach = _sa_check("ntt", "reach", "FAILED",
                       [{"file": "h", "line": 1, "text": "reach: the end of the harness is reachable"}])

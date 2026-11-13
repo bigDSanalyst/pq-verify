@@ -883,6 +883,44 @@ def judge(src, checks, ex, scheme="ML-KEM"):
     return findings, notes, cannot
 
 
+def log_word(r):
+    """The word a run's line in the log shows. CBMC's own verdict, except
+    where it reads as a failure that is not one, so that a passing audit's
+    log does not say FAILED:
+      REACHED    a reach run whose false assertion at the harness's end was
+                 violated, as it must be: an input reaches the end
+      UNREACHED  a reach run that VERIFIED: no input reaches the end, and
+                 judge() says the harness's passes are vacuous
+      NOTED      a run whose every failed property judge() records as a note
+                 (a conversion that wraps, checked as GCC and Clang do it)
+    The result dict keeps CBMC's verdict; judge() and the reports use that."""
+    failed = r.get("failed") or []
+    if r["profile"] == "reach":
+        if r["result"] == "VERIFIED":
+            return "UNREACHED"
+        if r["result"] == "FAILED" and failed and all(f["class"] == "reach" for f in failed):
+            return "REACHED"
+        return r["result"]
+    if (r["result"] == "FAILED" and failed and not r.get("contracts")
+            and not any(f["class"].startswith("undefined") for f in failed)):
+        return "NOTED"
+    return r["result"]
+
+
+def log_line(r):
+    """A CBMC run's line in the log."""
+    word = log_word(r)
+    if word == "REACHED":
+        what = f"{'an input reaches its end':26}"
+    elif word == "UNREACHED":
+        what = f"{'no input reaches its end':26}"
+    else:
+        what = (f"{r['properties']:>4} properties {len(r.get('failed') or []):>3} "
+                + ("noted " if word == "NOTED" else "failed"))
+    return (f"  cbmc {r['function']:24} {r['profile']:5} {word:9} {what} "
+            f"{r['seconds']:7.1f} s  {r.get('solver') or ''}").rstrip()
+
+
 def pqverify_audit_source(src, includes=(), symbols=None, jobs=None, timeout=3600,
                           memory_gb=MEMORY_GB, verbose=True):
     """Audit src. Returns the result dict the report is built from."""
@@ -932,9 +970,7 @@ def pqverify_audit_source(src, includes=(), symbols=None, jobs=None, timeout=360
     def one(task):
         r = check(src, layout, *task, timeout=timeout, kissat=bool(result["tools"]["kissat"]),
                   memory_gb=memory_gb, z3=bool(result["tools"]["z3"]))
-        say(f"  cbmc {r['function']:24} {r['profile']:5} {r['result']:9} "
-            f"{r['properties']:>4} properties {len(r['failed']):>3} failed {r['seconds']:7.1f} s"
-            f"  {r['solver'] or ''}")
+        say(log_line(r))
         return r
     # Several CBMC runs at once, as many as the machine's memory holds: each
     # job's peak, solver included, is budgeted in its scheme's table. ML-DSA's
