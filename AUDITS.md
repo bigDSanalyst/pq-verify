@@ -819,7 +819,9 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   deviations of what an exact sampler gives. A biased sampler still signs
   validly: this is the stage that sees one. On PQClean's Falcon, 29 keys
   stayed within 3.3 standard deviations. A defect that keeps these moments
-  passes: a base sampler with its table's tail cut does (measured).
+  passes: a base sampler with one row of its table zeroed, so that every
+  value above 6 comes out one less (about one draw in 4,000), does
+  (measured).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report

@@ -103,8 +103,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
     - a sign bit that is 1 with probability 136/256: 53 to 60 standard
       deviations of drift;
     - a σ 2% low: 25 to 27 below the expected variance.
-  - **Not seen:** a defect that keeps these moments (a base sampler with its
-    table's tail cut passes, measured), and a smaller bias than 1,000
+  - **Not seen:** a defect that keeps these moments (a base sampler with one
+    row of its table zeroed passes, measured), and a smaller bias than 1,000
     signatures resolve (about one point in the sign bit, half a percent in
     σ). It adds about 10 s to an FN-DSA-512 audit.
 

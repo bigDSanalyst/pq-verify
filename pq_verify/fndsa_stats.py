@@ -36,9 +36,10 @@ sign validly:
     below the expected variance (5 keys).
 
 Not seen here:
-  - a defect that keeps these moments. A base sampler whose table's tail is
-    cut leaves every statistic within noise (measured, PQClean, 1,000
-    signatures).
+  - a defect that keeps these moments. A base sampler with one row of its
+    table zeroed, so that every value above 6 comes out one less (about one
+    draw in 4,000), leaves every statistic within noise (measured, PQClean,
+    1,000 signatures).
   - one that shows only after more signatures, under other keys, or for
     particular messages;
   - a smaller bias than the test resolves. At 1,000 signatures, a sign bit
