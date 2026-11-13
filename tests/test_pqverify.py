@@ -2519,6 +2519,23 @@ def test_the_hybrid_groups_the_docs_name_are_the_ones_implemented(doc):
             f"{doc} does not give the codepoint for {name}")
 
 
+def test_security_md_names_every_audit_that_runs_vendor_code():
+    """SECURITY.md tells a user which commands run the vendor's code. Every
+    --audit-* option the command line offers does, apart from the two that
+    only modify another; an audit added without a line there would be run on
+    a build host by someone who read that it is safe. --audit-source was
+    missing until 2.18.0."""
+    from pq_verify.cli import build_parser
+    text = (_REPO / "SECURITY.md").read_text()
+    section = text.split("## What pq-verify does on purpose", 1)[1].split("\n## ", 1)[0]
+    modifiers = {"--audit-hbs-full", "--audit-timeout"}
+    audits = {o for a in build_parser()._actions for o in a.option_strings
+              if o.startswith("--audit-")} - modifiers
+    assert len(audits) >= 11
+    missing = sorted(a for a in audits if f"`{a}`" not in section)
+    assert not missing, f"SECURITY.md does not say these run vendor code: {missing}"
+
+
 def test_internal_doc_links_resolve():
     """A link to a heading that does not exist is a dead end for a reader.
 

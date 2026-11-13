@@ -94,6 +94,12 @@ versioning](https://semver.org/spec/v2.0.0.html).
   well as its output.
 - **The README's table of SARIF rules lists all of them.** `PQV008` (ML-DSA),
   `PQV009` (LMS/XMSS) and `PQV010` (C source) were emitted but not listed.
+- **SECURITY.md names `--audit-source` among the audits that run vendor
+  code.** CBMC only analyses the source, but the exhaustive test links the
+  vendor's reduction code into a test program and runs it with the user's
+  privileges. SECURITY.md's list of what executes the vendor's code left it
+  out. A test now requires every `--audit-*` option that runs code to be named
+  there.
 
 ## [2.17.4] — 2026-11-13
 

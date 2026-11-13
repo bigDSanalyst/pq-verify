@@ -21,12 +21,20 @@ report and have not had a reply — no details.
 
 ## What pq-verify does on purpose
 
-**Auditing an untrusted library executes it.** `--audit-so`, `--audit-kem`,
-`--audit-dsa`, `--audit-slhdsa`, `--audit-fndsa`, `--audit-mceliece`,
-`--audit-hqc` and `--audit-hbs` call `dlopen` on the path you give them, and
-loading a shared object runs its initialisers before pq-verify calls anything.
-`--audit-harness` runs the command you give it. That is not a flaw — driving
-the vendor's own code with NIST's vectors is the entire point — but it means:
+**Auditing an untrusted library executes it.**
+- `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-slhdsa`,
+  `--audit-fndsa`, `--audit-mceliece`, `--audit-hqc` and `--audit-hbs` call
+  `dlopen` on the path you give them. Loading a shared object runs its
+  initialisers before pq-verify calls anything.
+- `--audit-contained` loads the library too, in a worker described below.
+- `--audit-harness` runs the command you give it.
+- `--audit-source` compiles the C source you give it. CBMC only analyses that
+  code; the exhaustive test runs it. It links the vendor's `reduce.c` with
+  `ntt.c` (ML-KEM) or `rounding.c` (ML-DSA) into a test program, which runs
+  with your user's privileges like any other audit.
+
+That is not a flaw — driving the vendor's own code with NIST's vectors is the
+entire point — but it means:
 
 > **Treat every `--audit-*` as running the vendor's code, because that is what
 > it does.** Audit unfamiliar binaries inside a container, a VM, or a throwaway
