@@ -86,17 +86,22 @@ class Harness:
         self.timeout = timeout
         self.calls = 0
         try:
-            # A process group of its own, so close() stops the harness and
-            # anything it started (a wrapper script's child, say) together.
-            self.proc = _sp.Popen(self.argv, stdin=_sp.PIPE, stdout=_sp.PIPE,
-                                  stderr=_sp.DEVNULL, bufsize=0,
-                                  start_new_session=True)
+            self.proc = self._spawn()
         except OSError as exc:
             raise HarnessDied(f"cannot start the harness: {exc}") from None
         self._lines = _queue.Queue()
         t = _threading.Thread(target=self._pump, daemon=True)
         t.start()
-        hs = self._read("the handshake")
+        try:
+            self._before_handshake()
+        except HarnessDied:
+            self.close()
+            raise
+        try:
+            hs = self._read("the handshake")
+        except HarnessDied:
+            self.close()            # and whatever it had started
+            raise
         functions = hs.get("functions") if isinstance(hs, dict) else None
         if not isinstance(hs, dict) or "implementation" not in hs \
                 or not isinstance(functions, (list, type(None))):
@@ -104,6 +109,15 @@ class Harness:
             raise HarnessDied(f"the first line is not a handshake: {str(hs)[:120]}")
         self.implementation = str(hs["implementation"])
         self.functions = [str(f) for f in functions or []]
+
+    def _spawn(self):
+        # A process group of its own, so close() stops the harness and
+        # anything it started (a wrapper script's child, say) together.
+        return _sp.Popen(self.argv, stdin=_sp.PIPE, stdout=_sp.PIPE,
+                         stderr=_sp.DEVNULL, bufsize=0, start_new_session=True)
+
+    def _before_handshake(self):
+        """What a subclass exchanges with its harness before the handshake."""
 
     def _pump(self):
         while True:
@@ -116,9 +130,28 @@ class Harness:
             self._lines.put(line)
         self._lines.put(None)
 
+    def _next_line(self):
+        """The next line, None once the harness is gone, or _queue.Empty at
+        the time limit. The harness's exit is watched as well as its output:
+        a process it started can hold its stdout open after it has died, and
+        the end of the output then never comes."""
+        import time as _time
+        end = None if self.timeout is None else _time.monotonic() + self.timeout
+        gone = False
+        while True:
+            left = None if end is None else end - _time.monotonic()
+            if left is not None and left <= 0:
+                raise _queue.Empty
+            try:
+                return self._lines.get(timeout=0.2 if left is None else min(0.2, left))
+            except _queue.Empty:
+                if gone:
+                    return None          # exited, and nothing more came
+                gone = self.proc.poll() is not None
+
     def _read(self, what):
         try:
-            line = self._lines.get(timeout=self.timeout)
+            line = self._next_line()
         except _queue.Empty:
             self.close()
             raise HarnessDied(f"no answer to {what} within {self.timeout} s") from None
@@ -237,10 +270,29 @@ def _deterministic(f, *args):
         return False
 
 
-def run_kem(h, param_set, load, edge=True, accumulated=0):
+def fresh_kem_sets(param_set, seed, count):
+    """NIST's two ML-KEM sets, rebuilt from `seed`: the same layout, inputs
+    nobody has seen, and the answers pq-verify's reference computes now
+    (pq_verify.fresh). FreshError if that reference is not installed."""
+    from . import fresh as _fresh
+    questions, expected = _fresh.build(param_set, seed, count)
+    sets = {}
+    for q in questions:
+        exp = expected[q["suite"]]
+        sets[q["suite"]] = {"testGroups": [
+            dict(g, tests=[dict(t, **exp[t["tcId"]]) for t in g["tests"]])
+            for g in q["testGroups"]]}
+    return sets["ML-KEM-keyGen-FIPS203"], sets["ML-KEM-encapDecap-FIPS203"]
+
+
+def run_kem(h, param_set, load, edge=True, accumulated=0, fresh=None):
+    """`fresh` is (seed, tests per group) or None."""
     from .edge import run_kem as edge_kem, kem_cases
     h.need("ML_KEM_KeyGen", "ML_KEM_Encaps", "ML_KEM_Decaps")
     b = HarnessKEM(h, param_set)
+    # A harness that hands its inputs to fixed-size C buffers (pq-verify's own
+    # contained worker) cannot be given an input of another length.
+    b.fixed_buffers = bool(getattr(h, "fixed_buffers", False))
     tally, na, failures = {}, {}, []
 
     def rec(stage, ok, case, why):
@@ -274,67 +326,81 @@ def run_kem(h, param_set, load, edge=True, accumulated=0):
     why_kg = "the harness ignores the key-generation randomness (two calls, two keys)"
     why_en = "the harness ignores the encapsulation randomness (two calls, two results)"
 
-    for g in kg["testGroups"]:
-        if g.get("parameterSet") != param_set:
-            continue
-        for t in g["tests"]:
-            if not det_kg:
-                skip("keyGen", why_kg)
+    def vectors(kg, ed, pre="", ref="NIST"):
+        for g in kg["testGroups"]:
+            if g.get("parameterSet") != param_set:
                 continue
-            try:
-                d, z = bytes.fromhex(t["d"]), bytes.fromhex(t["z"])
-                ek, dk = b.keygen(d, z)
-                want_dk = d + z if b.seed_dk else bytes.fromhex(t["dk"])
-                ok = ek.hex().upper() == t["ek"].upper() and dk == want_dk
-                rec("keyGen", ok, f"tcId {t['tcId']}",
-                    "ek differs from NIST, or dk is not d || z" if b.seed_dk
-                    else "ek or dk differs from NIST")
-            except Refused as exc:
-                rec("keyGen", False, f"tcId {t['tcId']}", f"refused: {exc}")
-    for g in ed["testGroups"]:
-        if g.get("parameterSet") != param_set:
-            continue
-        fn = g.get("function")
-        for t in g["tests"]:
-            case = f"tcId {t['tcId']}"
-            if fn == "encapsulation":
-                if not det_en:
-                    skip("encaps", why_en)
+            for t in g["tests"]:
+                if not det_kg:
+                    skip(pre + "keyGen", why_kg)
                     continue
                 try:
-                    c, K = b.encaps(bytes.fromhex(t["ek"]), bytes.fromhex(t["m"]))
-                    ok = c.hex().upper() == t["c"].upper() and K.hex().upper() == t["k"].upper()
-                    rec("encaps", ok, case, "c or K differs from NIST")
+                    d, z = bytes.fromhex(t["d"]), bytes.fromhex(t["z"])
+                    ek, dk = b.keygen(d, z)
+                    want_dk = d + z if b.seed_dk else bytes.fromhex(t["dk"])
+                    ok = ek.hex().upper() == t["ek"].upper() and dk == want_dk
+                    rec(pre + "keyGen", ok, f"tcId {t['tcId']}",
+                        f"ek differs from {ref}, or dk is not d || z" if b.seed_dk
+                        else f"ek or dk differs from {ref}")
                 except Refused as exc:
-                    rec("encaps", False, case, f"refused a valid key: {exc}")
-            elif fn == "decapsulation":
-                if "dk" not in t or "c" not in t or "k" not in t:
-                    continue
-                if b.seed_dk:
-                    skip("decaps", why_seed)
-                    continue
-                try:
-                    K = b.decaps(bytes.fromhex(t["dk"]), bytes.fromhex(t["c"]))
-                    rec("decaps", K.hex().upper() == t["k"].upper(), case,
-                        "K differs from NIST")
-                except Refused as exc:
-                    rec("decaps", False, case, f"refused: {exc}")
-            elif fn in ("encapsulationKeyCheck", "decapsulationKeyCheck"):
-                stage = "ekCheck" if fn == "encapsulationKeyCheck" else "dkCheck"
-                if stage == "dkCheck" and b.seed_dk:
-                    skip("dkCheck", why_seed)
-                    continue
-                try:
-                    if stage == "ekCheck":
-                        b.encaps(bytes.fromhex(t["ek"]), bytes(32))
-                    else:
-                        b.decaps(bytes.fromhex(t["dk"]), bytes(_ct_len(param_set)))
-                    accepted = True
-                except Refused:
-                    accepted = False
-                want = bool(t["testPassed"])
-                rec(stage, accepted == want, case,
-                    "accepted an invalid key" if accepted else "refused a valid key")
+                    rec(pre + "keyGen", False, f"tcId {t['tcId']}", f"refused: {exc}")
+        for g in ed["testGroups"]:
+            if g.get("parameterSet") != param_set:
+                continue
+            fn = g.get("function")
+            for t in g["tests"]:
+                case = f"tcId {t['tcId']}"
+                if fn == "encapsulation":
+                    if not det_en:
+                        skip(pre + "encaps", why_en)
+                        continue
+                    try:
+                        c, K = b.encaps(bytes.fromhex(t["ek"]), bytes.fromhex(t["m"]))
+                        ok = (c.hex().upper() == t["c"].upper()
+                              and K.hex().upper() == t["k"].upper())
+                        rec(pre + "encaps", ok, case, f"c or K differs from {ref}")
+                    except Refused as exc:
+                        rec(pre + "encaps", False, case, f"refused a valid key: {exc}")
+                elif fn == "decapsulation":
+                    if "dk" not in t or "c" not in t or "k" not in t:
+                        continue
+                    if b.seed_dk:
+                        skip(pre + "decaps", why_seed)
+                        continue
+                    try:
+                        K = b.decaps(bytes.fromhex(t["dk"]), bytes.fromhex(t["c"]))
+                        rec(pre + "decaps", K.hex().upper() == t["k"].upper(), case,
+                            f"K differs from {ref}")
+                    except Refused as exc:
+                        rec(pre + "decaps", False, case, f"refused: {exc}")
+                elif fn in ("encapsulationKeyCheck", "decapsulationKeyCheck"):
+                    stage = "ekCheck" if fn == "encapsulationKeyCheck" else "dkCheck"
+                    if stage == "dkCheck" and b.seed_dk:
+                        skip(pre + "dkCheck", why_seed)
+                        continue
+                    try:
+                        if stage == "ekCheck":
+                            b.encaps(bytes.fromhex(t["ek"]), bytes(32))
+                        else:
+                            b.decaps(bytes.fromhex(t["dk"]), bytes(_ct_len(param_set)))
+                        accepted = True
+                    except Refused:
+                        accepted = False
+                    want = bool(t["testPassed"])
+                    rec(pre + stage, accepted == want, case,
+                        "accepted an invalid key" if accepted else "refused a valid key")
+
+    vectors(kg, ed)
+    if fresh:
+        # Inputs nobody has seen, answers computed here and now: a library
+        # that looks NIST's published answers up has nothing to look up.
+        from .fresh import FreshError
+        seed, count = fresh
+        try:
+            vectors(*fresh_kem_sets(param_set, seed, count), pre="fresh:",
+                    ref="pq-verify's reference on a fresh input")
+        except FreshError as exc:
+            na["fresh"] = (5 * count, str(exc))
 
     edge_res = None
     if edge:
@@ -545,7 +611,7 @@ class HarnessDSA:
         return pk, self.sign_pure(bytes.fromhex(msg), ctx, r, sk)
 
 
-def run_dsa(h, param_set, load, edge=True, accumulated=0):
+def run_dsa(h, param_set, load, edge=True, accumulated=0, fresh=None):
     from .dsa_audit import run_acvp
     from .edge import run_dsa as edge_dsa
     h.need("ML_DSA_KeyGen", "ML_DSA_Sign", "ML_DSA_Verify")
@@ -608,12 +674,24 @@ def harness_executable(argv):
 
 
 def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
-                           verbose=True, edge=True, accumulated=10_000):
+                           verbose=True, edge=True, accumulated=10_000,
+                           fresh=0, fresh_seed=None, start=None, describe=None,
+                           finish=None):
     """Audit the implementation behind a Crucible-protocol harness.
 
     `command` is the harness command line (a string, split with shlex, or a
     list). Returns a result dict; 'status' is CANNOT VERIFY (with 'reason')
     when the harness died or lacks the functions the parameter set needs.
+
+    `fresh` (tests per group; ML-KEM only) adds NIST's vector sets rebuilt
+    from a seed drawn for this run: inputs nobody has seen, scored against
+    answers pq-verify's reference computes. The seed is in the result, and is
+    printed only once the harness is gone. `fresh_seed` replays one.
+
+    pq-verify's contained worker (pq_verify.contained) runs on this path:
+    `start(argv, timeout)` starts its harness, `describe` gives the lines of
+    the banner and the closing note, and `finish(result, harness)` adds what
+    only it knows, after the harness has stopped and before the summary.
     """
     from .core import _load_vector_json, _pkg_dir, _vector_label
     argv = _shlex.split(command) if isinstance(command, str) else list(command)
@@ -626,30 +704,59 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
             ("ML-DSA-keyGen-FIPS204", "ML-DSA-sigGen-FIPS204", "ML-DSA-sigVer-FIPS204"))
     base = {"command": argv, "parameter_set": param_set,
             "vectors": _vector_label(vec, *dirs)}
+    describe = describe or {}
+    seed = None
+    if fresh and kem:
+        import secrets as _secrets
+        from .fresh import DERIVATION
+        seed = fresh_seed if fresh_seed is not None else _secrets.token_bytes(32)
+        base["fresh"] = {"tests_per_group": fresh, "derivation": DERIVATION,
+                         "seed_source": ("supplied by the caller" if fresh_seed is not None
+                                         else "drawn for this run")}
     h = None
+    died = None
+    tally, na, failures, det, calls = {}, {}, [], {}, 0
     try:
-        h = Harness(argv, timeout=timeout)
+        h = (start or Harness)(argv, timeout=timeout)
         base["implementation"] = h.implementation
         if verbose:
             print("=" * 68)
-            print(f"  HARNESS AUDIT (Crucible protocol) — {param_set}")
-            print(f"  harness : {shown(' '.join(argv), 400)}")
+            print(f"  {describe.get('title', 'HARNESS AUDIT (Crucible protocol)')} — {param_set}")
+            banner = describe.get("banner")
+            for line in (banner() if callable(banner) else banner) or [
+                    f"harness : {shown(' '.join(argv), 400)}"]:
+                print(f"  {line}")
             print(f"  reports : {shown(h.implementation)}")
             print(f"  vectors : {base['vectors']}")
             print("=" * 68)
         runner = run_kem if kem else run_dsa
         tally, na, failures, det = runner(h, param_set, load, edge=edge,
-                                          accumulated=accumulated)
+                                          accumulated=accumulated,
+                                          fresh=(seed, fresh) if seed else None)
         calls = h.calls
     except HarnessDied as exc:
-        if verbose:
-            print(f"  CANNOT VERIFY: {shown(exc, 400)}")
-        return dict(base, verified=False, status="CANNOT VERIFY", reason=str(exc),
-                    passed=0, total=0, detail={}, not_applicable={},
-                    not_applicable_total=0, failures=[])
+        died = str(exc)
+        tally, na, failures, det = {}, {}, [], {}
     finally:
         if h is not None:
             h.close()
+    if seed is not None:
+        base["fresh"]["seed"] = seed.hex()     # told only now: the harness is gone
+    if died is not None:
+        result = dict(base, verified=False, status="CANNOT VERIFY", reason=died,
+                      passed=0, total=0, detail={}, not_applicable={},
+                      not_applicable_total=0, failures=[])
+    else:
+        result = _result(base, tally, na, failures, det, calls)
+    if finish is not None:
+        result = finish(result, h)
+    if verbose:
+        _print_result(result, describe.get("closing"),
+                      brief=died is not None and result["status"] == "CANNOT VERIFY")
+    return result
+
+
+def _result(base, tally, na, failures, det, calls):
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     na_all = sum(c for c, _ in na.values())
@@ -666,22 +773,32 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
         if det.get(k) is False:
             notes.append(f"the harness's {k} ignores its randomness input; byte-exact "
                          f"{k} checks are not applicable")
-    if verbose:
-        for s, (p, t) in tally.items():
-            print(f"  {'PASS' if p == t else 'FAIL'}  {s:16s} {p}/{t}")
-        for s, (c, why) in na.items():
-            print(f"  n/a   {s:16s} {c}: {shown(why, 400)}")
-        for f in failures[:5]:
-            print(f"        ✗ {f['stage']} {shown(f['case'])}: {shown(f['detail'], 400)}")
-        for n in notes:
-            print(f"  note: {shown(n, 400)}")
-        print("=" * 68)
-        print(f"  RESULT: {p_all}/{t_all} — {status}"
-              + (f"   ({na_all} not applicable)" if na_all else ""))
-        print("  Audited: the harness AND the implementation behind it. A failure")
-        print("  can be the harness's wiring; the library itself is not hashed.")
-        print("=" * 68)
     return dict(base, verified=verified, status=status, passed=p_all, total=t_all,
                 detail=tally, not_applicable={k: list(x) for k, x in na.items()},
                 not_applicable_total=na_all, failures=failures, deterministic=det,
                 harness_notes=notes, calls=calls)
+
+
+def _print_result(r, closing=None, brief=False):
+    if brief:                       # the harness died: there is nothing to list
+        print(f"  CANNOT VERIFY: {shown(r.get('reason'), 400)}")
+        return
+    for s, (p, t) in r["detail"].items():
+        print(f"  {'PASS' if p == t else 'FAIL'}  {s:16s} {p}/{t}")
+    for s, (c, why) in r["not_applicable"].items():
+        print(f"  n/a   {s:16s} {c}: {shown(why, 400)}")
+    for f in r["failures"][:5]:
+        print(f"        ✗ {f['stage']} {shown(f['case'])}: {shown(f['detail'], 400)}")
+    for n in r.get("harness_notes") or []:
+        print(f"  note: {shown(n, 400)}")
+    fr = r.get("fresh")
+    if fr and fr.get("seed"):
+        print(f"  fresh : seed {fr['seed']} ({fr['seed_source']})")
+    na_all = r.get("not_applicable_total", 0)
+    print("=" * 68)
+    print(f"  RESULT: {r['passed']}/{r['total']} — {r['status']}"
+          + (f"   ({na_all} not applicable)" if na_all else ""))
+    for line in closing or ("Audited: the harness AND the implementation behind it. A failure",
+                            "can be the harness's wiring; the library itself is not hashed."):
+        print(f"  {line}")
+    print("=" * 68)

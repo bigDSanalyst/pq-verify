@@ -105,6 +105,7 @@ audit a binary you do not trust in a container or a VM):
 ```bash
 pq-verify --audit-so build/libmlkem768.so PQCLEAN_MLKEM768_CLEAN_ntt
 pq-verify --audit-kem build/libmlkem768.so ML-KEM-768     # the whole KEM
+pq-verify --audit-contained build/libmlkem768.so ML-KEM-768   # the KEM, scored apart from the library
 pq-verify --audit-dsa build/libmldsa65.so ML-DSA-65       # the whole signature scheme
 pq-verify --audit-slhdsa build/libslhdsa.so SLH-DSA-SHA2-128f   # SLH-DSA, all three interfaces
 pq-verify --audit-hbs build/libhashsigs.so                # LMS/XMSS, via a pqv_hbs adapter
@@ -191,6 +192,7 @@ Every report states its binding as a field, not as prose:
 | Path | `artifact` |
 |------|-----------|
 | `--audit-so`, `--audit-kem`, `--audit-dsa`, `--audit-slhdsa`, `--audit-hbs` | `sha256 <hash>` — that file performed the computation |
+| `--audit-contained` | `sha256 <hash>` — a sealed in-memory copy of that file, hashed as it was copied, performed the computation |
 | `--verify-response` | `none — vendor-supplied response` |
 | `--verify-hybrid` | `none — vendor-supplied transcript` |
 | `--acvp`, `--acvp-all` | `none — reference-chain conformance, no vendor binary loaded` |
@@ -221,6 +223,35 @@ libcrypto, a dependency found through `LD_LIBRARY_PATH` — plus any
 `LD_PRELOAD`/`LD_LIBRARY_PATH` in effect (`artifact.loader_environment`). The
 audited file is hashed before the run and again after it; if they differ, the
 verdict is `CANNOT VERIFY` ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md) says what that cannot catch).
+
+**A library kept away from its verdict.** `pq-verify --audit-contained
+build/libmlkem768.so ML-KEM-768` runs an ML-KEM library somewhere else: in a
+worker process that is sent inputs and returns what the library wrote. The
+vectors, the expected answers and the scoring stay in pq-verify's own process,
+whose memory the worker cannot open while the audit runs, so a library that
+corrupts memory corrupts the worker's and not its verdict. The library is
+loaded from a sealed in-memory copy of the file, hashed as it was copied, so
+what was hashed is what runs, whatever happens to the file on disk. Before the
+library is mapped, the worker drops its privileges and installs a seccomp
+filter, and pq-verify confirms both from `/proc`. The filter stops the library
+starting a process, running another program, opening a socket, opening a file
+for writing or changing one, and signalling or tracing another process: a
+library that tries is killed by the kernel and reported
+(`ISO-SECCOMP-VIOLATION`), and so is a process left behind (`ISO-ESCAPEE`).
+
+The worker can still read any file you can, and NIST's answers are files:
+they are published, and this package ships them. So a contained audit also
+asks **fresh questions**, drawn from a seed made for the run and scored against
+answers pq-verify's reference computes; the seed is in the report, and
+`--fresh-seed` replays it. A planted library that cannot compute ML-KEM and
+answers from a table of NIST's vectors passes all 80 of them and fails the
+fresh ones. The checks are `--audit-kem`'s, without `--constant-time`; on
+PQClean's ML-KEM-1024 the two paths agree stage by stage. Linux on x86-64,
+with a C compiler; anywhere else the result is `CANNOT VERIFY`. It is **not a
+sandbox**, and it does not catch a library that computes correctly only while
+it is being audited
+([SECURITY.md](https://github.com/bigDSanalyst/pq-verify/blob/main/SECURITY.md#what-pq-verify-does-on-purpose),
+[LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#the-contained-worker)).
 
 **Never ship a test build.** The randomness harness and the pqv_hbs adapters
 make a library deterministic and stateless on purpose. `pq-verify
@@ -333,6 +364,10 @@ SARIF-to-ASFF conversion step.
 | `PQV005` | Boundary/edge-case vector failed |
 | `PQV006` | Vendor answer differs from the pinned NIST value |
 | `PQV007` | Hybrid key agreement does not compose the way RFC 10024 pins it |
+| `PQV008` | ML-DSA library output or verdict differs from NIST, Wycheproof or FIPS 204 |
+| `PQV009` | LMS/XMSS library output or verdict differs from the pinned vectors |
+| `PQV010` | Undefined behaviour, an overflow or a wrong reduction in the C source |
+| `PQV011` | The library did what the contained worker's filter forbids, or left a process behind |
 | `PQV000` | The run could not verify this — not a pass and not a failure |
 
 `--fail-on-finding` exits non-zero, so it can gate a merge.
@@ -723,6 +758,11 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 **For `--constant-time`:** Valgrind with its headers (`valgrind/memcheck.h`;
 `apt install valgrind`) and a C compiler, which builds the small driver that
 runs the library under memcheck.
+
+**For `--audit-contained`:** Linux on x86-64 with seccomp and `/proc`, and a C
+compiler, which builds the worker when the audit runs. `kyber-py` computes the
+answers to the fresh questions; without it they are not applicable, and the
+report says so.
 
 **For `--audit-source`:** `cbmc` (`apt install cbmc`) and a C compiler, and
 for ML-DSA also `z3` and Kissat, which solves the NTT proofs. Ubuntu does not

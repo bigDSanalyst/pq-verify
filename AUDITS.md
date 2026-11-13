@@ -1225,6 +1225,30 @@ each leaving every output correct:
 | a table read indexed by a secret coefficient, its value discarded | ct:sign fails: secret used as a memory address in `mld_poly_chknorm_c`. With Valgrind's default translation it passed |
 | `mld_decompose` divides with a hardware division (identical signatures) | passes, as specified: memcheck cannot see timing; the division list names `poly_decompose` and `poly_use_hint` |
 
+## The contained worker, on the same libraries
+
+`--audit-contained` runs an ML-KEM library in pq-verify's contained worker
+and scores it in pq-verify's own process
+([README](README.md#what-a-result-is-bound-to)). It is a different route to
+the same answers, so CI takes it too: for every library and parameter set in
+the [full-scheme KEM table](#full-scheme-kem-audit-including-invalid-keys),
+`tools/vendor_audit.py` audits the same file a second time through the worker
+and fails unless
+
+- every stage both audits run has the same count (keyGen, encaps, decaps,
+  ekCheck, dkCheck, the three edge stages and the 10,000 accumulated cases);
+- `containment` and `bounds` pass: the filter was confirmed before the
+  library was mapped, the library made no system call on its list and left no
+  process behind, and no call wrote outside a buffer;
+- the 24 fresh keyGen, encapsulation and decapsulation cases all pass, and
+  the 16 fresh key checks pass exactly where NIST's do. PQClean, which has no
+  rejection path, fails the invalid half of both, on inputs drawn for the run
+  as on NIST's.
+
+So the worker, its filter and its fresh questions are exercised on real
+libraries (mlkem-native, PQClean and three builds of liboqs), not only on the
+small ML-KEM pq-verify's tests are written against.
+
 ## Any language, through Crucible-protocol harnesses
 
 `--audit-harness COMMAND PARAM_SET` audits an ML-KEM or ML-DSA implementation

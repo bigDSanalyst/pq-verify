@@ -286,6 +286,19 @@ binary built to recognise pq-verify could behave differently under test. That
 is the limit of any black-box test; the prompt/response path and a build you
 control are the answers to it.
 
+**A sealed copy, where the library is contained.** `--audit-contained` binds
+to the file's SHA-256 as the other library audits do, by a shorter route:
+pq-verify opens the file once, copies it into a memory file while hashing it,
+seals the copy against any further change, and the worker loads the copy. The
+hash and the load are of the same bytes by construction, where the other paths
+hash the file by its path before the run and again after it. The report's
+`artifact.loaded_objects` names the copy (`sealed_copy_of`) and whatever the
+loader mapped with it; `containment` says what `/proc` showed of the worker
+before the library was mapped, how the worker ended and what it left behind;
+`fresh` holds the seed its fresh questions came from. A harness audit of
+somebody else's harness has none of this: there the harness is hashed, not
+the library.
+
 **Scope is part of the verdict.** `--audit-dsa` and `--audit-hbs` reports carry
 `scope`: how many cases ran, how many were not applicable (the library exports
 no entry point, or its adapter declares a parameter set unsupported) and how
@@ -440,6 +453,7 @@ pq_verify/
   fresh.py                 Fresh, unpublished ACVP question sets
   response.py              Prompt/response verification for un-loadable builds
   harness_audit.py         Audits through a Crucible-protocol harness
+  contained.py             The contained worker: a library scored apart from itself
   hybrid.py                RFC 10024 hybrid key-agreement composition
   hbs.py                   LMS/HSS and XMSS/XMSS^MT (SP 800-208)
   hbs_suite.py             Their conformance suites
@@ -458,7 +472,8 @@ pq_verify/
                            (ct/). Never in production. source/: the source audit's
                            CBMC harnesses, contracts and exhaustive test.
                            bouncycastle/: the Crucible-protocol harness for Bouncy
-                           Castle's Java provider
+                           Castle's Java provider. contained/: the worker
+                           --audit-contained compiles and runs a library in
   vectors/                 Pinned vectors and their manifests (PROVENANCE.md)
 tests/test_pqverify.py     pytest suite (run on 3.9-3.14 in CI)
 tools/                     Vendor audits, vector pinning, the re-pinning doctor

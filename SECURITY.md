@@ -60,6 +60,52 @@ docker run --rm --memory 4g --pids-limit 256 --cpus 2 \
 The install needs the network; in an image with pq-verify already installed,
 add `--network none`, since the audit itself needs none.
 
+**The contained worker (`--audit-contained`) keeps a library away from its
+verdict. It is not a sandbox either.** It runs an ML-KEM library in a worker
+process that is sent inputs and returns what the library wrote; the vectors,
+the expected answers and the scoring stay in pq-verify's own process. What
+that gives you, and what it does not:
+
+- **The verdict.** A library that corrupts memory corrupts the worker's, not
+  the scorer's. For the length of the audit pq-verify's process is not
+  dumpable, so the worker cannot open its memory, its environment or its open
+  files through `/proc`. Its command line stays readable.
+- **The file.** The library is loaded from a sealed in-memory copy, hashed as
+  it was copied from one open descriptor. Replacing the file on disk during
+  the audit changes neither what runs nor what the report names.
+- **What the library may do.** Before the library is mapped, the worker drops
+  its capabilities, sets `no_new_privs` and installs a seccomp filter.
+  pq-verify confirms all three in `/proc/<pid>/status`, and that the library
+  is not mapped yet, before it tells the worker to load it. The filter is a
+  deny-list. On it: starting a process, running another program, a new
+  session or process group; sockets; opening a file for writing, creating,
+  renaming, removing or truncating one, changing its mode, owner, times or
+  attributes; signalling, tracing or reading another process; io_uring;
+  mounts and namespaces; keyrings, System V IPC and POSIX message queues. The
+  worker prints it (`pqv_worker --policy`), and a test makes every call on it.
+  A library that makes one is killed by the kernel, and the audit reports a
+  finding (`ISO-SECCOMP-VIOLATION`). A process still there when the audit
+  ends is stopped and reported (`ISO-ESCAPEE`), wherever it has ended up:
+  pq-verify adopts what the worker's tree orphans.
+- **What it can still do: read any file your user can read.** Your SSH keys,
+  your cloud credentials, and NIST's expected answers, which are published
+  and which this package ships (`pq_verify/vectors/acvp_vectors.json.gz`).
+  The worker is never *sent* an expected answer, but on NIST's vectors it can
+  look one up. That is why a contained audit also asks fresh questions, from
+  a seed drawn for the run and kept in pq-verify's memory until the worker is
+  gone: a library with nothing but a table of published answers fails them.
+  A seed you supply with `--fresh-seed` is on the command line, where the
+  worker can read it, so that run reproduces a result and asks nothing new.
+  The worker can also use CPU and memory until it is stopped, and make any
+  system call that is not on the list: the list names what pq-verify knows to
+  be dangerous, and proves nothing about the rest.
+- **What it does not address.** A library that computes correctly while it is
+  being audited and differently when it is not. No test of behaviour does.
+
+So the rule above holds here too: run a binary you do not trust in a container
+or a VM. The worker runs on x86-64 Linux; anywhere else, and wherever the
+filter cannot be installed or confirmed, the result is `CANNOT VERIFY`.
+
 **Audit builds must never ship.** The randomness harness
 (`pq_verify/harness/pqv_randombytes.c`) replaces `randombytes()` with a queue
 of caller-chosen bytes, and a pqv_hbs adapter signs at any leaf index it is

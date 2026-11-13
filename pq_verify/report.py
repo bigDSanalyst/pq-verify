@@ -133,6 +133,17 @@ RULES = {
                  "every input, not by sampling."),
         "level": "error",
     },
+    "PQV011": {
+        "name": "ContainmentViolation",
+        "short": "The library did what the contained worker's filter forbids, or left a process behind",
+        "full": ("Run in pq-verify's contained worker (--audit-contained), the library "
+                 "made a system call on the worker's seccomp deny-list (starting a "
+                 "process, exec, a socket, opening a file for writing or changing "
+                 "one, signalling or tracing another process) and the kernel stopped "
+                 "it; or a process it had started was still there when the audit "
+                 "ended. Computing a KEM calls for neither."),
+        "level": "error",
+    },
     "PQV005": {
         "name": "BoundaryVectorFailure",
         "short": "Boundary/edge-case vector failed",
@@ -148,6 +159,7 @@ _FINDING_MAP = (
     ("ML-DSA:",     "PQV008"),
     ("LMS/XMSS:",   "PQV009"),
     ("source:",     "PQV010"),
+    ("stage containment", "PQV011"),
     ("cannot verify", "PQV000"),
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
@@ -905,6 +917,28 @@ def to_json_harness_audit(result, artifact=None):
                       "findings": len(findings)}
     doc["scope"] = _scope(result.get("total", 0), result.get("not_applicable_total", 0),
                           na_why="the protocol or this harness cannot express them")
+    return doc
+
+
+def to_json_contained_audit(result):
+    """Native schema for pqverify_audit_contained: the harness audit's
+    document, bound to the sealed copy of the library that ran, with what the
+    worker's containment was and how the fresh questions were made."""
+    art = dict(result.get("artifact") or artifact_unbound(
+        result.get("reason") or "the library could not be read"))
+    if result.get("loaded_objects"):
+        art["loaded_objects"] = result["loaded_objects"]
+    doc = to_json_harness_audit(result, artifact=art)
+    doc["schema"] = "pq-verify/contained-audit-result"
+    doc["protocol"] = "crucible-jsonl (pq-verify's contained worker)"
+    doc["library"] = result.get("library")
+    doc["symbols"] = result.get("symbols")
+    doc["containment"] = result.get("containment")
+    doc["fresh"] = result.get("fresh")
+    doc["scope"] = _scope(result.get("total", 0), result.get("not_applicable_total", 0),
+                          na_why="a C entry point with buffers of fixed sizes cannot be "
+                                 "handed them, or the reference for the fresh questions "
+                                 "is not installed")
     return doc
 
 

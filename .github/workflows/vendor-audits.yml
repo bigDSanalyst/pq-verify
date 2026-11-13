@@ -85,9 +85,11 @@ jobs:
         # CMake builds liboqs
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind cmake
       - name: Install
+        # kyber-py computes the answers to the fresh questions the contained
+        # worker is asked about each ML-KEM library
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints-reference.txt .
+          pip install -c constraints-reference.txt . kyber-py
       - name: Rebuild each pinned library and re-audit it
         run: python tools/vendor_audit.py
 
