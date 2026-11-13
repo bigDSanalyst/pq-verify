@@ -712,10 +712,12 @@ def pqverify_audit_contained(so_path, param_set, keypair=None, encaps=None, deca
 
         def banner():
             c = keep[0].containment if keep else {}
+            said = ("confirmed before the library was mapped" if c.get("confirmed_before_load")
+                    else "WITHOUT its filter: this run cannot be VERIFIED")
             return [f"library : {shown(pinned.path, 300)}",
                     f"worker  : seccomp {c.get('seccomp')}, no_new_privs "
                     f"{'set' if c.get('no_new_privs') else 'NOT set'}, capabilities "
-                    f"{c.get('capabilities')}; confirmed before the library was mapped"]
+                    f"{c.get('capabilities')}; {said}"]
 
         with _RUN_LOCK, _Hardened() as hard:
             if not hard.non_dumpable or not hard.subreaper:
