@@ -72,7 +72,9 @@ that gives you, and what it does not:
   files through `/proc`. Its command line stays readable.
 - **The file.** The library is loaded from a sealed in-memory copy, hashed as
   it was copied from one open descriptor. Replacing the file on disk during
-  the audit changes neither what runs nor what the report names.
+  the audit changes neither what runs nor what the report names. pq-verify
+  reads the copy's symbol table itself, so on this path no other program
+  (`nm`, on the other paths) is run on the file outside the worker.
 - **What the library may do.** Before the library is mapped, the worker drops
   its capabilities, sets `no_new_privs` and installs a seccomp filter.
   pq-verify confirms all three in `/proc/<pid>/status`, and that the library

@@ -11563,6 +11563,17 @@ def test_the_sealed_copy_is_what_runs_whatever_happens_to_the_file(tmp_path, mon
         assert pinned.sealed() and pinned.rehash() == pinned.sha256
     finally:
         pinned.close()
+    # A Python without os.memfd_create (one built against an old C library)
+    # gets its memory file from the kernel directly.
+    monkeypatch.delattr(os, "memfd_create", raising=False)
+    pinned = C.pin(good)
+    try:
+        assert pinned.sealed() and pinned.rehash() == pinned.sha256
+        with pytest.raises(OSError):
+            os.write(pinned.fd, b"x")
+    finally:
+        pinned.close()
+    assert _contained(good)["status"] == "VERIFIED"
 
 
 def test_a_crash_or_a_hang_in_a_contained_library_cannot_verify(tmp_path):
@@ -11595,6 +11606,42 @@ def test_containment_that_cannot_be_confirmed_cannot_verify(tmp_path, monkeypatc
     assert r["loaded_objects"] == []               # nothing of the library's was mapped
     monkeypatch.setattr(C, "_status", lambda pid: dict(status(pid), CapEff="0000000000000001"))
     assert "still holds capabilities" in _contained(so)["reason"]
+
+
+def test_contained_audit_reads_the_symbol_table_itself(tmp_path, monkeypatch):
+    """The other audits ask nm for a library's exports. Here no program is
+    run on the file outside the worker, and the names are the same."""
+    import os, shutil
+    from pq_verify import symbols as S
+    C = _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    fd = os.open(so, os.O_RDONLY)
+    try:
+        mine = C.exported_functions(fd)
+    finally:
+        os.close(fd)
+    assert sorted(mine) == ["pqvref_mlkem512_" + s for s in ("dec", "enc_derand",
+                                                              "keypair_derand")]
+    if shutil.which("nm"):
+        assert sorted(mine) == sorted(S.exported_functions(so))
+
+    def no_nm(args):
+        raise AssertionError("nm was run on the library")
+
+    monkeypatch.setattr(S, "_nm", no_nm)
+    r = _contained(so)
+    assert r["status"] == "VERIFIED" and r["symbols"]["decaps"] == "pqvref_mlkem512_dec"
+    # not an ELF, a truncated one, a header that points nowhere: no names, no crash
+    blob = open(so, "rb").read()
+    for bad in (b"", b"\x7fELF", b"MZ" + bytes(200), blob[:200],
+                blob[:0x28] + b"\xff" * 8 + blob[0x30:]):
+        p = tmp_path / "bad.so"
+        p.write_bytes(bad)
+        fd = os.open(p, os.O_RDONLY)
+        try:
+            assert C.exported_functions(fd) == []
+        finally:
+            os.close(fd)
 
 
 def test_contained_audit_says_why_it_cannot_bind_a_file(tmp_path):

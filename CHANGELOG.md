@@ -19,7 +19,8 @@ versioning](https://semver.org/spec/v2.0.0.html).
   - **A sealed copy.** The file is copied, from one open descriptor, into a
     sealed memory file and hashed on the way; the worker loads the copy.
     Replacing the file on disk during the audit changes neither what runs nor
-    what the report names.
+    what the report names. pq-verify reads the copy's symbol table itself;
+    `nm` is not run on the file.
   - **A filter confirmed before the library is mapped.** The worker drops its
     capabilities, sets `no_new_privs` and installs a seccomp deny-list;
     pq-verify reads all three from `/proc`, and that the library is not mapped

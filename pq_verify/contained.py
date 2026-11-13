@@ -61,7 +61,9 @@ _SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 _F_ADD_SEALS, _F_GET_SEALS = 1033, 1034
 _SEALS = 0x1 | 0x2 | 0x4 | 0x8     # SEAL, SHRINK, GROW, WRITE
+_MFD_CLOEXEC, _MFD_ALLOW_SEALING = 0x1, 0x2
 _MFD_EXEC = 0x10                    # Linux 6.3: say outright that it will be executed
+_SYS_MEMFD_CREATE = 319             # x86-64, the one machine the worker runs on
 _PR_GET_DUMPABLE, _PR_SET_DUMPABLE = 3, 4
 _PR_SET_CHILD_SUBREAPER, _PR_GET_CHILD_SUBREAPER = 36, 37
 
@@ -90,8 +92,6 @@ def available():
         # has run it there, and an untested filter is not one to rely on.
         return ("the contained worker is tested on x86-64 Linux only; this is "
                 + platform.machine())
-    if not hasattr(os, "memfd_create"):
-        return "this Python has no os.memfd_create"
     if not os.path.exists("/proc/self/status"):
         return "/proc is not mounted"
     if _cc() is None:
@@ -203,12 +203,25 @@ class Pinned:
             self.fd = None
 
 
+def _memfd_create(name, flags):
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, flags)
+    # A Python built where the C library had no memfd_create: ask the kernel.
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.syscall(ctypes.c_long(_SYS_MEMFD_CREATE), ctypes.c_char_p(name.encode()),
+                      ctypes.c_uint(flags))
+    if fd < 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+    return fd
+
+
 def _memfd():
-    flags = os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
+    flags = _MFD_CLOEXEC | _MFD_ALLOW_SEALING
     try:
-        return os.memfd_create("pqv-library", flags | _MFD_EXEC)
+        return _memfd_create("pqv-library", flags | _MFD_EXEC)
     except OSError:
-        return os.memfd_create("pqv-library", flags)     # before Linux 6.3
+        return _memfd_create("pqv-library", flags)       # before Linux 6.3
 
 
 def pin(path):
@@ -247,6 +260,56 @@ def pin(path):
             raise
     finally:
         os.close(src)
+
+
+def exported_functions(fd):
+    """The functions the ELF file open on `fd` exports: the defined, global
+    or weak entries of its dynamic symbol table that are functions. That is
+    what `nm -D --defined-only` lists as T, i and W, and what the other
+    audits ask nm for. Here pq-verify reads the table itself, so that no
+    other program is run on a file it does not trust outside the worker.
+    Anything that is not a 64-bit little-endian ELF with section headers
+    gives an empty list, and the audit then says it found no entry points."""
+    import struct
+
+    def at(offset, n):
+        data = os.pread(fd, n, offset)
+        if len(data) != n:
+            raise ValueError("short read")
+        return data
+
+    try:
+        head = at(0, 64)
+        if head[:6] != b"\x7fELF\x02\x01":            # ELF, 64-bit, little-endian
+            return []
+        shoff, = struct.unpack_from("<Q", head, 0x28)
+        shentsize, shnum = struct.unpack_from("<HH", head, 0x3A)
+        if shentsize != 64 or shnum == 0:
+            return []
+        table = at(shoff, 64 * shnum)
+        sections = [struct.unpack_from("<IIQQQQIIQQ", table, 64 * i) for i in range(shnum)]
+        names = []
+        for _name, kind, _flags, _addr, offset, size, link, _info, _align, entsize in sections:
+            if kind != 11 or entsize != 24 or link >= shnum:        # SHT_DYNSYM
+                continue
+            stroff, strsize = sections[link][4], sections[link][5]
+            if size > 1 << 28 or strsize > 1 << 28:
+                return []
+            strings, symbols = at(stroff, strsize), at(offset, size - size % 24)
+            for i in range(0, len(symbols), 24):
+                st_name, info, _other, shndx = struct.unpack_from("<IBBH", symbols, i)
+                bind, typ = info >> 4, info & 15
+                if shndx == 0 or shndx >= 0xFF00 or bind not in (1, 2):   # defined; global, weak
+                    continue
+                code = shndx < shnum and sections[shndx][2] & 0x4          # SHF_EXECINSTR
+                if not (typ in (2, 10) or (typ == 0 and code)):            # FUNC, GNU_IFUNC
+                    continue
+                end = strings.find(b"\0", st_name)
+                if 0 <= st_name < end:
+                    names.append(strings[st_name:end].decode("ascii", "replace"))
+        return names
+    except (OSError, OverflowError, ValueError, struct.error):
+        return []                   # a header that points nowhere, a short file
 
 
 # ----------------------------------------------------------------------
@@ -614,10 +677,9 @@ def pqverify_audit_contained(so_path, param_set, keypair=None, encaps=None, deca
                             "isolation": "contained worker"}
         if verbose:
             print(f"  artifact: {base['artifact']['summary']}  (the sealed copy that runs)")
-        # Names come from the sealed copy, read through this process's own
-        # descriptor: nm is not run on whatever the path holds by now.
-        from .symbols import exported_functions
-        exported = exported_functions(f"/proc/{os.getpid()}/fd/{pinned.fd}")
+        # Names come from the sealed copy, and pq-verify reads them itself:
+        # nm is not run on the file, nor on whatever the path holds by now.
+        exported = exported_functions(pinned.fd)
         found, ambiguous = _resolve_kem_symbols(
             exported, param_set, {"keypair": keypair, "encaps": encaps, "decaps": decaps},
             prefix=prefix)
