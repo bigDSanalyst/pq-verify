@@ -515,8 +515,8 @@ KAT output byte for byte the same.
 
 Its sampler is checked by its output: 1,000 signatures under one of the
 library's keys must be centred on 0, of variance σ², and symmetric. A sampler
-whose sign bit leans 53:47, or whose σ is 2% low, still signs validly and
-fails this by 25 standard deviations or more.
+whose sign bit leans 53:47, or whose σ is 2% low, still signs validly; on
+every key tried, each failed this by more than 24 standard deviations.
 
 PQClean's Falcon passes. Thirteen planted bugs in its source each fail the
 audit in CI. The three arithmetic ones fail only the arithmetic stages, and

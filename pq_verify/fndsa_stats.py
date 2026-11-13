@@ -25,13 +25,13 @@ correct library fails one about twice in 10^8 audits of FN-DSA-512 and
 once in 10^8 of FN-DSA-1024, mostly on the chi-square: its exact tail at 6
 standard deviations is 1.4e-8 on 1,024 degrees of freedom and 7.1e-9 on
 2,048, against 2.0e-9 for each of the other two, which are near normal. On
-PQClean's Falcon, 26 keys (20 of FN-DSA-512, 6 of FN-DSA-1024, 1,000
+PQClean's Falcon, 29 keys (23 of FN-DSA-512, 6 of FN-DSA-1024, 1,000
 signatures each) stayed within 3.3.
 
 On PQClean's Falcon-512 with 1,000 signatures, both planted defects still
 sign validly:
   - a sampler whose sign bit is 1 with probability 136/256 instead of 1/2
-    drifts by 53 to 60 standard deviations (5 keys);
+    drifts by 53 to 60 standard deviations (6 keys);
   - one that draws with a sigma 2% low sits 25 to 27 standard deviations
     below the expected variance (5 keys).
 

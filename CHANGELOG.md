@@ -97,7 +97,7 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
   Each fails beyond 6 standard deviations. The report prints the three
   z-scores, and the JSON report gives them under `sampler`. On PQClean's
-  Falcon, 26 keys (20 of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
+  Falcon, 29 keys (23 of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
   - **Two new mutants in PQClean's Falcon-512 fail it and nothing else**,
     with signatures that all verify:
     - a sign bit that is 1 with probability 136/256: 53 to 60 standard

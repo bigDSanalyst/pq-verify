@@ -817,7 +817,7 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   2n coefficients of all of them must be centred on 0 (a chi-square on the
   2n means), of variance σ² and symmetric, each within 6 standard
   deviations of what an exact sampler gives. A biased sampler still signs
-  validly: this is the stage that sees one. On PQClean's Falcon, 26 keys
+  validly: this is the stage that sees one. On PQClean's Falcon, 29 keys
   stayed within 3.3 standard deviations. A defect that keeps these moments
   passes: a base sampler with its table's tail cut does (measured).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
@@ -886,7 +886,7 @@ bit-for-bit comparison catches it.
 Two more change the sampler, and fail the signature statistics and nothing
 else (`"only"`); their signatures all verify:
 - the sampler's sign bit is 1 with probability 136/256, not 1/2: the
-  coefficient means drift by 53 to 60 standard deviations (5 keys);
+  coefficient means drift by 53 to 60 standard deviations (6 keys);
 - the signer draws with a σ 2% low: the variance sits 25 to 27 below
   (5 keys).
 
