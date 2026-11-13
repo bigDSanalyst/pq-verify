@@ -82,8 +82,30 @@ versioning](https://semver.org/spec/v2.0.0.html).
     liboqs on a CPU with AVX2), which export no `fpr_*`: one line in the
     report says so, and the stages are never counted as passed.
   - **Not checked:** the primitives Falcon inlines, the sign of a zero
-    result, the FFT, the sampler and the statistics of the signatures.
-    LIMITS.md lists it all.
+    result, and the FFT. The sampler is the next entry's. LIMITS.md lists it
+    all.
+- **FN-DSA: the statistics of a library's signatures (`--audit-fndsa`, draft
+  track).** A biased sampler still signs validly, so the sign stage cannot
+  see it. A new stage, `sampler`, asks for 1,000 signatures
+  (`--fndsa-signatures N`) of distinct messages under one key from the
+  library's own keypair (`pq_verify/fndsa_stats.py`). It recomputes s1
+  exactly for each and tests all the coefficients:
+  - every signature valid;
+  - centred on 0: a chi-square on the 2n per-coefficient means;
+  - variance σ²;
+  - symmetric.
+
+  Each fails beyond 6 standard deviations. On PQClean's Falcon, 26 keys (20
+  of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
+  - **Two new mutants in PQClean's Falcon-512 fail it and nothing else**,
+    with signatures that all verify:
+    - a sign bit that is 1 with probability 136/256: 53 to 60 standard
+      deviations of drift;
+    - a σ 2% low: 25 to 27 below the expected variance.
+  - **Not seen:** a defect that keeps these moments (a base sampler with its
+    table's tail cut passes, measured), and a smaller bias than 1,000
+    signatures resolve (about one point in the sign bit, half a percent in
+    σ). It adds about 10 s to an FN-DSA-512 audit.
 
 ### Changed
 

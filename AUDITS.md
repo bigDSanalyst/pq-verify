@@ -810,8 +810,16 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   the sampler's bounds, fails here even when its public key is right.
 - **sign:** the library's signatures verify under pq-verify's verifier and
   its own, are in range and canonically encoded, and never reuse a nonce.
-  Signing is randomised, so it is checked for validity, not byte-for-byte; a
-  subtly biased sampler is out of scope.
+  Signing is randomised, so it is checked for validity, not byte-for-byte.
+- **Signature statistics (`sampler`):** 1,000 more signatures of distinct
+  messages under one key from the library's own keypair
+  (`pq_verify/fndsa_stats.py`). For each, s1 is recomputed exactly; the
+  2n coefficients of all of them must be centred on 0 (a chi-square on the
+  2n means), of variance σ² and symmetric, each within 6 standard
+  deviations of what an exact sampler gives. A biased sampler still signs
+  validly: this is the stage that sees one. On PQClean's Falcon, 26 keys
+  stayed within 3.3 standard deviations. A defect that keeps these moments
+  passes: a base sampler with its table's tail cut does (measured).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report
@@ -874,6 +882,17 @@ this:
 
 The coefficient mutant stays within 2^-50 of the true value, so only the
 bit-for-bit comparison catches it.
+
+Two more change the sampler, and fail the signature statistics and nothing
+else (`"only"`); their signatures all verify:
+- the sampler's sign bit is 1 with probability 136/256, not 1/2: the
+  coefficient means drift by 53 to 60 standard deviations (5 keys);
+- the signer draws with a σ 2% low: the variance sits 25 to 27 below
+  (5 keys).
+
+These do change PQClean's known-answer output. They stand for what the KAT
+cannot reach: a library whose signing randomness pq-verify does not control,
+or whose KATs were generated from its own sampler.
 
 ## Classic McEliece library audit — not a FIPS standard, with mutants
 
