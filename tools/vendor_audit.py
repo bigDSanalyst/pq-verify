@@ -672,6 +672,42 @@ def audit(so, param_set, prefix=None):
     return {k: list(v) for k, v in r["detail"].items()}
 
 
+def audit_contained(so, param_set, prefix=None):
+    """The same library through the contained worker (--audit-contained):
+    (stages, not applicable, why not) with stages None where it cannot run."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify import contained
+    why = contained.available()
+    if why:
+        return None, {}, why
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = contained.pqverify_audit_contained(so, param_set, verbose=False, prefix=prefix)
+    if r["status"] == "CANNOT VERIFY":
+        return None, {}, "CANNOT VERIFY: " + str(r.get("reason"))
+    return {k: list(v) for k, v in r["detail"].items()}, r["not_applicable"], None
+
+
+def contained_differences(con, kem):
+    """Where the contained worker's result for a library is not what its
+    in-process audit's result says it must be: the stages both run, equal;
+    containment and bounds, passed; the fresh keyGen, encapsulation and
+    decapsulation cases, all passed (every pinned library computes ML-KEM
+    correctly); and the fresh key checks passed exactly where NIST's are."""
+    out = [f"{s} is {con.get(s)} contained, {kem[s]} in process"
+           for s in kem if con.get(s) != kem[s]]
+    out += [f"{s} is {con.get(s)}" for s in ("containment", "bounds") if con.get(s) != [1, 1]]
+    if any(s.startswith("fresh:") for s in con):
+        for s in ("keyGen", "encaps", "decaps"):
+            p, t = con.get("fresh:" + s, (0, 0))
+            if not (t and p == t):
+                out.append(f"fresh:{s} is {[p, t]}")
+        for s in ("ekCheck", "dkCheck"):
+            p, t = con.get("fresh:" + s, (0, 0))
+            if not t or (p == t) != (kem[s][0] == kem[s][1]):
+                out.append(f"fresh:{s} is {[p, t]} where NIST's {s} is {kem[s]}")
+    return out
+
+
 def total(stages):
     return (sum(v[0] for v in stages.values()), sum(v[1] for v in stages.values()))
 
@@ -701,15 +737,38 @@ def check_all(rows, workdir):
             if got == want:
                 p, t = total(got)
                 print(f"  ok     {label}: {p}/{t}, as recorded")
+            else:
+                failures += 1
+                print(f"  DIFF   {label}")
+                if got is None:
+                    print("         pq-verify could not audit it (entry points not resolved)")
+                    continue
+                for s in STAGES + EDGE_STAGES + ("accumulated",):
+                    if got.get(s) != want.get(s):
+                        print(f"         {s:8s} recorded {want.get(s)}  now {got.get(s)}")
                 continue
-            failures += 1
-            print(f"  DIFF   {label}")
-            if got is None:
-                print("         pq-verify could not audit it (entry points not resolved)")
-                continue
-            for s in STAGES + EDGE_STAGES + ("accumulated",):
-                if got.get(s) != want.get(s):
-                    print(f"         {s:8s} recorded {want.get(s)}  now {got.get(s)}")
+            # The same file again, through the contained worker: scored in
+            # pq-verify's own process, it must say what the in-process audit
+            # said, and answer the fresh questions as the library's record
+            # says it should.
+            con, na, why = audit_contained(so, ps, prefix_for(row, ps))
+            if con is None and why.startswith("CANNOT VERIFY"):
+                failures += 1
+                print(f"  DIFF   {label}: the contained worker: {why}")
+            elif con is None:
+                print(f"  n/a    {label}: the contained worker: {why}")
+            else:
+                diffs = contained_differences(con, got)
+                fresh = sum(v[1] for k, v in con.items() if k.startswith("fresh:"))
+                if diffs:
+                    failures += 1
+                    print(f"  DIFF   {label}: the contained worker disagrees")
+                    for d in diffs:
+                        print(f"         {d}")
+                else:
+                    print(f"  ok     {label}: the contained worker agrees on every stage"
+                          + (f", {fresh} fresh cases as its record says" if fresh else
+                             f"; fresh cases not applicable ({na.get('fresh', ['', '?'])[1]})"))
         for i, m in enumerate(row.get("mutants", [])):
             label = f"{row['library']} mutant {m['name']!r} ({m['set']})"
             try:

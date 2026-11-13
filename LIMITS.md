@@ -22,10 +22,16 @@ produced it says, and nothing on this page.
   either: it protects your machine, not the verdict. Through
   `--audit-harness` the scoring runs in pq-verify's own process, apart from
   the library, which then has to answer the questions; it still runs as your
-  user and can change any file you can, the report included. Where a hostile
-  library is the threat, audit a build you made from source you reviewed, or
-  use the prompt/response path, which runs none of the vendor's code
-  ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
+  user and can change any file you can, the report included.
+  `--audit-contained` is that path with a harness of pq-verify's own, for an
+  ML-KEM library, and it narrows this: the library cannot open pq-verify's
+  memory, a seccomp filter stops it writing to files, starting processes and
+  reaching the network, and it is asked fresh questions as well as NIST's
+  ([below](#the-contained-worker)). None of that helps against the point
+  above, a library that computes correctly whenever it is audited. Where a
+  hostile library is the threat, audit a build you made from source you
+  reviewed, or use the prompt/response path, which runs none of the vendor's
+  code ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
 - **Not a file swapped during the audit and put back.** pq-verify hashes the
   library before the audit and again, by the same path, after it; if the two
   differ, the result is `CANNOT VERIFY`. Someone who can write to the file
@@ -33,6 +39,10 @@ produced it says, and nothing on this page.
   before the second, and the report would name the restored file. Where that
   matters, audit the library from a read-only mount, so nothing can change it
   during the run ([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)).
+  `--audit-contained` does not have this gap for the library itself: it runs
+  a sealed in-memory copy made from the same open file that was hashed, and
+  says so if the file on disk changed meanwhile. A library the loader pulls
+  in with it (a libcrypto) is still hashed by its path, after the load.
 - **The code path this machine took.** A library that picks its code at run
   time (liboqs's distribution build chooses AVX2 or portable code from the
   CPU's features) is audited on the path the auditing CPU selects. Another
@@ -54,6 +64,54 @@ produced it says, and nothing on this page.
   shared library cannot be audited at all, and its McEliece only through the
   KEM API. BoringSSL does not export its NTT (nor ML-DSA's), so pq-verify
   checks it against BoringSSL's own in-tree NIST vectors instead.
+
+## The contained worker
+
+`--audit-contained` keeps a library away from its verdict
+([SECURITY.md](SECURITY.md#what-pq-verify-does-on-purpose)). What it does not
+do:
+
+- **It does not stop the library reading files.** The worker can read
+  whatever your user can, and that includes NIST's expected answers, which
+  this package ships. On NIST's vectors, on the edge cases and on the
+  accumulated vectors (all published, or derived from published seeds), a
+  pass says the answers were right, not that the library computed them. Only
+  the fresh questions have answers that exist nowhere until pq-verify computes
+  them, and there are few of them: 40 by default, eight in each of five
+  groups (`--fresh-count`).
+- **A replayed seed asks nothing new.** `--fresh-seed` reproduces an earlier
+  run. The seed is on the command line and in the earlier report, where the
+  worker can read it.
+- **The fresh answers come from pq-verify's reference.** They need kyber-py
+  (`pip install "pq-verify[full]"`). Without it the fresh questions are not
+  applicable, the report says so, and the scope is partial.
+- **It is not a sandbox.** The filter is a list of system calls pq-verify
+  knows to be dangerous. A call that is not on it is allowed, and nothing
+  shows the list is complete. There is no limit on memory or CPU, and no
+  namespace: run a binary you do not trust in a container or a VM.
+- **A filter kill is a finding about the library, not a proof of malice.** A
+  library that opens a log file for writing, or a socket to the kernel's
+  crypto API, is stopped and reported like any other. Whether that behaviour
+  belongs in your product is yours to judge; pq-verify reports that it
+  happened, and cannot say which call it was.
+- **ML-KEM only, x86-64 Linux only.** The worker serves the derandomised
+  ML-KEM entry points `--audit-kem` binds. There is no contained path yet for
+  ML-DSA, SLH-DSA or the other schemes, and none for `--constant-time`. The
+  worker's source has the AArch64 system calls, but nothing has run it there,
+  so pq-verify does not start it there: `CANNOT VERIFY`.
+- **The library must load on its own.** The worker starts with an environment
+  of its own (no `LD_LIBRARY_PATH`, no `LD_PRELOAD`) and loads the library
+  from memory, so a dependency found only through `LD_LIBRARY_PATH`, or
+  relative to the library's own directory (`$ORIGIN`), is not found:
+  `CANNOT VERIFY`, with the loader's message.
+- **Processes are attributed by where they hang.** While a contained audit
+  runs, pq-verify adopts orphaned descendants, and at the end it stops every
+  child it did not have before and did not start itself. A program that
+  embeds pq-verify and starts children of its own on another thread during an
+  audit would see them stopped. The command line starts none.
+- **The worker is compiled where it runs.** A C compiler is needed at audit
+  time, and the report names it and hashes the worker it built
+  (`containment.worker`).
 
 ## Schemes
 

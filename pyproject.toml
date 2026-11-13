@@ -66,7 +66,7 @@ pq_verify = ["vectors/*.gz", "vectors/*.json", "vectors/*.md", "coq/*.v", "harne
              "harness/hbs/*.c", "harness/hbs/*.h", "harness/ct/*.c", "harness/ct/*.h",
              "harness/ct/valgrind/*.h", "harness/source/*.c", "harness/source/*.h",
              "harness/source/mldsa/*.c", "harness/source/mldsa/*.h",
-             "harness/bouncycastle/*.java"]
+             "harness/bouncycastle/*.java", "harness/contained/*.c"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

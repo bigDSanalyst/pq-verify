@@ -11187,3 +11187,539 @@ def test_source_audit_cli_gates_a_source_it_cannot_read(tmp_path, capsys):
     assert main(["--audit-source", missing, "--source-symbol", "keccak=f"]) == 2
     assert main(["--audit-source", missing, "--source-symbol", "ntt"]) == 2
     assert "CANNOT VERIFY" in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------------
+# --audit-contained: a library in pq-verify's contained worker, scored in
+# pq-verify's own process. tests/data/mlkem_ref.c is a small correct ML-KEM
+# with compile-time defects; tests/data/contained_acts.c plants one behaviour
+# per -DACT_* in an otherwise correct library.
+# ----------------------------------------------------------------------
+
+def _contained_or_skip():
+    from pq_verify import contained
+    why = contained.available()
+    if why:
+        pytest.skip(why)
+    return contained
+
+
+def _contained_lib(tmp_path, act=None, path=None, k=2, defines=()):
+    import shutil, subprocess
+    # Skip before compiling: contained_acts.c is Linux code (O_TMPFILE, /proc),
+    # and where the worker cannot run, its compile error says nothing.
+    _contained_or_skip()
+    data = pathlib.Path(__file__).resolve().parent / "data"
+    so = tmp_path / f"lib{act or 'ref'}{k}{''.join(d.split('=')[0] for d in defines)}.so"
+    cmd = [shutil.which("cc") or "gcc", "-std=gnu11", "-O1", "-fPIC", "-shared", f"-DK={k}",
+           *(f"-D{d}" for d in defines)]
+    if act:
+        cmd += ["-DPQV_HOOK=pqv_act", f"-DACT_{act}"] + ([f'-DACT_PATH="{path}"'] if path else [])
+    cmd += ["-o", str(so), str(data / "mlkem_ref.c")]
+    cmd += ([str(data / "contained_acts.c")] if act else []) + ["-lpthread"]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(so)
+
+
+def _contained(so, param_set="ML-KEM-512", **kw):
+    """A quick contained audit: NIST's vectors only, unless asked for more."""
+    C = _contained_or_skip()
+    for k, v in (("accumulated", 0), ("edge", False), ("fresh", 0), ("timeout", 20)):
+        kw.setdefault(k, v)
+    return C.pqverify_audit_contained(so, param_set, verbose=False, **kw)
+
+
+def _stopped_by_the_filter(r):
+    return (r["status"] == "FINDINGS PRESENT" and _failing(r) == {"containment"}
+            and r["failures"][0]["case"] == "ISO-SECCOMP-VIOLATION"
+            and r["containment"]["worker_ended"] == "killed by SIGSYS")
+
+
+def test_contained_audit_verifies_a_correct_library(tmp_path):
+    import hashlib
+    pytest.importorskip("kyber_py")
+    so = _contained_lib(tmp_path)
+    r = _contained(so, edge=True, accumulated=100, fresh=4)
+    assert r["status"] == "VERIFIED", r.get("reason") or r["failures"][:3]
+    assert {"keyGen", "encaps", "decaps", "ekCheck", "dkCheck", "edgeEk", "accumulated",
+            "fresh:keyGen", "fresh:encaps", "fresh:decaps", "fresh:ekCheck", "fresh:dkCheck",
+            "containment", "bounds"} <= set(r["detail"])
+    assert r["detail"]["fresh:decaps"] == (4, 4) and r["detail"]["containment"] == (1, 1)
+    c = r["containment"]
+    assert (c["seccomp"], c["no_new_privs"], c["capabilities"]) == ("filter", True, "none")
+    assert c["confirmed_before_load"] is True and c["library_mapped_before_asked"] is False
+    assert c["escapees"] == [] and c["sealed_copy_unchanged"] is True
+    assert c["file_on_disk_changed_during_audit"] is False
+    # bound to the file's bytes, and the sealed copy is what the worker mapped
+    digest = hashlib.sha256(open(so, "rb").read()).hexdigest()
+    assert r["artifact"]["sha256"] == digest and r["artifact"]["bound"] is True
+    assert [o["sha256"] for o in r["loaded_objects"] if o.get("sealed_copy_of")] == [digest]
+    assert r["symbols"]["keypair"] == "pqvref_mlkem512_keypair_derand"
+
+
+@pytest.mark.parametrize("k,param_set", [(3, "ML-KEM-768"), (4, "ML-KEM-1024")])
+def test_contained_audit_serves_every_parameter_set(tmp_path, k, param_set):
+    r = _contained(_contained_lib(tmp_path, k=k), param_set)
+    assert r["status"] == "VERIFIED", r.get("reason") or r["failures"][:3]
+    assert r["detail"]["keyGen"] == (25, 25) and r["detail"]["decaps"] == (10, 10)
+
+
+def test_the_fresh_seed_is_new_each_run_reported_and_replayable(tmp_path):
+    """The questions NIST never published come from a seed drawn for the run.
+    It is in the result; a second run draws another; and handing one back
+    reproduces the run, which the result then says is a replay."""
+    pytest.importorskip("kyber_py")
+    from pq_verify.harness_audit import fresh_kem_sets
+    C = _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    sent = []
+    spawn = C.ContainedHarness._spawn
+
+    class Tap:                              # everything written to the worker
+        def __init__(self, f):
+            self.f = f
+
+        def write(self, b):
+            sent.append(bytes(b))
+            return self.f.write(b)
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+    def tapped(self):
+        proc = spawn(self)
+        proc.stdin = Tap(proc.stdin)
+        return proc
+
+    C.ContainedHarness._spawn = tapped
+    try:
+        a = _contained(so, fresh=3)
+    finally:
+        C.ContainedHarness._spawn = spawn
+    b = _contained(so, fresh=3)
+    fa, fb = a["fresh"], b["fresh"]
+    assert a["status"] == b["status"] == "VERIFIED"
+    assert len(bytes.fromhex(fa["seed"])) == 32 and fa["seed"] != fb["seed"]
+    assert fa["seed_source"] == "drawn for this run" and fa["tests_per_group"] == 3
+    # No expected answer was ever sent to the worker: not a shared secret,
+    # and not the ciphertext an encapsulation question expects back.
+    wire = b"".join(sent).lower()
+    kg, ed = fresh_kem_sets("ML-KEM-512", bytes.fromhex(fa["seed"]), 3)
+    answers = [t["k"] for g in ed["testGroups"] for t in g["tests"] if "k" in t]
+    answers += [t["c"] for g in ed["testGroups"] if g["function"] == "encapsulation"
+                for t in g["tests"]]
+    answers += [t["dk"] for g in kg["testGroups"] for t in g["tests"]]
+    assert len(answers) == 12 and all(len(x) >= 64 for x in answers)
+    assert not [x for x in answers if x.lower().encode() in wire]
+    # ...while every question was (the tap works)
+    assert all(t["d"].lower().encode() in wire for g in kg["testGroups"] for t in g["tests"])
+    # A replay asks the same questions and says that it is one.
+    again = _contained(so, fresh=3, fresh_seed=bytes.fromhex(fa["seed"]))
+    assert again["fresh"]["seed"] == fa["seed"]
+    assert again["fresh"]["seed_source"] == "supplied by the caller"
+    assert any("reproduces an earlier result" in n for n in again["harness_notes"])
+    assert not any("reproduces" in n for n in a["harness_notes"])
+
+
+def test_contained_audit_catches_wrong_answers(tmp_path):
+    pytest.importorskip("kyber_py")
+    r = _contained(_contained_lib(tmp_path, defines=("MUT_NO_REJECT",)), fresh=4)
+    assert r["status"] == "FINDINGS PRESENT"
+    assert _failing(r) == {"decaps", "fresh:decaps"}       # no implicit rejection
+    assert r["detail"]["containment"] == (1, 1)
+    r = _contained(_contained_lib(tmp_path, defines=("MUT_NO_EK_CHECK",)), fresh=4)
+    assert _failing(r) == {"ekCheck", "fresh:ekCheck"}     # FIPS 203 section 7.2
+    r = _contained(_contained_lib(tmp_path, defines=("MUT_NO_DK_CHECK",)), fresh=4)
+    assert _failing(r) == {"dkCheck", "fresh:dkCheck"}     # section 7.3
+
+
+def test_published_answers_can_be_looked_up_and_fresh_questions_cannot(tmp_path):
+    """The worker can read any file the user can, NIST's published answers
+    among them (pq-verify ships them). So a library that cannot compute ML-KEM
+    passes every NIST vector by looking the answers up, in a contained audit
+    as anywhere. The fresh questions are what it fails."""
+    import shutil, struct, subprocess
+    pytest.importorskip("kyber_py")
+    C = _contained_or_skip()
+    from pq_verify.core import _KEM_SIZES
+    ps = "ML-KEM-512"
+    ek_n, dk_n, ct_n = _KEM_SIZES[ps][:3]
+    h = bytes.fromhex
+    recs = []
+    for g in _acvp_file("ML-KEM-keyGen-FIPS203")["testGroups"]:
+        if g["parameterSet"] == ps:
+            recs += [(1, h(t["d"]) + h(t["z"]), h(t["ek"]) + h(t["dk"])) for t in g["tests"]]
+    for g in _acvp_file("ML-KEM-encapDecap-FIPS203")["testGroups"]:
+        if g["parameterSet"] != ps:
+            continue
+        if g["function"] == "encapsulation":
+            recs += [(2, h(t["ek"]) + h(t["m"]), h(t["c"]) + h(t["k"])) for t in g["tests"]]
+        elif g["function"] == "decapsulation":
+            recs += [(3, h(t["c"]) + h(t["dk"]), h(t["k"])) for t in g["tests"]]
+    table = tmp_path / "published-answers.bin"
+    table.write_bytes(b"".join(struct.pack("<BII", op, len(i), len(o)) + i + o
+                               for op, i, o in recs))
+    data = pathlib.Path(__file__).resolve().parent / "data"
+    so = tmp_path / "liblookup.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-std=gnu11", "-O1", "-fPIC", "-shared",
+                    "-DK=2", "-DMUT_COMPRESS", "-DACT_LOOKUP", f'-DACT_PATH="{table}"',
+                    "-DINNER=pqvref_mlkem512_", f"-DLOOKUP_EK={ek_n}", f"-DLOOKUP_DK={dk_n}",
+                    f"-DLOOKUP_CT={ct_n}", "-o", str(so), str(data / "mlkem_ref.c"),
+                    str(data / "contained_acts.c")], check=True, capture_output=True)
+    names = dict(keypair="lookup_keypair_derand", encaps="lookup_enc_derand",
+                 decaps="lookup_dec")
+    published = _contained(str(so), **names)
+    assert published["status"] == "VERIFIED" and published["passed"] == 82
+    fresh = _contained(str(so), fresh=8, **names)
+    assert fresh["status"] == "FINDINGS PRESENT"
+    assert _failing(fresh) == {"fresh:encaps", "fresh:decaps"}
+    assert fresh["detail"]["fresh:encaps"] == (0, 8)
+    assert fresh["detail"]["encaps"] == (25, 25)           # NIST's still pass
+    table.unlink()                                         # the control: no file, no passes
+    assert _failing(_contained(str(so), **names)) == {"encaps", "decaps"}
+    assert C.FRESH_DEFAULT >= 8                            # and the CLI asks them by default
+
+
+def _acvp_file(suite):
+    import os
+    from pq_verify.core import _load_vector_json, _pkg_dir
+    return _load_vector_json(os.path.join(_pkg_dir(), "vectors", suite,
+                                          "internalProjection.json"),
+                             f"{suite}/internalProjection.json")
+
+
+@pytest.mark.parametrize("act", ["OPENDIR", "THREAD", "READ", "PARENT_MEM"])
+def test_the_worker_allows_what_a_library_may_do(tmp_path, act):
+    """Listing a directory (the open the filter's first mask stopped), starting
+    a thread and reading a file are allowed. PARENT_MEM tries pq-verify's own
+    memory, environment, memory map and open files through /proc, and aborts
+    if one opens: a pass shows none did."""
+    path = None
+    if act == "READ":
+        path = tmp_path / "readable.txt"
+        path.write_text("a file the user can read\n")
+    r = _contained(_contained_lib(tmp_path, act, path))
+    assert r["status"] == "VERIFIED", (r.get("reason"), r["containment"])
+
+
+@pytest.mark.parametrize("act", ["CREAT", "OPEN_WRITE", "TMPFILE", "FCHMOD"])
+def test_the_filter_stops_writes_and_changes_to_files(tmp_path, act):
+    import os, stat
+    target = tmp_path / "target"
+    if act == "FCHMOD":
+        target.write_text("secret\n")
+        os.chmod(target, 0o600)
+    r = _contained(_contained_lib(tmp_path, act, target))
+    assert _stopped_by_the_filter(r), (r["status"], r.get("reason"), r["containment"])
+    if act == "FCHMOD":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    else:
+        assert not target.exists()
+
+
+def test_a_library_that_forks_while_it_loads_is_stopped(tmp_path):
+    """The filter is in force before the library is mapped, so its
+    constructors run under it."""
+    r = _contained(_contained_lib(tmp_path, "FORK_CTOR"))
+    assert _stopped_by_the_filter(r), (r["status"], r.get("reason"))
+    assert r["containment"]["confirmed_before_load"] is True
+    assert "handshake" in r["reason"] and r["containment"]["escapees"] == []
+
+
+def test_a_signal_to_another_process_is_stopped_and_one_to_itself_is_not(tmp_path):
+    assert _stopped_by_the_filter(_contained(_contained_lib(tmp_path, "SIGNAL")))
+    r = _contained(_contained_lib(tmp_path, "ABORT"))      # abort() signals the worker itself
+    assert r["status"] == "CANNOT VERIFY" and "killed by SIGABRT" in r["reason"]
+    assert r["containment"]["worker_ended"] == "killed by SIGABRT"
+
+
+def test_every_system_call_on_the_list_stops_the_worker(tmp_path):
+    """Each one is made, by a planted library, with arguments of zero; the
+    kernel must kill the worker every time. The list is the worker's own
+    (`pqv_worker --policy`), so a call added to it is tested here."""
+    C = _contained_or_skip()
+    from pq_verify.core import _KEM_SIZES
+    from pq_verify.harness_audit import HarnessDied
+    pol = C.policy()
+    for name in ("fchmod", "fchown", "fchmodat2", "ftruncate", "fallocate", "mknodat",
+                 "utimensat", "setxattr", "lsetxattr", "fsetxattr", "removexattr",
+                 "lremovexattr", "fremovexattr", "execve", "socket", "ptrace", "setsid",
+                 "unlinkat", "renameat2", "openat2", "io_uring_setup"):
+        assert name in pol["denied"], name
+    import platform
+    if platform.machine() == "x86_64":
+        assert {"creat", "mknod", "fork", "vfork", "chmod"} <= set(pol["denied"])
+    assert len(pol["denied"]) >= 90 and len(set(pol["denied"].values())) == len(pol["denied"])
+    pinned = C.pin(_contained_lib(tmp_path, "SYSCALL"))
+    exe, _ = C.worker()
+    names = ["pqvref_mlkem512_" + s for s in ("keypair_derand", "enc_derand", "dec")]
+
+    def attempt(nr, a0=0, a1=0, a2=0, itself=0):
+        """'stopped' if the kernel killed the worker for it, 'went on' if not.
+        `itself` puts the worker's own process id in that many leading
+        arguments."""
+        h = C.ContainedHarness(pinned, exe, names, _KEM_SIZES["ML-KEM-512"][:3], timeout=20)
+        if itself:
+            a0 = h.proc.pid
+            a1 = h.proc.pid if itself == 2 else a1
+        coins = nr.to_bytes(2, "little") + b"".join(
+            (x & 0xFFFFFFFF).to_bytes(4, "little") for x in (a0, a1, a2))
+        try:
+            h.call("ML_KEM_KeyGen", {"randomness": coins.ljust(64, b"\0")}, {"param_set": 512})
+            return "went on"
+        except HarnessDied:
+            return "stopped" if h.violated() else f"died otherwise ({h.ended()})"
+        finally:
+            h.close()
+
+    try:
+        with C._RUN_LOCK, C._Hardened():
+            assert attempt(0xFFF) == "went on"             # no such call: the control
+            got = {name: attempt(nr) for name, nr in pol["denied"].items()}
+            assert {n: g for n, g in got.items() if g != "stopped"} == {}
+            cond = pol["conditional"]
+            # the rules that read an argument, on each side of the line
+            assert attempt(cond["clone"]) == "stopped"                   # no CLONE_THREAD
+            assert attempt(cond["clone3"]) == "went on"                  # answered ENOSYS
+            assert attempt(cond["openat"], -100, 0, 0) == "went on"      # O_RDONLY
+            for flags in (0o1, 0o2, 0o100, 0o1000, 0o2000, 0o20000000):  # WRONLY .. TMPFILE
+                assert attempt(cond["openat"], -100, 0, flags) == "stopped", oct(flags)
+            assert attempt(cond["openat"], -100, 0, 0o200000) == "went on"   # O_DIRECTORY
+            if "open" in cond:
+                assert attempt(cond["open"], 0, 0o1) == "stopped"
+                assert attempt(cond["open"], 0, 0) == "went on"
+            for name in ("kill", "tgkill", "tkill", "rt_sigqueueinfo", "rt_tgsigqueueinfo"):
+                assert attempt(cond[name], 1) == "stopped", name         # process 1
+                # signal 0, or an invalid request, to the worker itself
+                assert attempt(cond[name], itself=2 if "tg" in name else 1) == "went on", name
+            assert attempt(cond["prlimit64"], 1) == "stopped"
+            assert attempt(cond["prlimit64"], 0) == "went on"            # itself
+            for request in (0x5412, 0x541C, 0x40086602, 0x401c5820):     # TIOCSTI ..
+                assert attempt(cond["ioctl"], 0, request) == "stopped", hex(request)
+            assert attempt(cond["ioctl"], 0, 0x5401) == "went on"        # TCGETS
+    finally:
+        pinned.close()
+
+
+def test_a_process_left_behind_is_found_stopped_and_reported(tmp_path):
+    """With the filter on, a library cannot start a process. The sweep is
+    what stands behind the filter, so it is tested with the filter off: a
+    daemon (double fork, setsid) is found, killed and reported, and a run
+    without the filter is never VERIFIED."""
+    import os
+    r = _contained(_contained_lib(tmp_path, "DAEMON"), use_filter=False)
+    assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"containment"}
+    assert r["failures"][0]["case"] == "ISO-ESCAPEE"
+    left = r["containment"]["escapees"]
+    assert left and not [e for e in left if os.path.exists(f"/proc/{e['pid']}")]
+    clean = _contained(_contained_lib(tmp_path), use_filter=False)
+    assert clean["status"] == "CANNOT VERIFY" and "without its filter" in clean["reason"]
+    assert clean["passed"] == clean["total"] > 0 and clean["verified"] is False
+    assert clean["containment"]["confirmed_before_load"] is False
+
+
+def test_a_process_orphaned_by_the_workers_death_is_found_stopped_and_reported(tmp_path):
+    """The worker dies first (abort) and its child, which still holds the
+    worker's pipes, becomes pq-verify's own child. It used to be listed and
+    left running."""
+    import os, time
+    t0 = time.monotonic()
+    r = _contained(_contained_lib(tmp_path, "ORPHAN"), use_filter=False)
+    assert time.monotonic() - t0 < 10          # the death is seen, not waited out
+    assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"containment"}
+    assert r["failures"][0]["case"] == "ISO-ESCAPEE"
+    assert r["containment"]["worker_ended"] == "killed by SIGABRT"
+    left = r["containment"]["escapees"]
+    assert len(left) == 1 and not os.path.exists(f"/proc/{left[0]['pid']}")
+
+
+def test_the_sealed_copy_is_what_runs_whatever_happens_to_the_file(tmp_path, monkeypatch):
+    """The file is replaced on disk, by a library that fails, the moment it
+    has been copied. What runs, and what the result is bound to, is the copy."""
+    import hashlib, os, shutil
+    C = _contained_or_skip()
+    good = _contained_lib(tmp_path)
+    bad = _contained_lib(tmp_path, defines=("MUT_NO_REJECT",))
+    target = str(tmp_path / "target.so")
+    shutil.copyfile(good, target)
+    pin = C.pin
+
+    def pin_then_swap(path):
+        pinned = pin(path)
+        shutil.copyfile(bad, target + ".new")
+        os.replace(target + ".new", target)
+        return pinned
+
+    monkeypatch.setattr(C, "pin", pin_then_swap)
+    r = _contained(target)
+    assert r["status"] == "VERIFIED", r.get("reason") or r["failures"][:2]
+    assert r["artifact"]["sha256"] == hashlib.sha256(open(good, "rb").read()).hexdigest()
+    assert r["containment"]["file_on_disk_changed_during_audit"] is True
+    assert any("the sealed copy" in n for n in r["harness_notes"])
+    monkeypatch.undo()
+    assert _contained(target)["status"] == "FINDINGS PRESENT"      # what is on disk now
+    pinned = C.pin(good)                                           # and the seal holds
+    try:
+        for change in (lambda: os.write(pinned.fd, b"x"), lambda: os.ftruncate(pinned.fd, 0)):
+            with pytest.raises(OSError):
+                change()
+        assert pinned.sealed() and pinned.rehash() == pinned.sha256
+    finally:
+        pinned.close()
+    # A Python without os.memfd_create (one built against an old C library)
+    # gets its memory file from the kernel directly.
+    monkeypatch.delattr(os, "memfd_create", raising=False)
+    pinned = C.pin(good)
+    try:
+        assert pinned.sealed() and pinned.rehash() == pinned.sha256
+        with pytest.raises(OSError):
+            os.write(pinned.fd, b"x")
+    finally:
+        pinned.close()
+    assert _contained(good)["status"] == "VERIFIED"
+
+
+def test_a_crash_or_a_hang_in_a_contained_library_cannot_verify(tmp_path):
+    r = _contained(_contained_lib(tmp_path, "CRASH"))
+    assert r["status"] == "CANNOT VERIFY" and r["total"] == 0
+    assert "killed by SIG" in r["reason"] and "ML_KEM_KeyGen" in r["reason"]
+    r = _contained(_contained_lib(tmp_path, "HANG"), timeout=2)
+    assert r["status"] == "CANNOT VERIFY" and "within 2 s" in r["reason"]
+    assert r["containment"]["worker_ended"] == "stopped by pq-verify when the audit ended"
+
+
+def test_a_write_outside_a_buffer_in_the_worker_is_a_finding(tmp_path):
+    r = _contained(_contained_lib(tmp_path, defines=("MUT_OVERRUN",)))
+    assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"bounds"}
+    assert "the K buffer, after the end" in r["failures"][0]["case"]
+    assert r["detail"]["encaps"] == (25, 25)       # the answers themselves were right
+
+
+def test_containment_that_cannot_be_confirmed_cannot_verify(tmp_path, monkeypatch):
+    """pq-verify reads the worker's state from /proc before it lets the
+    library be mapped. If the kernel does not say the filter is in force, the
+    library is never loaded."""
+    C = _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    status = C._status
+    monkeypatch.setattr(C, "_status", lambda pid: dict(status(pid), Seccomp="0"))
+    r = _contained(so)
+    assert r["status"] == "CANNOT VERIFY" and r["total"] == 0
+    assert "no seccomp filter is in force" in r["reason"]
+    assert r["loaded_objects"] == []               # nothing of the library's was mapped
+    monkeypatch.setattr(C, "_status", lambda pid: dict(status(pid), CapEff="0000000000000001"))
+    assert "still holds capabilities" in _contained(so)["reason"]
+
+
+def test_contained_audit_reads_the_symbol_table_itself(tmp_path, monkeypatch):
+    """The other audits ask nm for a library's exports. Here no program is
+    run on the file outside the worker, and the names are the same."""
+    import os, shutil
+    from pq_verify import symbols as S
+    C = _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    fd = os.open(so, os.O_RDONLY)
+    try:
+        mine = C.exported_functions(fd)
+    finally:
+        os.close(fd)
+    assert sorted(mine) == ["pqvref_mlkem512_" + s for s in ("dec", "enc_derand",
+                                                              "keypair_derand")]
+    if shutil.which("nm"):
+        assert sorted(mine) == sorted(S.exported_functions(so))
+
+    def no_nm(args):
+        raise AssertionError("nm was run on the library")
+
+    monkeypatch.setattr(S, "_nm", no_nm)
+    r = _contained(so)
+    assert r["status"] == "VERIFIED" and r["symbols"]["decaps"] == "pqvref_mlkem512_dec"
+    # not an ELF, a truncated one, a header that points nowhere: no names, no crash
+    blob = open(so, "rb").read()
+    for bad in (b"", b"\x7fELF", b"MZ" + bytes(200), blob[:200],
+                blob[:0x28] + b"\xff" * 8 + blob[0x30:]):
+        p = tmp_path / "bad.so"
+        p.write_bytes(bad)
+        fd = os.open(p, os.O_RDONLY)
+        try:
+            assert C.exported_functions(fd) == []
+        finally:
+            os.close(fd)
+
+
+def test_contained_audit_says_why_it_cannot_bind_a_file(tmp_path):
+    _contained_or_skip()
+    text = tmp_path / "not-a-library.so"
+    text.write_text("this is not a shared object\n")
+    r = _contained(str(text))
+    assert r["status"] == "CANNOT VERIFY" and "no derandomised entry point" in r["reason"]
+    r = _contained(str(text), keypair="a", encaps="b", decaps="c")
+    assert r["status"] == "CANNOT VERIFY" and "could not load the library" in r["reason"]
+    r = _contained(_contained_lib(tmp_path), keypair="no_such_symbol")
+    assert r["status"] == "CANNOT VERIFY" and "no symbol: no_such_symbol" in r["reason"]
+    with pytest.raises(ValueError):
+        _contained(_contained_lib(tmp_path), "ML-DSA-44")
+
+
+def test_contained_audit_cli_gate_report_and_sarif(tmp_path):
+    import hashlib, json as _json
+    pytest.importorskip("kyber_py")
+    _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    rpt, sarif = tmp_path / "r.json", tmp_path / "r.sarif"
+    code, out = _cli("--audit-contained", so, "ML-KEM-512", "--accumulated", "0",
+                     "--fresh-count", "2", "--json", str(rpt), "--sarif", str(sarif))
+    assert code == 0, out[-600:]
+    assert "CONTAINED AUDIT" in out and "confirmed before the library was mapped" in out
+    doc = _json.loads(rpt.read_text())
+    digest = hashlib.sha256(open(so, "rb").read()).hexdigest()
+    assert doc["schema"] == "pq-verify/contained-audit-result" and doc["verified"] is True
+    assert doc["artifact"]["sha256"] == digest and doc["artifact"]["isolation"] == "contained worker"
+    assert doc["artifact"]["loaded_objects"][0]["sha256"] == digest
+    assert doc["containment"]["seccomp"] == "filter" and doc["fresh"]["tests_per_group"] == 2
+    assert doc["stages"]["fresh:decaps"] == {"passed": 2, "total": 2}
+    # the seed is printed, after the worker is gone, and matches the report
+    assert f"seed {doc['fresh']['seed']} (drawn for this run)" in out
+    run = _json.loads(sarif.read_text())["runs"][0]
+    assert run["artifacts"][0]["hashes"]["sha-256"] == digest and run["results"] == []
+    # a library the filter stops fails the gate, under a rule of its own
+    bad = _contained_lib(tmp_path, "OPEN_WRITE", tmp_path / "never-written")
+    code, out = _cli("--audit-contained", bad, "ML-KEM-512", "--accumulated", "0",
+                     "--json", str(rpt), "--sarif", str(sarif))
+    assert code == 1 and "FAILING: contained audit FINDINGS PRESENT" in out
+    doc = _json.loads(rpt.read_text())
+    assert doc["status"] == "FINDINGS PRESENT" and "ISO-SECCOMP-VIOLATION" in doc["findings"][0]
+    hit = _json.loads(sarif.read_text())["runs"][0]["results"][0]
+    assert hit["ruleId"] == "PQV011"
+    assert not (tmp_path / "never-written").exists()
+    # replaying a seed
+    seed = "ab" * 32
+    code, out = _cli("--audit-contained", so, "ML-KEM-512", "--accumulated", "0",
+                     "--fresh-count", "1", "--fresh-seed", seed, "--json", str(rpt))
+    doc = _json.loads(rpt.read_text())
+    assert code == 0 and doc["fresh"]["seed"] == seed
+    assert doc["fresh"]["seed_source"] == "supplied by the caller"
+    # input errors are exit 2, never a finding
+    for argv in (["--audit-contained", so, "ML-KEM-999"],
+                 ["--audit-contained", so, "ML-DSA-44"],
+                 ["--audit-contained", str(tmp_path / "absent.so"), "ML-KEM-512"],
+                 ["--audit-contained", so, "ML-KEM-512", "--fresh-seed", "abcd"],
+                 ["--audit-contained", so, "ML-KEM-512", "--fresh-count", "0"],
+                 ["--fresh-seed", seed]):
+        code, out = _cli(*argv)
+        assert code == 2, (argv, out[-200:])
+
+
+def test_what_cannot_run_a_contained_audit_says_so(monkeypatch, tmp_path):
+    """Not Linux, no compiler: CANNOT VERIFY with the reason, never a pass."""
+    from pq_verify import contained as C
+    monkeypatch.setattr(C, "available", lambda: "the contained worker needs Linux")
+    so = tmp_path / "x.so"
+    so.write_bytes(b"\x7fELF")
+    r = C.pqverify_audit_contained(str(so), "ML-KEM-768", verbose=False)
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+    assert r["reason"] == "the contained worker needs Linux"
+    from pq_verify.report import to_json_contained_audit
+    doc = to_json_contained_audit(r)
+    assert doc["findings"] == ["cannot verify: the contained worker needs Linux"]
+    assert doc["artifact"]["bound"] is False and doc["verified"] is False

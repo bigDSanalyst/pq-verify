@@ -280,6 +280,21 @@ def build_parser():
                         "invalid keys and the Wycheproof/CCTV edge cases, e.g. "
                         "--audit-harness './harness-circl' ML-KEM-768. COMMAND is "
                         "split like a shell command line")
+    p.add_argument("--audit-contained", nargs=2, metavar=("PATH", "PARAM_SET"),
+                   help="audit an ML-KEM shared library through pq-verify's contained "
+                        "worker: the library runs from a sealed in-memory copy, in a "
+                        "process of its own under a seccomp filter, and is scored in "
+                        "pq-verify's own process (the --audit-harness path), on NIST's "
+                        "vectors, the edge cases and fresh questions drawn for the run. "
+                        "A library that corrupts memory cannot change its verdict this "
+                        "way; the worker is not a sandbox (SECURITY.md). Linux on "
+                        "x86-64, needs a C compiler. Derandomised entry points, as "
+                        "--audit-kem")
+    p.add_argument("--fresh-seed", metavar="HEX",
+                   help="with --audit-contained: derive the fresh questions from this "
+                        "64-digit seed (the one an earlier report recorded) instead of "
+                        "drawing a new one, to reproduce a result. The report says the "
+                        "seed was supplied")
     p.add_argument("--constant-time", action="store_true",
                    help="with --audit-kem or --audit-mceliece: run Encaps and Decaps "
                         "under Valgrind memcheck with the secret inputs marked, and fail "
@@ -325,7 +340,8 @@ def build_parser():
     p.add_argument("--audit-timeout", metavar="SECONDS", type=int,
                    help="with --audit-*: give up on the library after SECONDS "
                         "(default 3600; 6 h with --audit-hbs-full; 0 = never); with "
-                        "--audit-harness, on any one answer (default 60). Each "
+                        "--audit-harness or --audit-contained, on any one answer "
+                        "(default 60). Each "
                         "audit of a library runs in a child process, so a hang or "
                         "a crash is reported instead of taking pq-verify down with "
                         "it. The child is not a sandbox (SECURITY.md)")
@@ -364,7 +380,9 @@ def build_parser():
     p.add_argument("--fresh-count", metavar="N", type=int,
                    help="with --emit-prompt --fresh-key: tests per group "
                         "(default 8 ML-KEM, 4 ML-DSA, 1 SLH-DSA, 2 LMS; "
-                        "LMS sigGen and sigVer get four times that)")
+                        "LMS sigGen and sigVer get four times that). With "
+                        "--audit-contained: fresh tests in each of the five ML-KEM "
+                        "groups (default 8)")
     p.add_argument("--prompt-out", metavar="FILE",
                    help="where --emit-prompt writes (default "
                         "pq-verify-prompt-<PARAM_SET>.json; .gz is honoured)")
@@ -417,7 +435,7 @@ def _main(argv=None):
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--symbol-prefix", args.symbol_prefix,
              args.audit_kem or args.audit_dsa or args.audit_slhdsa or args.audit_fndsa
-             or args.audit_mceliece or args.audit_hqc),
+             or args.audit_mceliece or args.audit_hqc or args.audit_contained),
             ("--mceliece-symbol", args.mceliece_symbol, args.audit_mceliece),
             ("--hqc-symbol", args.hqc_symbol, args.audit_hqc),
             ("--hqc-profile", args.hqc_profile, args.audit_hqc),
@@ -428,34 +446,42 @@ def _main(argv=None):
             ("--constant-time", args.constant_time,
              args.audit_kem or args.audit_dsa or args.audit_mceliece),
             ("--accumulated", args.accumulated is not None,
-             args.audit_kem or args.audit_dsa or args.audit_harness),
-            ("--kem-keypair", args.kem_keypair, args.audit_kem),
-            ("--kem-encaps", args.kem_encaps, args.audit_kem),
-            ("--kem-decaps", args.kem_decaps, args.audit_kem),
+             args.audit_kem or args.audit_dsa or args.audit_harness
+             or args.audit_contained),
+            ("--kem-keypair", args.kem_keypair, args.audit_kem or args.audit_contained),
+            ("--kem-encaps", args.kem_encaps, args.audit_kem or args.audit_contained),
+            ("--kem-decaps", args.kem_decaps, args.audit_kem or args.audit_contained),
             ("--fresh-key", args.fresh_key,
              args.emit_prompt or args.verify_response),
-            ("--fresh-count", args.fresh_count, args.fresh_key),
+            ("--fresh-count", args.fresh_count, args.fresh_key or args.audit_contained),
+            ("--fresh-seed", args.fresh_seed, args.audit_contained),
             ("--source-include", args.source_include, args.audit_source),
             ("--source-symbol", args.source_symbol, args.audit_source),
             ("--audit-timeout", args.audit_timeout is not None,
              args.audit_kem or args.audit_dsa or args.audit_hbs or args.audit_so
              or args.audit_slhdsa or args.audit_fndsa or args.audit_mceliece
              or args.audit_hqc
-             or args.audit_harness or args.audit_source)):
+             or args.audit_harness or args.audit_source or args.audit_contained)):
         if _set and not _needs:
             _parent = {"--audit-hbs-full": "--audit-hbs",
                        "--fndsa-symbol": "--audit-fndsa",
                        "--slhdsa-symbol": "--audit-slhdsa",
                        "--symbol-prefix": "--audit-kem, --audit-dsa, --audit-slhdsa, "
-                                          "--audit-fndsa, --audit-mceliece or --audit-hqc",
+                                          "--audit-fndsa, --audit-mceliece, --audit-hqc "
+                                          "or --audit-contained",
                        "--mceliece-symbol": "--audit-mceliece",
                        "--hqc-symbol": "--audit-hqc",
                        "--hqc-profile": "--audit-hqc",
                        "--hqc-seed": "--audit-hqc",
-                       "--accumulated": "--audit-kem, --audit-dsa or --audit-harness",
+                       "--accumulated": "--audit-kem, --audit-dsa, --audit-harness or "
+                                        "--audit-contained",
                        "--constant-time": "--audit-kem, --audit-dsa or --audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
-                       "--fresh-count": "--fresh-key",
+                       "--fresh-count": "--fresh-key or --audit-contained",
+                       "--fresh-seed": "--audit-contained",
+                       "--kem-keypair": "--audit-kem or --audit-contained",
+                       "--kem-encaps": "--audit-kem or --audit-contained",
+                       "--kem-decaps": "--audit-kem or --audit-contained",
                        "--source-include": "--audit-source",
                        "--source-symbol": "--audit-source",
                        "--audit-timeout": "an --audit-* task"}.get(
@@ -468,7 +494,8 @@ def _main(argv=None):
 
     def _acc_n(ps):
         return _ACC_DEFAULT if args.accumulated is None else args.accumulated
-    for _ps_req in [x[1] for x in (args.audit_kem, args.audit_dsa, args.audit_harness) if x]:
+    for _ps_req in [x[1] for x in (args.audit_kem, args.audit_dsa, args.audit_harness,
+                                   args.audit_contained) if x]:
         _n = _acc_n(_ps_req)
         if _n and _acc_counts(_ps_req) and _n not in _acc_counts(_ps_req):
             print(f"  --accumulated {_n}: CCTV publishes no {_n}-case digest for "
@@ -528,7 +555,7 @@ def _main(argv=None):
                 "params", "kem", "leakage", "emit_prompt", "verify_response",
                 "emit_hybrid_prompt", "verify_hybrid", "audit_kem", "audit_dsa", "audit_fndsa",
                 "audit_slhdsa",
-                "audit_harness", "audit_source",
+                "audit_harness", "audit_source", "audit_contained",
                 "audit_hbs", "audit_so")):
             return 0
     hbs_result = None
@@ -893,6 +920,40 @@ def _main(argv=None):
         har_result = pqverify_audit_harness(
             _argv, _ps, timeout=60 if _t is None else (_t or None),
             accumulated=_acc_n(_ps))
+    con_result = None
+    if getattr(args, "audit_contained", None):
+        from .core import _KEM_SIZES as _CK
+        from .contained import FRESH_DEFAULT, pqverify_audit_contained
+        _p, _ps = args.audit_contained
+        if _ps not in _CK:
+            print(f"  unknown parameter set {_ps!r} for --audit-contained — known: "
+                  f"{', '.join(sorted(_CK))}. The contained worker serves ML-KEM; for "
+                  f"ML-DSA use --audit-dsa, or --audit-harness with a harness of your own")
+            return 2
+        import os as _os_c
+        if not _os_c.path.isfile(_p):
+            print(f"  cannot audit {_p}: no such file")
+            return 2
+        _seed = None
+        if args.fresh_seed:
+            try:
+                _seed = bytes.fromhex(args.fresh_seed)
+            except ValueError:
+                _seed = b""
+            if len(_seed) != 32:
+                print("  --fresh-seed takes 64 hexadecimal digits, the seed a contained "
+                      "audit's report recorded")
+                return 2
+        if args.fresh_count is not None and not 1 <= args.fresh_count <= 1000:
+            print("  --fresh-count must be between 1 and 1000")
+            return 2
+        ran_task = True
+        _t = args.audit_timeout
+        con_result = pqverify_audit_contained(
+            _p, _ps, keypair=args.kem_keypair, encaps=args.kem_encaps,
+            decaps=args.kem_decaps, prefix=args.symbol_prefix,
+            timeout=60 if _t is None else (_t or None), accumulated=_acc_n(_ps),
+            fresh=args.fresh_count or FRESH_DEFAULT, fresh_seed=_seed)
     hbsa_result = hbsa_reason = hbsa_artifact = None
     hbsa_ran = bool(getattr(args, "audit_hbs", None))
     if hbsa_ran:
@@ -1073,6 +1134,29 @@ def _main(argv=None):
         elif (gate and getattr(args, "require_full_coverage", False)
               and doc.get("scope") and not doc["scope"]["complete"]):
             print("  FAILING: harness audit scope is partial and "
+                  "--require-full-coverage was set")
+            exit_code = 1
+
+    if con_result is not None:
+        from .report import to_json_contained_audit
+        doc = to_json_contained_audit(con_result)
+        if json_doc is None:
+            json_doc, reported = doc, "--audit-contained"
+        if sarif_doc is None:
+            sarif_doc = to_sarif(
+                [{"name": f"{args.audit_contained[0]}:{args.audit_contained[1]}",
+                  "passed": doc["summary"]["checks_passed"],
+                  "total": doc["summary"]["checks_total"],
+                  "findings": doc["findings"]}],
+                tool_version=VERSION, artifact=doc["artifact"])
+        if doc.get("scope"):
+            print(f"  SCOPE: {doc['scope']['statement']}")
+        if gate and not doc["verified"]:
+            print(f"  FAILING: contained audit {doc['status']}")
+            exit_code = 1
+        elif (gate and getattr(args, "require_full_coverage", False)
+              and doc.get("scope") and not doc["scope"]["complete"]):
+            print("  FAILING: contained audit scope is partial and "
                   "--require-full-coverage was set")
             exit_code = 1
 

@@ -3,6 +3,72 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`--audit-contained LIB SET`: an ML-KEM library scored apart from itself.**
+  The library audits compute their verdict in the process that has loaded the
+  library, so a library that corrupts memory, or is written to deceive the
+  audit, can change it. A contained audit runs the library in a worker that is
+  sent inputs and returns what the library wrote; the vectors, the expected
+  answers and the scoring stay in pq-verify's own process, which is not
+  dumpable while the audit runs. It is the harness audit (`--audit-harness`)
+  with a harness of pq-verify's own, `pq_verify/harness/contained/pqv_worker.c`,
+  compiled where it runs.
+  - **A sealed copy.** The file is copied, from one open descriptor, into a
+    sealed memory file and hashed on the way; the worker loads the copy.
+    Replacing the file on disk during the audit changes neither what runs nor
+    what the report names. pq-verify reads the copy's symbol table itself;
+    `nm` is not run on the file.
+  - **A filter confirmed before the library is mapped.** The worker drops its
+    capabilities, sets `no_new_privs` and installs a seccomp deny-list;
+    pq-verify reads all three from `/proc`, and that the library is not mapped
+    yet, before it tells the worker to load it. On the list: starting a
+    process, exec, sockets, opening a file for writing, creating, renaming,
+    removing or truncating one, changing its mode, owner, times or attributes
+    (`creat`, `fchmod`, `fchown`, `fchmodat2`, `ftruncate`, `fallocate`,
+    `mknod`, `utimensat` and the `xattr` calls among them), signalling or
+    tracing another process, io_uring, mounts, keyrings and System V IPC. A
+    library that makes one is killed and reported (`ISO-SECCOMP-VIOLATION`,
+    SARIF rule `PQV011`). Listing a directory is allowed: the mask for
+    write-mode opens holds the `O_TMPFILE` bit alone, not glibc's
+    `__O_TMPFILE`, which includes `O_DIRECTORY`.
+  - **Fresh questions.** The worker can read any file the user can, NIST's
+    published answers among them, so NIST's vectors alone cannot tell a
+    library that computes from one that looks answers up. Each run also asks
+    40 questions drawn from a new seed, scored against pq-verify's reference.
+    The seed is in the report, printed only once the worker is gone;
+    `--fresh-seed` replays it, and the report then says so.
+  - **Nothing left behind.** While the audit runs pq-verify adopts orphaned
+    descendants. When it ends, every process under the worker, and every one
+    that became pq-verify's own child because the worker died first, is
+    stopped, reaped and reported (`ISO-ESCAPEE`).
+  - Tested with planted libraries: each of the 101 system calls the filter
+    refuses outright, and those it refuses for some arguments on both sides of
+    the line; a library that writes a file,
+    changes one, forks while it loads, signals another process, crashes,
+    hangs, or writes outside a buffer; one that cannot compute ML-KEM and
+    answers NIST's 80 vectors from a table (it passes them and fails the fresh
+    questions); a daemon and an orphan (with the filter off, which is never
+    `VERIFIED`); a file swapped on disk. In CI every pinned ML-KEM library is
+    audited a second time through the worker, which must agree with
+    `--audit-kem` on every stage (AUDITS.md).
+  - What it is not: a sandbox (the worker reads files, and the filter is a
+    list, not a proof), or an answer to a library that computes correctly only
+    while it is audited. ML-KEM on x86-64 Linux only; elsewhere `CANNOT
+    VERIFY`. SECURITY.md and LIMITS.md say the rest.
+
+### Changed
+
+- **A harness that dies is noticed even if something holds its output open.**
+  A process a harness had started could keep the harness's stdout open after
+  the harness died, and pq-verify then waited out the whole per-answer limit
+  (60 s by default) before reporting it. The harness's exit is now watched as
+  well as its output.
+- **The README's table of SARIF rules lists all of them.** `PQV008` (ML-DSA),
+  `PQV009` (LMS/XMSS) and `PQV010` (C source) were emitted but not listed.
+
 ## [2.17.4] — 2026-11-13
 
 A maintenance release: pq-verify's page on PyPI, the Python versions CI
