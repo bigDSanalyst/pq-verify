@@ -18,28 +18,32 @@ for each, exactly, and tests the N * 2n coefficients against what an exact
 sampler gives:
     valid      every signature decodes and lies within the norm bound
     centred    the 2n per-coefficient means: chi-square on 2n degrees of freedom
-    scale      the variance, against sigma^2
+    scale      the variance of all the coefficients together, against sigma^2
     symmetric  as many positive coefficients as negative
 A test fails beyond 6 standard deviations (the chi-square one-sided). A
 correct library fails one about twice in 10^8 audits of FN-DSA-512 and
 once in 10^8 of FN-DSA-1024, mostly on the chi-square: its exact tail at 6
 standard deviations is 1.4e-8 on 1,024 degrees of freedom and 7.1e-9 on
 2,048, against 2.0e-9 for each of the other two, which are near normal. On
-PQClean's Falcon, 29 keys (23 of FN-DSA-512, 6 of FN-DSA-1024, 1,000
+PQClean's Falcon, 45 keys (39 of FN-DSA-512, 6 of FN-DSA-1024, 1,000
 signatures each) stayed within 3.3.
 
 On PQClean's Falcon-512 with 1,000 signatures, both planted defects still
 sign validly:
   - a sampler whose sign bit is 1 with probability 136/256 instead of 1/2
-    drifts by 53 to 60 standard deviations (6 keys);
-  - one that draws with a sigma 2% low sits 25 to 27 standard deviations
-    below the expected variance (5 keys).
+    drifts by 53 to 61 standard deviations (9 keys);
+  - one that draws with a sigma 2% low sits 21 to 27 standard deviations
+    below the expected variance (8 keys).
 
 Not seen here:
   - a defect that keeps these moments. A base sampler with one row of its
     table zeroed, so that every value above 6 comes out one less (about one
     draw in 4,000), leaves every statistic within noise (measured, PQClean,
     1,000 signatures).
+  - a covariance of the wrong shape: only the variance of all the
+    coefficients together is tested. A sampling tree 2% wider on one side
+    and 2% narrower on the other passed on 4 keys (measured, PQClean, 1,000
+    signatures each).
   - one that shows only after more signatures, under other keys, or for
     particular messages;
   - a smaller bias than the test resolves. At 1,000 signatures, a sign bit

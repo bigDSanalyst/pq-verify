@@ -815,13 +815,15 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   messages under one key from the library's own keypair
   (`pq_verify/fndsa_stats.py`). For each, s1 is recomputed exactly; the
   2n coefficients of all of them must be centred on 0 (a chi-square on the
-  2n means), of variance σ² and symmetric, each within 6 standard
-  deviations of what an exact sampler gives. A biased sampler still signs
-  validly: this is the stage that sees one. On PQClean's Falcon, 29 keys
-  stayed within 3.3 standard deviations. A defect that keeps these moments
-  passes: a base sampler with one row of its table zeroed, so that every
-  value above 6 comes out one less (about one draw in 4,000), does
-  (measured).
+  2n means), of variance σ² taken over all of them, and symmetric, each
+  within 6 standard deviations of what an exact sampler gives. A biased
+  sampler still signs validly: this is the stage that sees one. On
+  PQClean's Falcon, 45 keys stayed within 3.3 standard deviations. A
+  defect that keeps these moments passes: a base sampler with one row of
+  its table zeroed, so that every value above 6 comes out one less (about
+  one draw in 4,000), does (measured). So does a covariance of the wrong
+  shape: a sampling tree 2% wider on one side and 2% narrower on the other
+  passed on 4 keys (measured).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report
@@ -888,9 +890,9 @@ bit-for-bit comparison catches it.
 Two more change the sampler, and fail the signature statistics and nothing
 else (`"only"`); their signatures all verify:
 - the sampler's sign bit is 1 with probability 136/256, not 1/2: the
-  coefficient means drift by 53 to 60 standard deviations (6 keys);
-- the signer draws with a σ 2% low: the variance sits 25 to 27 below
-  (5 keys).
+  coefficient means drift by 53 to 61 standard deviations (9 keys);
+- the signer draws with a σ 2% low: the variance sits 21 to 27 below
+  (8 keys).
 
 These do change PQClean's known-answer output. They stand for what the KAT
 cannot reach: a library whose signing randomness pq-verify does not control,

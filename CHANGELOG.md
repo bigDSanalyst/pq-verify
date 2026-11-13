@@ -92,19 +92,21 @@ versioning](https://semver.org/spec/v2.0.0.html).
   exactly for each and tests all the coefficients:
   - every signature valid;
   - centred on 0: a chi-square on the 2n per-coefficient means;
-  - variance σ²;
+  - variance σ², over all the coefficients together;
   - symmetric.
 
   Each fails beyond 6 standard deviations. The report prints the three
   z-scores, and the JSON report gives them under `sampler`. On PQClean's
-  Falcon, 29 keys (23 of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
+  Falcon, 45 keys (39 of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
   - **Two new mutants in PQClean's Falcon-512 fail it and nothing else**,
     with signatures that all verify:
-    - a sign bit that is 1 with probability 136/256: 53 to 60 standard
+    - a sign bit that is 1 with probability 136/256: 53 to 61 standard
       deviations of drift;
-    - a σ 2% low: 25 to 27 below the expected variance.
+    - a σ 2% low: 21 to 27 below the expected variance.
   - **Not seen:** a defect that keeps these moments (a base sampler with one
-    row of its table zeroed passes, measured), and a smaller bias than 1,000
+    row of its table zeroed passes, measured), a covariance of the wrong
+    shape (so does a sampling tree 2% wider on one side and 2% narrower on
+    the other, measured), and a smaller bias than 1,000
     signatures resolve (about one point in the sign bit, half a percent in
     σ). It adds about 10 s to an FN-DSA-512 audit.
 

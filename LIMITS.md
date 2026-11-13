@@ -153,12 +153,17 @@ about the library is claimed.
       stages are not applicable, and say so;
     - inputs outside Falcon's own domain: subnormals, infinities, NaNs.
   - **The sampler, through its signatures.** 1,000 signatures under one
-    of the library's keys are tested for centring, variance σ² and
-    symmetry, each to 6 standard deviations. It is a statistical test of
+    of the library's keys are tested for centring, symmetry and variance
+    σ² (over all the coefficients together), each to 6 standard
+    deviations. It is a statistical test of
     the first moments, not of the distribution:
     - a defect that keeps them passes: a base sampler with one row of its
       table zeroed, so that every value above 6 comes out one less (about
       one draw in 4,000), does (measured);
+    - so does a covariance of the wrong shape, since only the variance of
+      all the coefficients together is tested: a sampling tree 2% wider
+      on one side and 2% narrower on the other passed on 4 keys
+      (measured);
     - so does a smaller bias than 1,000 signatures resolve: a sign bit
       within about one point of 1/2, a σ within about half a percent;
     - so does one that shows only under other keys, after more signatures,

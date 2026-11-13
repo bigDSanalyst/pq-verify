@@ -514,9 +514,10 @@ truncation, or one ApproxExp coefficient off by one each leave PQClean's NIST
 KAT output byte for byte the same.
 
 Its sampler is checked by its output: 1,000 signatures under one of the
-library's keys must be centred on 0, of variance σ², and symmetric. A sampler
-whose sign bit leans 53:47, or whose σ is 2% low, still signs validly; on
-every key tried, each failed this by more than 24 standard deviations.
+library's keys must be centred on 0, symmetric, and of variance σ² over all
+their coefficients. A sampler whose sign bit leans 53:47, or whose σ is 2%
+low, still signs validly; on every key tried, each failed this by more than
+21 standard deviations.
 
 PQClean's Falcon passes. Thirteen planted bugs in its source each fail the
 audit in CI. The three arithmetic ones fail only the arithmetic stages, and
@@ -528,7 +529,8 @@ Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
 and lives in one section of `pq_verify/fndsa.py`. Of signing, the emulated
 arithmetic is checked, and the sampler through the first moments of its
-signatures. The FFT is not, nor a sampler defect that keeps those moments
+signatures. The FFT is not, nor the shape of their covariance, nor a sampler
+defect that keeps those moments
 ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
 
 ---
