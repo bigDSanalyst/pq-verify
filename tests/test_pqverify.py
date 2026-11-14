@@ -6843,6 +6843,40 @@ def test_sampler_statistics_catch_drift_scale_and_asymmetry():
     assert not res["symmetric"][0] and res["symmetric"][1] > 4 * THRESHOLD
 
 
+def test_fndsa_zmul_is_exact_on_both_paths():
+    """_zmul packs 64-bit slots with struct while every coefficient of the
+    product is below 2^62, and otherwise takes the general packing: both
+    must equal the schoolbook product, at the boundary and past it."""
+    import random
+    from pq_verify.fndsa_audit import _zmul, _zmul_school, _zmul_wide
+    rng = random.Random(2026)
+    for trial in range(400):
+        n = rng.choice([1, 2, 3, 8, 32, 64])
+        kind = trial % 5
+        if kind == 0:                       # a signature's s2 against h
+            a = [rng.randint(-2047, 2047) for _ in range(n)]
+            b = [rng.randrange(12289) for _ in range(n)]
+        elif kind == 1:                     # at 2^62, the fast path's edge
+            lim = int(((1 << 62) // n) ** 0.5) - 1
+            a = [rng.choice([-lim, lim]) for _ in range(n)]
+            b = [rng.choice([-lim, lim]) for _ in range(n)]
+        elif kind == 2:                     # past it: the general packing
+            a = [rng.randint(-(1 << 80), 1 << 80) for _ in range(n)]
+            b = [rng.randint(-9, 9) for _ in range(n)]
+        elif kind == 3:                     # a coefficient too wide for a slot
+            a = [rng.randint(-3, 3) for _ in range(n)]
+            a[0] = (1 << 63) + 5
+            b = [0] * n
+        else:
+            a = [0] * n
+            b = [rng.randint(-5, 5) for _ in range(n)]
+        want = _zmul_school(a, b)
+        assert _zmul(a, b) == want and _zmul_wide(a, b) == want, (n, kind)
+    a = [rng.randint(-2047, 2047) for _ in range(512)]
+    b = [rng.randrange(12289) for _ in range(512)]
+    assert _zmul(a, b) == _zmul_wide(a, b)
+
+
 def test_sampler_collect_recomputes_s1_and_refuses_what_does_not_verify(monkeypatch):
     """collect() on pinned FN-DSA-512 signatures: a signer that returns one
     valid signature over and over is valid and wildly off-centre (a
