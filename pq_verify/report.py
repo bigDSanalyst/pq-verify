@@ -151,6 +151,21 @@ RULES = {
                  "single-coefficient impulse) produced incorrect output."),
         "level": "warning",
     },
+    "PQV012": {
+        "name": "SecretPathDivision",
+        "short": "An integer division is reachable from a secret-input entry point",
+        "full": ("Static call-graph reachability (objdump) from the audited "
+                 "secret-input entry points -- Encaps and Decaps for a KEM, Sign "
+                 "for a signature -- reaches a function that contains an integer "
+                 "division. Division latency is operand-dependent on many cores, "
+                 "which is how KyberSlash leaked the key, and Valgrind memcheck "
+                 "cannot see instruction timing, so this is a review pointer, not "
+                 "a verdict: the division may be on public data and harmless. "
+                 "Calls made through a function pointer are not resolved, so a "
+                 "division reported reachable is reachable, but one not reported "
+                 "may still be reached at run time."),
+        "level": "note",
+    },
 }
 
 _FINDING_MAP = (
@@ -201,6 +216,24 @@ SIDE_CHANNEL = {
 def side_channel_scope():
     """The scope declaration carried by every report. Copied, not shared."""
     return dict(SIDE_CHANNEL)
+
+
+def sarif_notes_for_ct(ct):
+    """Note-level SARIF descriptors (PQV012) for the integer divisions a
+    constant-time result found reachable from the secret-input entry points.
+    A review pointer, not a finding: these never enter the findings count or
+    change the verdict. Empty unless reachability was computed and non-empty."""
+    r = (ct or {}).get("division_reachability")
+    if not r or not r.get("reachable_divisions"):
+        return []
+    bound = ("" if r.get("complete") else
+             " (lower bound: a pointer call in reachable code is unresolved, so "
+             "others may be reachable too)")
+    return [{"rule": "PQV012", "fn": fn,
+             "text": (f"integer division reachable from the secret-input path in "
+                      f"{fn}{bound} -- weigh its operands for timing; pq-verify "
+                      f"does not measure instruction timing")}
+            for fn in sorted(r["reachable_divisions"])]
 
 
 def artifact_bound(path):
@@ -1192,6 +1225,27 @@ def to_sarif(results, tool_version="unknown", source_root=None, artifact=None):
                     # stable across runs: same target + same rule = same finding
                     "pqVerifyFinding/v1": f"{uri}:{rule_id}"
                                           + (f":{region['startLine']}" if region else ""),
+                },
+            })
+
+        # Review pointers (currently PQV012, secret-path divisions) ride a
+        # separate rail from findings: note level, never counted as a finding,
+        # never change the verdict.
+        for note in r.get("notes_sarif", []):
+            rid = note["rule"]
+            used.add(rid)
+            msg = note["text"]
+            if symbol:
+                msg += f"  (symbol: {symbol})"
+            sarif_results.append({
+                "ruleId": rid,
+                "level": RULES[rid]["level"],
+                "message": {"text": msg},
+                "locations": [{"physicalLocation": {"artifactLocation": {
+                    "uri": loc_uri,
+                    "uriBaseId": "%SRCROOT%" if source_root else None}}}],
+                "partialFingerprints": {
+                    "pqVerifyFinding/v1": f"{loc_uri}:{rid}:{note.get('fn', '')}",
                 },
             })
 

@@ -1049,7 +1049,7 @@ def _main(argv=None):
     # exit code still reflects EVERY task that ran, not just the reported one.
     from .report import (to_json, to_json_acvp, to_json_hybrid, to_json_kem,
                          to_json_dsa, to_json_hbs_audit, to_json_response, to_sarif,
-                         artifact_unbound, write)
+                         sarif_notes_for_ct, artifact_unbound, write)
     from .core import VERSION
 
     exit_code = 0
@@ -1091,7 +1091,8 @@ def _main(argv=None):
                 [{"name": f"{args.audit_kem[0]}:{kem_ran}",
                   "passed": doc["summary"]["checks_passed"],
                   "total": doc["summary"]["checks_total"],
-                  "findings": doc["findings"]}],
+                  "findings": doc["findings"],
+                  "notes_sarif": sarif_notes_for_ct(doc.get("constant_time"))}],
                 tool_version=VERSION, artifact=kem_artifact)
         # A KEM audit that found faults, or that could not run at all, must
         # not exit 0 under a CI gate. The old code set a variable nothing read.
@@ -1109,7 +1110,8 @@ def _main(argv=None):
                 [{"name": f"{args.audit_dsa[0]}:{dsa_ran}",
                   "passed": doc["summary"]["checks_passed"],
                   "total": doc["summary"]["checks_total"],
-                  "findings": doc["findings"]}],
+                  "findings": doc["findings"],
+                  "notes_sarif": sarif_notes_for_ct(doc.get("constant_time"))}],
                 tool_version=VERSION, artifact=dsa_artifact)
         if doc.get("scope"):
             print(f"  SCOPE: {doc['scope']['statement']}")
@@ -1226,7 +1228,8 @@ def _main(argv=None):
                 [{"name": f"{args.audit_fndsa[0]}:{fna_ran}",
                   "passed": doc["summary"]["checks_passed"],
                   "total": doc["summary"]["checks_total"],
-                  "findings": doc["findings"]}],
+                  "findings": doc["findings"],
+                  "notes_sarif": sarif_notes_for_ct(doc.get("constant_time"))}],
                 tool_version=VERSION, artifact=fna_artifact)
         if doc.get("scope"):
             print(f"  SCOPE: {doc['scope']['statement']}")
@@ -1250,7 +1253,8 @@ def _main(argv=None):
                 [{"name": f"{args.audit_mceliece[0]}:{mca_ran}",
                   "passed": doc["summary"]["checks_passed"],
                   "total": doc["summary"]["checks_total"],
-                  "findings": doc["findings"]}],
+                  "findings": doc["findings"],
+                  "notes_sarif": sarif_notes_for_ct(doc.get("constant_time"))}],
                 tool_version=VERSION, artifact=mca_artifact)
         if doc.get("scope"):
             print(f"  SCOPE: {doc['scope']['statement']}")

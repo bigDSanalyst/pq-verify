@@ -1268,7 +1268,16 @@ pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
 
 Not checked, and said so in every report: instruction timing (KyberSlash's
 secret division is invisible to memcheck; the library's integer divisions
-are listed instead), key generation, and anything physical.
+are listed instead, those reachable from Encaps or Decaps marked by
+call-graph reachability -- the note-level rule `PQV012`, a review pointer and
+not a verdict, whose "not reached" is a lower bound because function-pointer
+calls are not resolved), key generation, and anything physical. The pinned
+builds have no integer division, so the gate is proved by a negative control:
+a KyberSlash-class divide by q put back into ML-KEM-512's ciphertext
+compression (`poly_compress`), computing the same value so every NIST vector
+still passes, is reported reachable from Decaps while every constant-time stage
+stays green -- the listing catches what memcheck cannot (`tools/vendor_audit.py`,
+`"reach_adds"`, `"kat_unchanged"`).
 
 **Classic McEliece** (not FIPS; `--audit-mceliece ... --constant-time`). The
 NIST API takes no coins, so the driver supplies the randomness: it defines

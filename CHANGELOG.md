@@ -5,6 +5,22 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Division reachability under `--constant-time`.** The integer-division
+  listing is now split by call-graph reachability from the audited
+  secret-input entry points (Encaps and Decaps for a KEM, Sign for a
+  signature): a division on the secret path is the one a timing reviewer must
+  weigh, as KyberSlash was reachable from Decaps. The call graph is read from
+  objdump's own symbolization (`pq_verify/reach.py`); a call through a function
+  pointer is not resolved, so "reachable" is a sound lower bound and "not
+  reached" is not a guarantee, which the report states. Emitted as the
+  note-level SARIF rule `PQV012` -- a review pointer, never a verdict, since
+  memcheck still cannot see instruction timing. A KyberSlash-class division
+  reintroduced into ML-KEM's compression (same output, so every NIST vector
+  passes) is caught as reachable from Decaps in the vendor audits while every
+  constant-time stage stays green.
+
 ### Changed
 
 - **v2.18.0 has its own Zenodo deposit**,

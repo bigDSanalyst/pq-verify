@@ -449,6 +449,7 @@ pq_verify/
   ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
   ct_dsa.py                ML-DSA constant time, judged by the library's declassifications
   ct_fndsa.py              FN-DSA constant time, the signer's own branches matched by line
+  reach.py                 Call-graph reachability: which listed divisions a secret-input entry reaches
   edge.py                  Wycheproof and CCTV edge-case vectors
   accumulated.py           Accumulated vectors: 10 000 random cases, one digest
   fresh.py                 Fresh, unpublished ACVP question sets

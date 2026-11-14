@@ -7695,6 +7695,9 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                     print(f"        \u2717 {lk['kind']} in {lk['function']} "
                           f"({lk['count']} report(s))")
             print(f"        {_ct.division_note(ct_res)}")
+            _rn = _ct.reachability_note(ct_res)
+            if _rn:
+                print(f"        {_rn}")
         print_bounds(bounds)
         print("=" * 68)
         print(f"  RESULT: {p_all}/{t_all} \u2014 "

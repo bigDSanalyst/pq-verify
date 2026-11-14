@@ -512,7 +512,7 @@ def _constant_time(v):
 
 
 def _print_constant_time(ct):
-    from .ct_audit import division_note
+    from .ct_audit import division_note, reachability_note
     from .ct_fndsa import describe
     if "no_signer" in ct:
         print(f"  n/a   ct:sign      1: {ct['no_signer']}")
@@ -544,6 +544,9 @@ def _print_constant_time(ct):
             print(f"          {describe(s)}")
     print(f"  n/a   ct:keyGen    {ct['not_applicable']['keyGen']}")
     print(f"        {division_note(ct)}")
+    _rn = reachability_note(ct)
+    if _rn:
+        print(f"        {_rn}")
 
 
 def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True,
