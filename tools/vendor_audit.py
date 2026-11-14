@@ -590,8 +590,35 @@ def audit_ct_mceliece(so, param_set, prefix=None):
     return stages, leaks
 
 
+def reach_summary(r):
+    """The division-reachability of a constant-time result, as check_* reads
+    it: which listed integer divisions are reachable from the secret-input
+    entry points, and whether those entry points were resolved. `complete` is
+    None when no reachability was computed (no division list, or an
+    architecture pq-verify does not know)."""
+    divs = sorted(r.get("divisions") or {})
+    dr = r.get("division_reachability")
+    if not dr:
+        return {"divisions": divs, "reachable": [], "entries_missing": [], "complete": None}
+    return {"divisions": divs, "reachable": sorted(dr["reachable_divisions"]),
+            "entries_missing": list(dr["entries_missing"]), "complete": dr["complete"]}
+
+
+def reach_problem(reach):
+    """A sound reachability run finds every audited entry point and reports no
+    division it did not also list. Anything else is a bug in the gate, named
+    here; None when the reachability is well-formed."""
+    if reach["entries_missing"]:
+        return f"entry points not found in the binary: {', '.join(reach['entries_missing'])}"
+    extra = set(reach["reachable"]) - set(reach["divisions"])
+    if extra:
+        return f"reachable divisions absent from the listing: {', '.join(sorted(extra))}"
+    return None
+
+
 def audit_ct(so, param_set, prefix=None):
-    """The --constant-time stages alone: {stage: [p, t]} and the leaks."""
+    """The --constant-time stages alone: {stage: [p, t]}, the leaks, and the
+    division reachability (reach_summary)."""
     sys.path.insert(0, str(REPO))
     from pq_verify.ct_audit import run_kem
     from pq_verify.core import _resolve_kem_symbols
@@ -599,7 +626,8 @@ def audit_ct(so, param_set, prefix=None):
     f, _ = _resolve_kem_symbols(exported_functions(so), param_set, prefix=prefix)
     r = run_kem(so, param_set, f["keypair"], f["encaps"], f["decaps"])
     return ({"ct:" + k: list(v) for k, v in r["stages"].items()},
-            {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()})
+            {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()},
+            reach_summary(r))
 
 
 def audit_ct_dsa(so, param_set, prefix=None):
@@ -711,15 +739,22 @@ def check_ct(rows, workdir):
         src = Path(workdir) / row["build"] / row["commit"][:12]
         if not (src / ".git").exists():
             fetch(row["url"], row["commit"], src)
+        base_reach = {}
         for ps in row["sets"]:
             label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
-            got, leaks = audit_ct(build(row["build"], src, ps, workdir), ps,
-                                  prefix_for(row, ps))
-            if got == row["ct"][ps]:
-                print(f"  ok     {label}: no secret-dependent branch or access, as recorded")
+            got, leaks, reach = audit_ct(build(row["build"], src, ps, workdir), ps,
+                                         prefix_for(row, ps))
+            base_reach[ps] = reach
+            bad = reach_problem(reach)
+            if got == row["ct"][ps] and not bad:
+                extra = (f"; divisions reachable from the secret-input path: "
+                         f"{', '.join(reach['reachable'])}" if reach["reachable"] else "")
+                print(f"  ok     {label}: no secret-dependent branch or access, as "
+                      f"recorded{extra}")
                 continue
             failures += 1
-            print(f"  DIFF   {label}: recorded {row['ct'][ps]}  now {got}  {leaks}")
+            print(f"  DIFF   {label}: recorded {row['ct'][ps]}  now {got}  {leaks}"
+                  + (f"; reachability: {bad}" if bad else ""))
         for i, m in enumerate(row.get("ct_mutants", [])):
             label = f"{row['library']} ct mutant {m['name']!r} ({m['set']})"
             try:
@@ -728,7 +763,41 @@ def check_ct(rows, workdir):
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
-            got, leaks = audit_ct(so, m["set"], prefix_for(row, m["set"], m))
+            got, leaks, reach = audit_ct(so, m["set"], prefix_for(row, m["set"], m))
+            if m.get("reach_adds"):
+                # A KyberSlash-class division: operand-dependent latency, which
+                # memcheck cannot see, so the constant-time stages still pass --
+                # only reachability reports it, and only when it is on the
+                # secret path. The mutant proves both: the stages are unchanged,
+                # and the division it introduces is newly reachable.
+                added = [f for f in reach["reachable"]
+                         if f not in base_reach[m["set"]]["reachable"]]
+                missed = [f for f in m["reach_adds"] if f not in added]
+                if missed:
+                    failures += 1
+                    print(f"  MISSED {label}: {', '.join(missed)} not newly reachable "
+                          f"from the secret-input path.")
+                    continue
+                if got != row["ct"][m["set"]]:
+                    failures += 1
+                    print(f"  DIFF   {label}: recorded as invisible to memcheck, but the "
+                          f"constant-time stages are now {got} (were {row['ct'][m['set']]}).")
+                    continue
+                note = ("invisible to memcheck (the stages still pass), caught only by "
+                        "reachability")
+                if m.get("kat_unchanged"):
+                    want = {k: list(v) for k, v in row["expected"].items()}
+                    want.update({k: list(v) for k, v in row["edge"][m["set"]].items()})
+                    conf = audit(so, m["set"], prefix_for(row, m["set"], m))
+                    if conf is None or any(conf.get(k) != want.get(k) for k in want):
+                        failures += 1
+                        print(f"  DIFF   {label}: recorded as not changing the output, but "
+                              f"the conformance audit differs from NIST's vectors.")
+                        continue
+                    note += "; ML-KEM conformance unchanged against NIST's vectors"
+                print(f"  caught {label}: reachable integer division in "
+                      f"{', '.join(m['reach_adds'])} -- {note}")
+                continue
             missed = [s for s in m["fails"] if got.get(s, [0, 0])[0] == got.get(s, [0, 0])[1]]
             if missed:
                 failures += 1

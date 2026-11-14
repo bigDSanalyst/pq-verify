@@ -338,7 +338,7 @@ changed. A test holds this table equal to the pinned file.
 | Library | Commit | Sets | keyGen | encaps | decaps | ekCheck | dkCheck | Edge cases | Accumulated | Constant time | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | mlkem-native | [`fc269bc`](https://github.com/pq-code-package/mlkem-native/commit/fc269bc2d1068486625a3775310c2c1f28d74732) (2026-09-27) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | — | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 15/30 | 15/30 | 1,383/4,320 | 3/3 | 6/6 | 3/3 | 210/240 + 1,383/4,320 + 3/3 findings |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 15/30 | 15/30 | 1,383/4,320 | 3/3 | 6/6 | 4/4 | 210/240 + 1,383/4,320 + 3/3 findings |
 | liboqs 0.16.0 — OQS API | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
 | liboqs 0.16.0 — mlkem-native C backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
 | liboqs 0.16.0 — mlkem-native x86-64 backend | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 768 / 1024 | 75/75 | 75/75 | 30/30 | 30/30 | 30/30 | 4,320/4,320 | 3/3 | 6/6 | 1/1 | 240/240 + 4,320/4,320 + 3/3 **VERIFIED** |
@@ -1268,7 +1268,16 @@ pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
 
 Not checked, and said so in every report: instruction timing (KyberSlash's
 secret division is invisible to memcheck; the library's integer divisions
-are listed instead), key generation, and anything physical.
+are listed instead, those reachable from Encaps or Decaps marked by
+call-graph reachability -- the note-level rule `PQV012`, a review pointer and
+not a verdict, whose "not reached" is a lower bound because function-pointer
+calls are not resolved), key generation, and anything physical. The pinned
+builds have no integer division, so the gate is proved by a negative control:
+a KyberSlash-class divide by q put back into ML-KEM-512's ciphertext
+compression (`poly_compress`), computing the same value so every NIST vector
+still passes, is reported reachable from Decaps while every constant-time stage
+stays green -- the listing catches what memcheck cannot (`tools/vendor_audit.py`,
+`"reach_adds"`, `"kat_unchanged"`).
 
 **Classic McEliece** (not FIPS; `--audit-mceliece ... --constant-time`). The
 NIST API takes no coins, so the driver supplies the randomness: it defines

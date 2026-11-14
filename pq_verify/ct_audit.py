@@ -271,26 +271,36 @@ def divisions_in(disassembly, machine):
     return out
 
 
+def _disassemble(lib):
+    """(objdump -d text, machine, None), or (None, machine, why) when the
+    library cannot be disassembled -- so the division listing and the
+    reachability refinement share one objdump pass and one set of reasons."""
+    machine = elf_machine(lib)
+    if machine is None:
+        return None, None, "not an ELF file"
+    if machine not in DIVISION_INSNS:
+        return None, machine, (f"pq-verify does not know the division instructions "
+                               f"of this architecture (ELF machine {machine})")
+    if not shutil.which("objdump"):
+        return None, machine, "objdump not found"
+    p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
+                       capture_output=True, text=True)
+    if p.returncode != 0 or "Disassembly of section" not in p.stdout:
+        why = (p.stderr.strip().splitlines() or ["no code"])[-1]
+        return None, machine, f"objdump could not disassemble it: {why}"
+    return p.stdout, machine, None
+
+
 def division_listing(lib):
     """({function: count}, None): every function of the library with an
     integer division in it (objdump). (None, why) when no list could be made,
     so that an absent list is never read as an empty one. Not a verdict:
     memcheck cannot see instruction timing, and a division on public data is
     harmless. A reviewer's list."""
-    machine = elf_machine(lib)
-    if machine is None:
-        return None, "not an ELF file"
-    if machine not in DIVISION_INSNS:
-        return None, (f"pq-verify does not know the division instructions of "
-                      f"this architecture (ELF machine {machine})")
-    if not shutil.which("objdump"):
-        return None, "objdump not found"
-    p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
-                       capture_output=True, text=True)
-    if p.returncode != 0 or "Disassembly of section" not in p.stdout:
-        why = (p.stderr.strip().splitlines() or ["no code"])[-1]
-        return None, f"objdump could not disassemble it: {why}"
-    return divisions_in(p.stdout, machine), None
+    text, machine, why = _disassemble(lib)
+    if text is None:
+        return None, why
+    return divisions_in(text, machine), None
 
 
 def division_note(ct):
@@ -303,16 +313,49 @@ def division_note(ct):
     return "integer divisions: none in the library's code"
 
 
-def division_fields(lib):
-    """The division list's two keys in a constant-time result."""
-    divs, why = division_listing(lib)
-    return {"divisions": divs, "divisions_not_listed": why}
+def reachability_note(ct):
+    """The report's line on which divisions are reachable from the secret-input
+    entry points, or None when no reachability was computed. A review pointer,
+    never a verdict: the lower-bound caveat is spelled out when it applies."""
+    r = ct.get("division_reachability")
+    if not r:
+        return None
+    reached = sorted(r["reachable_divisions"])
+    others = len(ct.get("divisions") or {}) - len(reached)
+    tail = ("" if r["complete"] else
+            " A call through a pointer in the reachable code is not resolved, so "
+            "this is a lower bound, not proof the rest are unreachable.")
+    if reached:
+        more = f"; {others} more present but not reached" if others > 0 else ""
+        return (f"reachable from the secret-input path: {', '.join(reached)} "
+                f"-- the divisions a timing reviewer must weigh{more}.{tail}")
+    return ("no integer division is reachable from the secret-input path through "
+            "resolved calls" + (f" ({others} present elsewhere)" if others else "")
+            + "." + tail)
+
+
+def division_fields(lib, entries=None):
+    """The division listing's keys in a constant-time result. When `entries`
+    (the audited secret-input entry symbols -- encaps/decaps, or sign) are
+    given, add `division_reachability`: which of those divisions are reachable
+    from the entry points through calls objdump could resolve (pq_verify.reach).
+    """
+    text, machine, why = _disassemble(lib)
+    divs = None if text is None else divisions_in(text, machine)
+    fields = {"divisions": divs, "divisions_not_listed": why}
+    if entries and text is not None:
+        from . import reach
+        r = reach.classify(text, machine, entries, divs)
+        if r is not None:
+            fields["division_reachability"] = r
+    return fields
 
 
 def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
     """{'stages': {op: (passed, 1)}, 'leaks': {op: [...]}, 'not_applicable':
     {...}, 'divisions': {...} or None, 'divisions_not_listed': why or None,
-    'selftest': bool} -- or raises Unavailable."""
+    'division_reachability': {...} (pq_verify.reach), 'selftest': bool} -- or
+    raises Unavailable."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -337,7 +380,7 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
                     "keyGen": "the public matrix seed is derived from the secret seed "
                               "and rejection-sampled; libraries declassify it "
                               "internally, which a black-box check cannot"},
-                **division_fields(lib), "iterations": iterations,
+                **division_fields(lib, entries=[enc, dec]), "iterations": iterations,
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:
@@ -503,8 +546,8 @@ def run_mceliece(lib, param_set, enc, dec, material, timeout=1800):
     """Classic McEliece Encaps and Decaps under memcheck. `material` is
     [(pk, sk, ct)] made by the library itself. -> {'stages': {op: (p, 1)},
     'leaks': {op: [...]}, 'sampling': {op: [...]}, 'not_applicable': {...},
-    'divisions', 'divisions_not_listed', 'selftest', 'tool'} -- or raises
-    Unavailable."""
+    'divisions', 'divisions_not_listed', 'division_reachability', 'selftest',
+    'tool'} -- or raises Unavailable."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -548,7 +591,7 @@ def run_mceliece(lib, param_set, enc, dec, material, timeout=1800):
                               "submitters declassify those comparisons, which a "
                               "black-box check cannot tell from a leak, and it takes "
                               "minutes per key under memcheck"},
-                **division_fields(lib), "keys": len(material),
+                **division_fields(lib, entries=[enc, dec]), "keys": len(material),
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:

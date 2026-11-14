@@ -632,8 +632,8 @@ def _search(exe, base, seed, P, policy, work, cap, timeout, batch=128):
 def run_dsa(lib, param_set, keypair, sign, search=2048, timeout=1800):
     """ML-DSA key generation and signing under memcheck, judged by the site
     table. -> {'stages': {op: (p, 1)}, 'leaks', 'findings', 'calls',
-    'declassified', 'coverage', 'divisions', 'divisions_not_listed', 'selftest',
-    'policy', 'tool'}.
+    'declassified', 'coverage', 'divisions', 'divisions_not_listed',
+    'division_reachability', 'selftest', 'policy', 'tool'}.
     Raises NotHooked for a library this check cannot judge (CANNOT VERIFY)
     and Unavailable when Valgrind, its headers or a compiler is missing."""
     exported = exported_functions(lib)
@@ -725,7 +725,7 @@ def run_dsa(lib, param_set, keypair, sign, search=2048, timeout=1800):
                 "declassified": {"keyGen": _site_counts(kev), "sign": _site_counts(sev)},
                 "coverage": coverage, "selftest": True,
                 "policy": f"{policy} @ {POLICIES[policy]['commit'][:7]}",
-                **division_fields(lib),
+                **division_fields(lib, entries=[sign]),
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:

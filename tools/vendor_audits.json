@@ -326,6 +326,17 @@
           "fails": [
             "ct:decaps"
           ]
+        },
+        {
+          "name": "KyberSlash: variable-time division by q, reachable from decaps",
+          "set": "ML-KEM-512",
+          "file": "crypto_kem/ml-kem-512/clean/poly.c",
+          "find": "            d0 = u << 4;\n            d0 += 1665;\n            d0 *= 80635;\n            d0 >>= 28;",
+          "replace": "            volatile uint32_t kyber_q_div = KYBER_Q;\n            d0 = (((uint32_t)(u << 4)) + KYBER_Q / 2) / kyber_q_div;",
+          "reach_adds": [
+            "PQCLEAN_MLKEM512_CLEAN_poly_compress"
+          ],
+          "kat_unchanged": true
         }
       ]
     },

@@ -312,7 +312,8 @@ def run_fndsa(lib, param_set, sign_symbol, sk, sig_capacity, signatures=SIGNATUR
     library made, outside Valgrind) and judge the reports. -> {'stages':
     {'sign': (p, 1)} or {'cannot-verify': (0, 1)}, 'leaks', 'unjudged',
     'intended', 'not_applicable', 'signatures', 'policy', 'divisions',
-    'divisions_not_listed', 'selftest', 'tool'} -- or raises Unavailable."""
+    'divisions_not_listed', 'division_reachability', 'selftest', 'tool'} -- or
+    raises Unavailable."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -350,7 +351,7 @@ def run_fndsa(lib, param_set, sign_symbol, sk, sig_capacity, signatures=SIGNATUR
                     "keyGen": "key generation draws (f, g) and rejects them until the "
                               "NTRU equation can be solved, branching on the candidates "
                               "by design"},
-                **division_fields(lib),
+                **division_fields(lib, entries=[sign_symbol]),
                 "tool": subprocess.run(["valgrind", "--version"], capture_output=True,
                                        text=True).stdout.strip()}
     finally:

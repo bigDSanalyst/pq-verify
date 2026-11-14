@@ -849,8 +849,11 @@ def _print_constant_time(ct):
             print(f"        ✗ {f}")
         if len(ct['findings'][op]) > 3:
             print(f"        ... and {len(ct['findings'][op]) - 3} more; see the JSON report")
-    from .ct_audit import division_note
+    from .ct_audit import division_note, reachability_note
     print(f"        {division_note(ct)}")
+    _rn = reachability_note(ct)
+    if _rn:
+        print(f"        {_rn}")
 
 
 def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumulated,

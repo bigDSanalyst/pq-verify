@@ -368,6 +368,7 @@ SARIF-to-ASFF conversion step.
 | `PQV009` | LMS/XMSS library output or verdict differs from the pinned vectors |
 | `PQV010` | Undefined behaviour, an overflow or a wrong reduction in the C source |
 | `PQV011` | The library did what the contained worker's filter forbids, or left a process behind |
+| `PQV012` | An integer division is reachable from a secret-input entry point (note; a review pointer, not a timing verdict) |
 | `PQV000` | The run could not verify this — not a pass and not a failure |
 
 `--fail-on-finding` exits non-zero, so it can gate a merge.
@@ -684,9 +685,12 @@ Clangover class (a compiler-introduced branch on a secret bit) and
 cache-timing table lookups; three such leaks planted in PQClean, each leaving
 every output correct, are caught in CI. It does **not** see instruction
 timing -- KyberSlash's secret division -- so the report lists the library's
-integer divisions for a reviewer instead; it cannot check key generation
-(the public matrix seed is derived from the secret seed); and it measures
-nothing physical. The report records exactly that scope, and without the flag
+integer divisions for a reviewer instead, marking those reachable from Encaps
+or Decaps by call-graph reachability (the note-level rule `PQV012`, a pointer
+and not a verdict; a KyberSlash-class division put back into ML-KEM's
+compression is caught as reachable from Decaps while every memcheck stage stays
+green); it cannot check key generation (the public matrix seed is derived from
+the secret seed); and it measures nothing physical. The report records exactly that scope, and without the flag
 claims nothing ([the report fields](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#side-channel-report-fields)).
 
 **`--audit-dsa ... --constant-time` does the same for ML-DSA's key generation

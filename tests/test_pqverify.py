@@ -8176,12 +8176,175 @@ def test_division_list_of_a_compiled_library(tmp_path):
     assert why is None and {"q", "r"} <= set(divs) and "add" not in divs
 
 
+# objdump -d of a tiny KEM: decaps reaches a division (poly_compress), key
+# generation reaches another (rej_sample), and encaps reaches neither but makes
+# an indirect call. A GOT jump carries an unrelated <symbol> in its comment.
+_REACH_X86 = (
+    "0000000000001100 <decaps>:\n"
+    "    1108:\tcall   1130 <indcpa_dec>\n"
+    "    110d:\tret\n"
+    "0000000000001130 <indcpa_dec>:\n"
+    "    1138:\tcall   1160 <poly_compress>\n"
+    "    113d:\tjmp    1180 <poly_tomsg>\n"          # tail-call edge
+    "0000000000001160 <poly_compress>:\n"
+    "    1162:\tidiv   %esi\n"                        # a division, on the decaps path
+    "    1166:\tret\n"
+    "0000000000001180 <poly_tomsg>:\n"
+    "    1188:\tcall   1050 <memcpy@plt>\n"           # @plt, external leaf
+    "    118d:\tret\n"
+    "00000000000011a0 <keygen>:\n"
+    "    11a8:\tcall   11c0 <rej_sample>\n"
+    "00000000000011c0 <rej_sample>:\n"
+    "    11c2:\tdivl   0x4(%rsp)\n"                   # a division, only under keygen
+    "    11c6:\tret\n"
+    "00000000000011e0 <encaps>:\n"
+    "    11e8:\tcall   *%rax\n"                       # indirect call on the encaps path
+    "    11ed:\tjmp    1200 <enc_inner+0x4>\n"        # +offset normalizes to enc_inner
+    "0000000000001200 <enc_inner>:\n"
+    "    1208:\tmov    %eax,%eax\n"
+    "    120c:\tjmp    *0x2e3d(%rip)        # 4050 <_GLOBAL_OFFSET_TABLE_+0x18>\n"
+    "    1212:\tret\n"
+)
+
+# AArch64: bl is a resolved edge, blr an unresolved indirect call.
+_REACH_ARM64 = (
+    "0000000000000700 <sign>:\n"
+    " 704:\tbl\t720 <inner>\n"
+    " 708:\tret\n"
+    "0000000000000720 <inner>:\n"
+    " 724:\tudiv\tx0, x0, x1\n"                       # a division, on the sign path
+    " 728:\tblr\tx3\n"                                # indirect call
+    " 72c:\tret\n"
+    "0000000000000740 <orphan>:\n"
+    " 744:\tsdiv\tx0, x0, x1\n"                       # a division, reached by nothing
+)
+
+
+def test_reach_call_graph_reads_edges_and_indirect_calls():
+    from pq_verify import reach
+    edges, indirect = reach.call_graph(_REACH_X86, 62)
+    assert edges["decaps"] == {"indcpa_dec"}
+    assert edges["indcpa_dec"] == {"poly_compress", "poly_tomsg"}   # call and tail jmp
+    assert edges["poly_tomsg"] == {"memcpy"}                        # @plt stripped
+    assert edges["encaps"] == {"enc_inner"}                         # +0x4 offset stripped
+    assert edges["enc_inner"] == set()                              # GOT comment is not an edge
+    assert indirect == {"encaps": 1}                                # call *%rax; the jmp *(%rip) is not a call
+
+
+def test_reach_classifies_divisions_by_the_secret_path():
+    from pq_verify import ct_audit, reach
+    divs = ct_audit.divisions_in(_REACH_X86, 62)
+    assert set(divs) == {"poly_compress", "rej_sample"}
+    r = reach.classify(_REACH_X86, 62, ["decaps", "encaps"], divs)
+    # the decaps-path division is flagged; the keygen-only one is not
+    assert set(r["reachable_divisions"]) == {"poly_compress"}
+    assert r["entries"] == ["decaps", "encaps"] and r["entries_missing"] == []
+    # an unresolved indirect call on a reachable path makes "not reached" a lower bound
+    assert r["indirect_calls"] == 1 and r["complete"] is False
+
+
+def test_reach_is_sound_for_aarch64_bl_and_blr():
+    from pq_verify import ct_audit, reach
+    divs = ct_audit.divisions_in(_REACH_ARM64, 183)
+    assert set(divs) == {"inner", "orphan"}
+    r = reach.classify(_REACH_ARM64, 183, ["sign"], divs)
+    assert set(r["reachable_divisions"]) == {"inner"}   # orphan is unreachable
+    assert r["indirect_calls"] == 1 and r["complete"] is False   # blr
+
+
+def test_reach_reports_a_missing_entry_point():
+    from pq_verify import ct_audit, reach
+    divs = ct_audit.divisions_in(_REACH_X86, 62)
+    r = reach.classify(_REACH_X86, 62, ["decaps", "no_such_symbol"], divs)
+    assert r["entries"] == ["decaps"] and r["entries_missing"] == ["no_such_symbol"]
+    assert r["complete"] is False                       # an entry we could not resolve
+    assert set(r["reachable_divisions"]) == {"poly_compress"}
+
+
+def test_reach_is_complete_when_no_indirect_call_and_all_entries_found():
+    from pq_verify import ct_audit, reach
+    divs = ct_audit.divisions_in(_REACH_X86, 62)
+    r = reach.classify(_REACH_X86, 62, ["decaps"], divs)   # decaps path has no indirect call
+    assert r["complete"] is True and r["indirect_calls"] == 0
+    assert set(r["reachable_divisions"]) == {"poly_compress"}
+
+
+def test_reach_classify_returns_none_when_it_cannot_run():
+    from pq_verify import reach
+    assert reach.classify(_REACH_X86, 62, ["decaps"], None) is None     # no division list
+    assert reach.classify(_REACH_X86, 62, [], {"poly_compress": 1}) is None   # no entries
+    assert reach.classify("", 21, ["decaps"], {"q": 1}) is None          # unknown architecture
+
+
+def test_division_fields_reachability_is_opt_in(tmp_path):
+    import shutil, subprocess
+    from pq_verify import ct_audit as C
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if not (cc and shutil.which("objdump")):
+        pytest.skip("needs a C compiler and objdump")
+    src = tmp_path / "k.c"
+    src.write_text(
+        "__attribute__((noinline)) static int dv(int x,int d){return x/d;}\n"
+        "__attribute__((noinline)) static int deep(int x,int d){return dv(x,d);}\n"
+        "int decaps(int*o,const int*c){*o=deep(c[0],c[1]);return 0;}\n"
+        "int encaps(int*o,int*s,const int*p){*o=p[0];(void)s;return 0;}\n"
+        "int keypair(int*p,const int*s){*p=s[0];return 0;}\n"
+        "int dead(int x,int d){return x/d;}\n")
+    so = tmp_path / "libk.so"
+    subprocess.run([cc, "-O1", "-g", "-fPIC", "-shared", "-o", str(so), str(src)],
+                   check=True, capture_output=True)
+    if C.elf_machine(str(so)) not in C.DIVISION_INSNS:
+        pytest.skip("not an architecture with a known division")
+    # without entries: the listing only, no reachability (backward compatible)
+    assert "division_reachability" not in C.division_fields(str(so))
+    # with the secret-path entries: dv is reachable from decaps, dead is not
+    f = C.division_fields(str(so), entries=["decaps", "encaps"])
+    r = f["division_reachability"]
+    assert "dv" in r["reachable_divisions"] and "dead" not in r["reachable_divisions"]
+    assert "dead" in f["divisions"]                     # still in the full listing
+
+
+def test_reachability_note_and_pqv012_are_review_pointers_not_findings():
+    from pq_verify import ct_audit as C, report
+    # a complete result: no caveat tail
+    ct = {"divisions": {"poly_compress": 1, "rej_sample": 1},
+          "division_reachability": {"reachable_divisions": {"poly_compress": 1},
+                                    "entries": ["decaps"], "entries_missing": [],
+                                    "reached_functions": 4, "indirect_calls": 0,
+                                    "complete": True}}
+    note = C.reachability_note(ct)
+    assert "poly_compress" in note and "1 more present but not reached" in note
+    assert "lower bound" not in note
+    # a lower-bound result: the caveat is spelled out
+    ct["division_reachability"]["complete"] = False
+    assert "lower bound" in C.reachability_note(ct)
+    # no reachability at all -> no note
+    assert C.reachability_note({"divisions": {"q": 1}}) is None
+    # the SARIF side is a note, never a finding, and PQV012 is a note rule
+    assert report.RULES["PQV012"]["level"] == "note"
+    notes = report.sarif_notes_for_ct(ct)
+    assert len(notes) == 1 and notes[0]["rule"] == "PQV012" and notes[0]["fn"] == "poly_compress"
+    assert report.sarif_notes_for_ct({"divisions": {"q": 1}}) == []   # nothing reachable -> nothing
+    doc = report.to_sarif([{"name": "lib.so:ML-KEM-512", "passed": 1, "total": 1,
+                            "findings": ["ML-DSA: forged"], "notes_sarif": notes}],
+                          tool_version="t")
+    res = doc["runs"][0]["results"]
+    levels = {r["ruleId"]: r["level"] for r in res}
+    assert levels["PQV012"] == "note" and levels["PQV008"] == "error"   # both ride, at their own level
+
+
 def test_ct_vendor_rows_and_mutants_are_well_formed():
     mod, _ = _vendor_audit()
     for row in mod.load_table():
         assert set(row["ct"]) == set(row["sets"])
         for m in row.get("ct_mutants", []):
-            assert m["set"] in row["sets"] and set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
+            assert m["set"] in row["sets"]
+            if "reach_adds" in m:
+                # a reachability mutant (a division memcheck cannot see): it
+                # names the functions it makes reachable, not failing stages
+                assert m["reach_adds"] and "fails" not in m
+            else:
+                assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
 
 
 def test_constant_time_catches_a_discarded_secret_table_read(tmp_path):

@@ -473,8 +473,11 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
                 for lk in ct_res["sampling"][op][:3]:
                     print(f"        listed, not judged: {lk['kind']} in {lk['function']}, the "
                           f"function that draws the randomness ({lk['count']})")
-            from .ct_audit import division_note
+            from .ct_audit import division_note, reachability_note
             print(f"        {division_note(ct_res)}")
+            _rn = reachability_note(ct_res)
+            if _rn:
+                print(f"        {_rn}")
             print(f"  n/a   ct:keyGen   {ct_res['not_applicable']['keyGen'][:60]}...")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")

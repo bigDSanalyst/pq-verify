@@ -247,7 +247,29 @@ architecture: the division instructions of x86, x86-64, ARM, AArch64 and
 RISC-V, and the calls it names to the compiler's division routines, which a
 processor without a division instruction uses instead. On any other
 architecture, or without objdump, the report says the list was not made, and
-why, rather than show none. memcheck sees addresses only of the memory
+why, rather than show none.
+
+Of the functions that list names, the report says which are reachable from the
+audited secret-input entry points -- Encaps and Decaps for a KEM, Sign for a
+signature -- because the division a timing reviewer must weigh is one on the
+secret path; one in key generation or dead code is not (KyberSlash was a
+division reachable from Decaps). The call graph is read from the same objdump
+output (`pq_verify/reach.py`), by the calls and tail branches it names; a call
+through a function pointer it cannot name is no edge. So "reachable" is sound --
+a division reported reachable from a secret-input entry really is reachable --
+but "not reached" is only a lower bound, which the report says whenever the
+reachable code makes an unresolved indirect call. This is a review pointer,
+emitted as the note-level SARIF rule `PQV012`, never a verdict: memcheck still
+does not see the division's timing, and a division on public data is harmless
+even on the secret path. The pinned PQClean and liboqs builds of ML-KEM and
+Falcon have no integer division at all, so there is nothing to reach; the gate
+is exercised by a negative control instead. A KyberSlash-class division
+reintroduced into ML-KEM's ciphertext compression -- a variable-time divide by
+q that computes the same value, so every NIST vector still passes -- is caught
+as reachable from Decaps while every constant-time stage stays green: the
+listing sees what memcheck cannot.
+
+memcheck sees addresses only of the memory
 accesses Valgrind translates. By default the translator deletes a load whose value is
 never used, which control 5 showed: a secret-indexed read that the processor
 still performs, and that still moves cache lines, went unreported. Every
