@@ -3,7 +3,23 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.18.0] — 2026-11-14
+
+A feature release. `--audit-contained` scores an ML-KEM library outside the
+process that runs it: a worker loads a sealed copy under a seccomp filter
+that pq-verify confirms before the library is mapped, and answers 40 fresh
+questions besides NIST's vectors. FN-DSA's audit (draft track) now checks
+how a library signs, not only that its signatures verify: Falcon's emulated
+floating point, exactly, function by function; the statistics of 1,000
+signatures, the shape of their covariance included; and, with
+`--constant-time`, signing under Valgrind memcheck, with the branches
+Falcon's signer takes by design matched by source line. PQClean's clean
+Falcon fails that last stage at one site, at both sizes: GCC 13.3 compiles
+`fpr_floor`'s branch-free select into a jump on the sampler's centre, a line
+liboqs's own Valgrind suppressions list as not yet analysed. Seven new FN-DSA
+mutants in the vendor audits are each caught only by the stages written for
+them. No pinned ML-KEM, ML-DSA, SLH-DSA, LMS/XMSS, Classic McEliece or HQC
+result changes.
 
 ### Added
 
