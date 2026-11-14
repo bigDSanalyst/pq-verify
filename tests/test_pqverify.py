@@ -6822,7 +6822,7 @@ def _sampler_checks(acc, asked):
 
 def test_sampler_statistics_pass_an_exact_gaussian():
     res = _sampler_checks(_sampler_acc(_gaussian_rows(2026, 400)), 400)
-    assert set(res) == {"valid", "centred", "scale", "symmetric"}
+    assert set(res) == {"valid", "centred", "scale", "symmetric", "covariance"}
     assert all(ok for ok, _z, _d in res.values()), res
     assert "400 of 400" in res["valid"][2]
 
@@ -6836,11 +6836,25 @@ def test_sampler_statistics_catch_drift_scale_and_asymmetry():
     res = _sampler_checks(_sampler_acc(_gaussian_rows(7, 400, shift=drift)), 400)
     assert not res["centred"][0] and res["centred"][1] > 4 * THRESHOLD
     assert res["scale"][0] and res["symmetric"][0]
+    assert res["covariance"][0]                 # centred: an offset is not a shape
     res = _sampler_checks(_sampler_acc(_gaussian_rows(8, 400, scale=0.96)), 400)
     assert not res["scale"][0] and res["scale"][1] < -4 * THRESHOLD
     assert res["centred"][0] and res["symmetric"][0]
+    assert res["covariance"][0]                 # normalised: a scale is not a shape
     res = _sampler_checks(_sampler_acc(_gaussian_rows(9, 400, flip=0.1)), 400)
     assert not res["symmetric"][0] and res["symmetric"][1] > 4 * THRESHOLD
+
+
+def test_sampler_statistics_catch_a_covariance_of_the_wrong_shape():
+    """s2 that carries 8% of s1: each point of the FFT then has a covariance
+    off the identity, with the centre, the scale and the signs as they
+    were. Only the covariance test sees it."""
+    from pq_verify.fndsa_stats import THRESHOLD
+    rows = [s[:512] + [b + round(0.08 * a) for a, b in zip(s[:512], s[512:])]
+            for s in _gaussian_rows(10, 400)]
+    res = _sampler_checks(_sampler_acc(rows), 400)
+    assert not res["covariance"][0] and res["covariance"][1] > 2 * THRESHOLD, res["covariance"]
+    assert res["centred"][0] and res["scale"][0] and res["symmetric"][0]
 
 
 def test_fndsa_zmul_is_exact_on_both_paths():
@@ -6902,6 +6916,7 @@ def test_sampler_collect_recomputes_s1_and_refuses_what_does_not_verify(monkeypa
     res = _sampler_checks(acc, 120)
     assert res["valid"][0] and acc["count"] == 120 and acc["largest_norm"] > 0
     assert not res["centred"][0] and res["centred"][1] > 1000
+    assert not res["covariance"][0] and "nothing varies" in res["covariance"][2]
     monkeypatch.setattr(St, "_message", lambda i: b"another message " + bytes([i % 256]))
     answers = {1: RuntimeError("signing returned an error"), 2: b"\x31" + sig[1:]}
     acc = St.collect(Signer(lambda i: answers.get(i, sig)), pk, b"", 5)
@@ -6916,9 +6931,9 @@ def test_fndsa_audit_sampler_stage_is_not_applicable_without_a_signer(tmp_path):
     so = _fndsa_shim(tmp_path)
     r = _fndsa_audit(so)
     assert "sampler" not in r["detail"]
-    assert r["not_applicable"]["sampler"] == [4, "no keypair and signing entry points"]
+    assert r["not_applicable"]["sampler"] == [5, "no keypair and signing entry points"]
     r = _fndsa_audit(so, signatures=0)
-    assert r["not_applicable"]["sampler"] == [4, "not asked (--fndsa-signatures 0)"]
+    assert r["not_applicable"]["sampler"] == [5, "not asked (--fndsa-signatures 0)"]
     assert r["sampler"]["signatures_asked"] == 0
 
 
@@ -6941,7 +6956,8 @@ def test_fndsa_report_prints_the_sampler_z_scores(tmp_path, monkeypatch):
     from pq_verify.fndsa_audit import pqverify_audit_fndsa
 
     def stand_in(v, tally, signatures=fndsa_stats.SIGNATURES):
-        zs = {"valid": None, "centred": -0.09, "scale": 0.51, "symmetric": 1.96}
+        zs = {"valid": None, "centred": -0.09, "scale": 0.51, "symmetric": 1.96,
+              "covariance": 0.77}
         for name in fndsa_stats.CHECKS:
             tally.rec("sampler", True, f"{name}: stand-in", "")
         return {"signatures_asked": signatures, "signatures": signatures,
@@ -6957,9 +6973,9 @@ def test_fndsa_report_prints_the_sampler_z_scores(tmp_path, monkeypatch):
     so = _fndsa_shim(tmp_path)
     monkeypatch.setattr(fndsa_stats, "run", stand_in)
     r, out = report(so)
-    assert r["detail"]["sampler"] == (4, 4)
+    assert r["detail"]["sampler"] == (5, 5)
     assert ("sampler: 1000 signatures under one key; centred z = -0.09, "
-            "scale z = +0.51, symmetric z = +1.96 (limit 6)") in out
+            "scale z = +0.51, symmetric z = +1.96, covariance z = +0.77 (limit 6)") in out
     monkeypatch.undo()
     r, out = report(so)                 # the stage did not run: no such line
     assert "sampler" not in r["detail"] and "under one key;" not in out

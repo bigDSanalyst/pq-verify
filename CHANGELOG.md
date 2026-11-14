@@ -93,22 +93,43 @@ versioning](https://semver.org/spec/v2.0.0.html).
   - every signature valid;
   - centred on 0: a chi-square on the 2n per-coefficient means;
   - variance σ², over all the coefficients together;
-  - symmetric.
+  - symmetric;
+  - the shape of the covariance: at each of the n/2 points of the FFT, the
+    centred 2×2 covariance of (s1, s2) must be the identity times the
+    variance. Falcon's sampler stretches no direction when it is right; a
+    sampling tree that stretches some and shrinks others keeps the
+    variance and shows here. The sums behind it are exact, each a
+    Kronecker product.
 
-  Each fails beyond 6 standard deviations. The report prints the three
-  z-scores, and the JSON report gives them under `sampler`. On PQClean's
-  Falcon, 45 keys (39 of FN-DSA-512, 6 of FN-DSA-1024) stayed within 3.3.
-  - **Two new mutants in PQClean's Falcon-512 fail it and nothing else**,
+  Each fails beyond 6 standard deviations; a correct library fails one about
+  three times in 10^8 audits of FN-DSA-512 and twice in 10^8 of FN-DSA-1024.
+  The report prints the z-scores, and the JSON report gives them under
+  `sampler`. On PQClean's Falcon, 65 keys (56 of FN-DSA-512, 9 of
+  FN-DSA-1024) stayed within 3.3 on the first three tests, and 11 within
+  1.7 on the covariance.
+  - **Three new mutants in PQClean's Falcon-512 fail it and nothing else**,
     with signatures that all verify:
     - a sign bit that is 1 with probability 136/256: 53 to 61 standard
       deviations of drift;
-    - a σ 2% low: 21 to 27 below the expected variance.
-  - **Not seen:** a defect that keeps these moments (a base sampler with one
-    row of its table zeroed passes, measured), a covariance of the wrong
-    shape (so does a sampling tree 2% wider on one side and 2% narrower on
-    the other, measured), and a smaller bias than 1,000
+    - a σ 2% low: 21 to 27 below the expected variance, on the scale test
+      alone;
+    - the conditioning coefficient of `ffSampling`'s top level 0.5% too
+      large: 26 to 37 on the covariance test alone, every other test within
+      3.0 (10 keys).
+
+    The vendor tool now also checks which of the stage's tests a mutant
+    fails (`"sampler_checks"`).
+  - **Not seen:** a defect that keeps the first two moments (a base sampler
+    with one row of its table zeroed passes, measured), a covariance off
+    only at particular coefficients, and a smaller bias than 1,000
     signatures resolve (about one point in the sign bit, half a percent in
-    σ). It adds about 10 s to an FN-DSA-512 audit.
+    σ, 0.1% in the conditioning coefficient). It adds about 8 s to an
+    FN-DSA-512 audit and 19 s to an FN-DSA-1024 one.
+- **FN-DSA's exact polynomial products are about four times faster.** The
+  Kronecker product behind s1, the key-generation checks and the covariance
+  packs each coefficient in a 64-bit slot with `struct`, where every
+  coefficient of the product fits in 62 bits, and falls back to the general
+  packing where it does not. A test holds both to the schoolbook product.
 
 ### Changed
 

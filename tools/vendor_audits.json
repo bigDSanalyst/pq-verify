@@ -3836,8 +3836,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ],
           "fpr_scaled": [
             1214,
@@ -3886,8 +3886,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ],
           "fpr_scaled": [
             1214,
@@ -4063,7 +4063,24 @@
           "fails": [
             "sampler"
           ],
-          "only": true
+          "only": true,
+          "sampler_checks": [
+            "scale"
+          ]
+        },
+        {
+          "name": "the signer's top-level conditioning coefficient is 0.5% too large",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/sign.c",
+          "find": "    memcpy(t1, tmp + (n << 1), n * sizeof * tmp);\n    PQCLEAN_FALCON512_CLEAN_poly_mul_fft(tmp, z1, logn);",
+          "replace": "    memcpy(t1, tmp + (n << 1), n * sizeof * tmp);\n    if (logn == orig_logn) {\n        PQCLEAN_FALCON512_CLEAN_poly_mulconst(tmp, fpr_div(fpr_of(1005), fpr_of(1000)), logn);\n    }\n    PQCLEAN_FALCON512_CLEAN_poly_mul_fft(tmp, z1, logn);",
+          "fails": [
+            "sampler"
+          ],
+          "only": true,
+          "sampler_checks": [
+            "covariance"
+          ]
         }
       ]
     },
@@ -4098,8 +4115,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ]
         },
         "FN-DSA-1024": {
@@ -4120,8 +4137,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ]
         }
       },
@@ -4173,8 +4190,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ]
         },
         "FN-DSA-1024": {
@@ -4195,8 +4212,8 @@
             24
           ],
           "sampler": [
-            4,
-            4
+            5,
+            5
           ]
         }
       },

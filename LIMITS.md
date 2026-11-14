@@ -153,24 +153,26 @@ about the library is claimed.
       stages are not applicable, and say so;
     - inputs outside Falcon's own domain: subnormals, infinities, NaNs.
   - **The sampler, through its signatures.** 1,000 signatures under one
-    of the library's keys are tested for centring, symmetry and variance
-    σ² (over all the coefficients together), each to 6 standard
-    deviations. It is a statistical test of
-    the first moments, not of the distribution:
+    of the library's keys are tested for centring, symmetry, variance σ²
+    (over all the coefficients together) and the shape of their
+    covariance (at each point of the FFT), each to 6 standard deviations.
+    It is a statistical test of the first two moments, not of the
+    distribution:
     - a defect that keeps them passes: a base sampler with one row of its
       table zeroed, so that every value above 6 comes out one less (about
       one draw in 4,000), does (measured);
-    - so does a covariance of the wrong shape, since only the variance of
-      all the coefficients together is tested: a sampling tree 2% wider
-      on one side and 2% narrower on the other passed on 4 keys
-      (measured);
+    - so does a covariance off only at particular coefficients, which the
+      FFT averages across its points, and correlation between different
+      points of the FFT;
     - so does a smaller bias than 1,000 signatures resolve: a sign bit
-      within about one point of 1/2, a σ within about half a percent;
+      within about one point of 1/2, a σ within about half a percent,
+      the conditioning coefficient of `ffSampling` 0.1% off;
     - so does one that shows only under other keys, after more signatures,
       or for particular messages;
-    - a correct library fails it about twice in 10^8 audits of FN-DSA-512
-      and once in 10^8 of FN-DSA-1024, mostly on the centring test, whose
-      chi-square has a heavier tail than a normal one.
+    - a correct library fails it about three times in 10^8 audits of
+      FN-DSA-512 and twice in 10^8 of FN-DSA-1024, mostly on the centring
+      and covariance tests, whose chi-squares have a heavier tail than a
+      normal one.
   - **Not checked at all:** the FFT, `ffSampling` as such, and timing.
 - **Classic McEliece.** Encapsulation's error vectors are checked for
   weight, validity and repetition, not for their distribution. A pass says
