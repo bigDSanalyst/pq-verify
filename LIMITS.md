@@ -169,6 +169,14 @@ about the library is claimed.
       the conditioning coefficient of `ffSampling` 0.1% off;
     - so does one that shows only under other keys, after more signatures,
       or for particular messages;
+    - a sampler so wrong that nearly every signature fails the norm bound
+      is seen only through the time limit: signing stalls, and after an
+      hour (`--audit-timeout`) the audit says CANNOT VERIFY, that the
+      library may hang on an input, without naming the sampler and with
+      no stage's result. A sampler with its rejection step removed, and
+      one whose conditioning coefficient was 10% off, did not finish
+      1,000 signatures in 240 s and 400 s, where a correct build takes
+      about 9 s (measured);
     - a correct library fails it about three times in 10^8 audits of
       FN-DSA-512 and twice in 10^8 of FN-DSA-1024, mostly on the centring
       and covariance tests, whose chi-squares have a heavier tail than a
