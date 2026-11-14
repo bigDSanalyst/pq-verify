@@ -112,6 +112,14 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The source audit's log no longer says FAILED for checks that pass.** Each
+  harness ends with a false assertion that must fail, to show that an input
+  reaches the end; the log printed CBMC's word for that, FAILED, in every
+  passing run. It now says `reach REACHED`, and `reach UNREACHED` where the
+  assertion holds and the harness's passes would be vacuous. A run whose
+  every failed property is a conversion recorded as a note says `NOTED`.
+  The verdict, the JSON report and the CI checks are unchanged: they read
+  CBMC's own result.
 - **A harness that dies is noticed even if something holds its output open.**
   A process a harness had started could keep the harness's stdout open after
   the harness died, and pq-verify then waited out the whole per-answer limit

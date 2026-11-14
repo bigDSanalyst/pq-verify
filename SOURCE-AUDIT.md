@@ -252,6 +252,10 @@ A check that cannot fail says nothing, so each one is shown failing first:
 - **Reachability**: a false assertion at the end of each harness must fail,
   with the job's own solver. If it holds, no input reaches the end, the
   harness's assumptions contradict each other, and its passes are vacuous.
+  The log says `reach REACHED` when the assertion fails as it must, and
+  `reach UNREACHED` when it holds; CBMC's own words for these are FAILED and
+  VERIFIED. Likewise a run whose every failed property is a conversion
+  recorded as a note (below) says `NOTED`, not FAILED.
 - **The exhaustive controls**: each comparison is run first on a copy of the
   function or table with one value wrong, and must count it. ML-DSA's run
   over a window around the planted value, its full domains being up to 2³²
