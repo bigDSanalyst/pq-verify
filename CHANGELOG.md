@@ -3,6 +3,15 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **v2.18.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.24217307](https://doi.org/10.5281/zenodo.24217307).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.17.3's; v2.17.4's deposit was never cited here.
+
 ## [2.18.0] — 2026-11-14
 
 A feature release. `--audit-contained` scores an ML-KEM library outside the
