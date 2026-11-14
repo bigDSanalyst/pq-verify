@@ -6594,6 +6594,16 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
     arithmetic = [m for r in rows for m in r["mutants"]
                   if all(s.startswith("fpr_") for s in m["fails"])]
     assert len(arithmetic) == 3 and all(m.get("kat_unchanged") for m in arithmetic)
+    # constant time: every set recorded, a leak fails the stage and only a
+    # leak does, and a planted leak is one the unmodified build does not have
+    for row in rows:
+        assert set(row["ct"]) == set(row["ct_leaks"]) == set(row["sets"]), row["library"]
+        for ps in row["sets"]:
+            assert row["ct"][ps] == {"ct:sign": [int(not row["ct_leaks"][ps]), 1]}
+        for m in row.get("ct_mutants", []):
+            assert m["set"] in row["sets"] and m["leaks_added"] and m.get("only"), m["name"]
+            assert not set(m["leaks_added"]) & set(row["ct_leaks"][m["set"]]), m["name"]
+    assert [len(r.get("ct_mutants", [])) for r in rows] == [1, 0, 0]
     text = (root / "AUDITS.md").read_text()
     published = text.split(mod.FNDSA_BEGIN, 1)[1].split(mod.FNDSA_END, 1)[0].strip()
     assert published == mod.fndsa_markdown(rows).strip(), (

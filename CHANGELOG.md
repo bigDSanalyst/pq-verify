@@ -125,6 +125,39 @@ versioning](https://semver.org/spec/v2.0.0.html).
     signatures resolve (about one point in the sign bit, half a percent in
     σ, 0.1% in the conditioning coefficient). It adds about 8 s to an
     FN-DSA-512 audit and 19 s to an FN-DSA-1024 one.
+- **FN-DSA: constant-time signing (`--audit-fndsa ... --constant-time`,
+  draft track).** Signing runs under Valgrind memcheck with the secret key
+  and the signer's randomness secret, the nonce excepted
+  (`pq_verify/ct_fndsa.py`; CONSTANT-TIME.md, section 8). Falcon's signer
+  branches on secret-derived values by design, and no Falcon implementation
+  declares anything public. So each branch is matched instead, by its
+  function, inlined or not, and the text of its source line, against the
+  sites the signer takes by design: the sampler's rejection, BerExp's lazy
+  comparison, the norm bound, the encoder and the key's validity checks.
+  These are listed, not judged. Any other branch, and any secret memory
+  address, fails. A branch that cannot be matched, for want of debug
+  information or of the source, is CANNOT VERIFY, as is a secret operand
+  memcheck needs public that is neither (a vector shift's count). Key
+  generation is not checked.
+  - **PQClean's Falcon fails it at one site, at both sizes.** GCC 13.3, at
+    every level from `-O1` to `-Os`, inlines `fpr_floor` into the sampler and
+    compiles its branch-free select (`fpr.h:352`) into a jump on the
+    centre's exponent, taken when |centre| < 1/2: 0.13% to 0.61% of the
+    sampler's calls, depending on the key. liboqs's own Valgrind
+    suppressions list the line as not yet analysed. The other ten sites are
+    the by-design ones, which liboqs excuses for the same reasons. A
+    whole-function exemption for the sampler would have passed it. clang 18
+    emits no such jump.
+  - **liboqs's Falcon and padded Falcon pass**, both sizes, running PQClean's
+    AVX2 Falcon on the CPU's floating point.
+  - **A fifteenth PQClean mutant fails constant time and nothing else:**
+    `FPR_NORM64` shifting by 32 bits under an `if`, not a mask. Every other
+    stage passes as on the unmodified code, and PQClean's KAT is unchanged
+    (`"only"`, `"kat_unchanged"`). The vendor tool checks it adds exactly
+    two findings, in `fpr_add` and `fpr_scaled` (`"leaks_added"`).
+  - The FN-DSA rows, and liboqs's default build, now carry debug
+    information (`-g`, which does not change the code); the Classic McEliece
+    builds do not.
 - **FN-DSA's exact polynomial products are about four times faster.** The
   Kronecker product behind s1, the key-generation checks and the covariance
   packs each coefficient in a 64-bit slot with `struct`, where every
