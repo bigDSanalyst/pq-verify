@@ -306,7 +306,10 @@ def build_parser():
                         "--audit-dsa: key generation and signing, judged against the "
                         "library's own declarations of what is public; a library built "
                         "without them and pq-verify's shim is CANNOT VERIFY "
-                        "(CONSTANT-TIME.md). Linux, needs valgrind. Not a measurement "
+                        "(CONSTANT-TIME.md). With --audit-fndsa: signing, with the "
+                        "signer's by-design branches matched by function and source "
+                        "line, so the library needs debug information (-g) and its "
+                        "source in place. Linux, needs valgrind. Not a measurement "
                         "of timing, power or EM")
     p.add_argument("--accumulated", type=int, metavar="N",
                    help="with --audit-kem / --audit-dsa / --audit-harness: run N of C2SP "
@@ -454,7 +457,7 @@ def _main(argv=None):
             ("--fndsa-signatures", args.fndsa_signatures is not None, args.audit_fndsa),
             ("--slhdsa-symbol", args.slhdsa_symbol, args.audit_slhdsa),
             ("--constant-time", args.constant_time,
-             args.audit_kem or args.audit_dsa or args.audit_mceliece),
+             args.audit_kem or args.audit_dsa or args.audit_mceliece or args.audit_fndsa),
             ("--accumulated", args.accumulated is not None,
              args.audit_kem or args.audit_dsa or args.audit_harness
              or args.audit_contained),
@@ -486,7 +489,8 @@ def _main(argv=None):
                        "--hqc-seed": "--audit-hqc",
                        "--accumulated": "--audit-kem, --audit-dsa, --audit-harness or "
                                         "--audit-contained",
-                       "--constant-time": "--audit-kem, --audit-dsa or --audit-mceliece",
+                       "--constant-time": "--audit-kem, --audit-dsa, --audit-fndsa or "
+                                          "--audit-mceliece",
                        "--fresh-key": "--emit-prompt or --verify-response",
                        "--fresh-count": "--fresh-key or --audit-contained",
                        "--fresh-seed": "--audit-contained or --audit-fndsa",
@@ -799,7 +803,7 @@ def _main(argv=None):
             fna_result, _loaded, fna_reason = _isolated(
                 args, "pq_verify.fndsa_audit", "pqverify_audit_fndsa", _p, _ps,
                 symbols=_syms, prefix=args.symbol_prefix, fpr_seed=_fpr_seed,
-                signatures=args.fndsa_signatures)
+                signatures=args.fndsa_signatures, constant_time=args.constant_time)
             _bound = _bind_loaded(fna_artifact, _loaded)
             fna_reason = fna_reason or _bound
             if fna_reason:

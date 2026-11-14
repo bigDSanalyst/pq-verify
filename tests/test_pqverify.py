@@ -2638,7 +2638,9 @@ def test_limits_md_names_every_audit_constant_time_covers():
     from pq_verify import cli
     import inspect
     src = inspect.getsource(cli)
-    allowed = _re.search(r'"--constant-time": "([^"]+)"', src).group(1)
+    # the parent's name may run over lines as adjacent string literals
+    allowed = "".join(_re.findall(r'"([^"]*)"', _re.search(
+        r'"--constant-time": ((?:"[^"]*"\s*)+)', src).group(1)))
     flags = _re.findall(r"--audit-[a-z]+", allowed)
     assert flags, allowed
     text = _doc_text("LIMITS.md")
@@ -6600,6 +6602,227 @@ def test_fndsa_vendor_rows_and_mutants_are_well_formed_and_published():
 
 
 # ----------------------------------------------------------------------
+# FN-DSA constant time (pq_verify.ct_fndsa): signing under memcheck, the
+# signer's by-design branches matched by function and source line.
+# tests/data/ct_fndsa_shim.c signs with one such branch (the sampler's
+# rejection, on PQClean's own line) and plants leaks by -D.
+# ----------------------------------------------------------------------
+
+def _ct_fndsa_shim(tmp_path, define=None, debug=True, keep_source=True):
+    import shutil, subprocess
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        pytest.skip(why)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    src = tmp_path / f"ct_fndsa_shim_{define or 'clean'}.c"
+    shutil.copy(root / "tests" / "data" / "ct_fndsa_shim.c", src)
+    so = tmp_path / f"ctfndsa_{define or 'clean'}{'' if debug else '_nodebug'}.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared",
+                    *(["-g"] if debug else []), *([f"-D{define}"] if define else []),
+                    "-o", str(so), str(src)], check=True, capture_output=True)
+    if not keep_source:
+        src.unlink()
+    return str(so)
+
+
+def _ct_fndsa_run(so):
+    from pq_verify.ct_fndsa import run_fndsa
+    sk = bytes([0x59]) + bytes(i * 7 & 0xFF for i in range(1, 1281))
+    return run_fndsa(so, "FN-DSA-512", "crypto_sign_signature", sk, 809, signatures=2)
+
+
+def test_ct_fndsa_lists_the_signers_own_branch_and_passes(tmp_path):
+    r = _ct_fndsa_run(_ct_fndsa_shim(tmp_path))
+    assert r["stages"] == {"sign": (1, 1)} and not r["leaks"] and not r["unjudged"]
+    assert r["intended"] and all(s["function"] in ("sampler", "BerExp")
+                                 and "rejection" in s["why"] for s in r["intended"])
+    assert r["selftest"] and "keyGen" in r["not_applicable"]
+
+
+def test_ct_fndsa_catches_a_branch_outside_the_signers_sites(tmp_path):
+    r = _ct_fndsa_run(_ct_fndsa_shim(tmp_path, "LEAK_BRANCH"))
+    assert r["stages"] == {"sign": (0, 1)} and r["intended"]
+    (lk,) = r["leaks"]
+    assert (lk["kind"], lk["function"]) == ("branch on a secret", "crypto_sign_signature")
+    assert lk["where"].startswith("ct_fndsa_shim_LEAK_BRANCH.c:")
+
+
+def test_ct_fndsa_catches_a_secret_table_index_with_or_without_debug_information(tmp_path):
+    for debug in (True, False):
+        r = _ct_fndsa_run(_ct_fndsa_shim(tmp_path, "LEAK_INDEX", debug=debug))
+        assert r["stages"] == {"sign": (0, 1)}, debug
+        assert [(lk["kind"], lk["function"]) for lk in r["leaks"]] == [
+            ("secret used as a memory address", "crypto_sign_signature")]
+
+
+def test_ct_fndsa_cannot_verify_without_line_information_or_source(tmp_path):
+    """The signer's own branch is told from a leak by its source line: with
+    no debug information, or the source not where it says, the branch cannot
+    be judged, and the stage says CANNOT VERIFY, not PASS and not FAIL."""
+    for kw, why in (({"debug": False}, "no source line"),
+                    ({"keep_source": False}, "is not readable")):
+        r = _ct_fndsa_run(_ct_fndsa_shim(tmp_path, **kw))
+        assert r["stages"] == {"cannot-verify": (0, 1)} and not r["leaks"], kw
+        assert r["unjudged"] and all(why in u["why"] for u in r["unjudged"]), kw
+
+
+def test_ct_fndsa_refuses_a_signer_that_draws_no_secret_randomness(tmp_path):
+    from pq_verify.ct_audit import Unavailable
+    with pytest.raises(Unavailable, match="no randomness through the driver but the nonce"):
+        _ct_fndsa_run(_ct_fndsa_shim(tmp_path, "NO_SEED"))
+
+
+def test_ct_fndsa_refuses_memcheck_that_deletes_discarded_loads(tmp_path, monkeypatch):
+    from pq_verify import ct_audit
+    so = _ct_fndsa_shim(tmp_path)
+    monkeypatch.setattr(ct_audit, "MEMCHECK", ct_audit.MEMCHECK[:-1])
+    with pytest.raises(ct_audit.Unavailable, match="self-test"):
+        _ct_fndsa_run(so)
+
+
+def test_ct_fndsa_judges_by_function_and_source_line(tmp_path):
+    """No Valgrind: memcheck's XML, written out. A branch is the signer's
+    own only if both its function and its source line are in SITES; the
+    line alone in another function is a finding, as is the branch GCC puts
+    in fpr_floor, inlined into the sampler."""
+    from pq_verify import ct_fndsa as C
+    lines = ["x"] * 12
+    lines[9] = "        if (BerExp(&spc->p, x, ccs)) {"
+    lines[10] = "    } while (!w && i > 0);"
+    lines[11] = "    xi ^= (xi ^ -(int64_t)t) & -(int64_t)((uint32_t)(63 - cc) >> 31);"
+    (tmp_path / "sign.c").write_text("\n".join(lines) + "\n")
+    lib, other = str(tmp_path / "lib.so"), "/usr/lib/libc.so.6"
+
+    def frame(fn, line, obj=lib, file="sign.c"):
+        where = f"<dir>{tmp_path}</dir><file>{file}</file><line>{line}</line>" if line else ""
+        return f"<frame><ip>0x1</ip><obj>{obj}</obj><fn>{fn}</fn>{where}</frame>"
+
+    def err(u, kind, frames, what=""):
+        return (f"<error><unique>{u}</unique><kind>{kind}</kind><what>{what}</what>"
+                f"<stack>{''.join(frames)}</stack></error>")
+    ptr = C._POINTER
+    errors = [
+        err("0x1", "UninitCondition", [frame("PQCLEAN_FALCON512_CLEAN_sampler", 10)]),
+        err("0x2", "UninitCondition", [frame("fpr_floor", 12),
+                                       frame("PQCLEAN_FALCON512_CLEAN_sampler", 10)]),
+        err("0x3", "UninitValue", [frame("PQCLEAN_FALCON512_CLEAN_fpr_add", 12)],
+            f"Use of uninitialised value of size {ptr}"),
+        err("0x4", "UninitValue", [frame("do_sign_dyn", 12)],
+            "Use of uninitialised value of size 1"),
+        err("0x5", "UninitCondition", [frame("ffSampling_fft_dyntree.constprop.0", 11)]),
+        err("0x6", "UninitCondition", [frame("memcmp", 0, obj=other)]),
+        err("0x7", "UninitCondition", [frame("PQCLEAN_FALCON512_CLEAN_comp_encode", 0)]),
+        err("0x8", "Leak_DefinitelyLost", [frame("main", 0, obj=other)]),
+    ]
+    counts = "".join(f"<pair><count>{n}</count><unique>0x{i}</unique></pair>"
+                     for i, n in enumerate((7, 2048, 3, 5, 1, 1, 9, 1), 1))
+    xml = tmp_path / "mc.xml"
+    xml.write_text(f"<valgrindoutput>{''.join(errors)}"
+                   f"<errorcounts>{counts}</errorcounts></valgrindoutput>")
+    intended, findings, unjudged = C.judge(C.parse(str(xml)), lib)
+    assert set(intended) == {("branch", "sampler", "sign.c:10")}
+    assert intended[("branch", "sampler", "sign.c:10")][0] == 7
+    assert set(findings) == {("branch", "fpr_floor", "sign.c:12"),
+                             ("address", "fpr_add", "sign.c:12"),
+                             ("branch", "ffSampling_fft_dyntree", "sign.c:11")}
+    assert findings[("branch", "fpr_floor", "sign.c:12")][0] == 2048
+    assert set(unjudged) == {("operand", "do_sign_dyn", "sign.c:12"),
+                             ("branch", "memcmp", None), ("branch", "comp_encode", None)}
+    assert "not in the library's own code" in unjudged[("branch", "memcmp", None)][1]
+    assert "no source line" in unjudged[("branch", "comp_encode", None)][1]
+
+
+def test_ct_fndsa_sites_are_compared_without_the_namespace():
+    from pq_verify import ct_fndsa as C
+    assert C.normalise("    if (PQCLEAN_FALCONPADDED1024_AVX2_is_short_half(sqn, s2tmp, "
+                       "logn)) {") == "if (is_short_half(sqn, s2tmp, logn)) {"
+    assert ("do_sign_dyn", "if (is_short_half(sqn, s2tmp, logn)) {") in C.SITES
+    assert C._name("PQCLEAN_FALCON512_CLEAN_sampler") == "sampler"
+    assert C._name("ffSampling_fft_dyntree.constprop.0") == "ffSampling_fft_dyntree"
+    assert all(t == C.normalise(t) for _fn, t in C.SITES)
+
+
+def test_fndsa_audit_constant_time_without_a_signer_is_not_applicable(tmp_path):
+    r = _fndsa_audit(_fndsa_shim(tmp_path), constant_time=True)
+    assert r["verified"] and r["status"] == "VERIFIED (draft)"
+    assert not any(s.startswith("ct:") for s in r["detail"])
+    c, why = r["not_applicable"]["ct:sign"]
+    assert c == 1 and "no keypair or signing entry point" in why
+
+
+def _canned_ct(stage, leaks=(), unjudged=()):
+    return {"stages": {stage: (int(stage == "sign" and not leaks), 1)}, "leaks": list(leaks),
+            "unjudged": list(unjudged), "intended": [], "signatures": 4, "policy": "p",
+            "not_applicable": {"keyGen": "k"}, "divisions": {}, "divisions_not_listed": None,
+            "tool": "valgrind-3.22.0", "selftest": True}
+
+
+def test_fndsa_audit_constant_time_cannot_verify_is_not_a_finding(tmp_path, monkeypatch):
+    from pq_verify import fndsa_audit
+    from pq_verify.report import to_json_fndsa_audit
+    why = "no source line for it in the library's debug information"
+    ct = _canned_ct("cannot-verify", unjudged=[{"kind": "branch on a secret",
+                                                "function": "sampler", "where": None,
+                                                "count": 9, "why": why}])
+    monkeypatch.setattr(fndsa_audit, "_constant_time", lambda v: (dict(ct["stages"]), ct))
+    r = _fndsa_audit(_fndsa_shim(tmp_path), constant_time=True)
+    assert r["detail"]["ct:cannot-verify"] == (0, 1)
+    assert not r["verified"] and r["status"] == "CANNOT VERIFY"
+    doc = to_json_fndsa_audit(r, param_set="FN-DSA-512")
+    assert doc["status"] == "CANNOT VERIFY" and doc["constant_time"] is ct
+    assert doc["findings"] == [
+        f"FN-DSA (draft): constant time: cannot verify: branch on a secret in sampler, "
+        f"9 time(s): {why}"]
+    assert "constant_time_checked" not in doc["side_channel"]
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        fndsa_audit.pqverify_audit_fndsa(_fndsa_shim(tmp_path), "FN-DSA-512",
+                                         constant_time=True, signatures=0)
+    assert "CANNOT VERIFY  ct:sign" in out.getvalue() and why in out.getvalue()
+
+
+def test_fndsa_audit_constant_time_leak_is_a_finding(tmp_path, monkeypatch):
+    from pq_verify import fndsa_audit
+    from pq_verify.report import to_json_fndsa_audit
+    ct = _canned_ct("sign", leaks=[{"kind": "branch on a secret", "function": "fpr_floor",
+                                    "where": "fpr.h:352", "count": 4096,
+                                    "why": "not a site the signer takes by design"}])
+    monkeypatch.setattr(fndsa_audit, "_constant_time", lambda v: (dict(ct["stages"]), ct))
+    r = _fndsa_audit(_fndsa_shim(tmp_path), constant_time=True)
+    assert r["detail"]["ct:sign"] == (0, 1) and r["status"] == "FINDINGS PRESENT"
+    doc = to_json_fndsa_audit(r, param_set="FN-DSA-512")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert doc["findings"] == ["FN-DSA (draft): stage ct:sign: memcheck: branch on a "
+                               "secret in fpr_floor (fpr.h:352), 4,096 time(s)"]
+    seen = doc["side_channel"]["constant_time_checked"]
+    assert seen["leak_free"] is False and seen["operations"] == ["sign"]
+
+
+def test_fndsa_constant_time_that_runs_out_of_time_fails_saying_so(monkeypatch):
+    """A signer that hangs under memcheck fails the stage, with the reason;
+    it does not take the rest of the audit down with it."""
+    import subprocess, types
+    from pq_verify import ct_fndsa, fndsa_audit
+
+    def hangs(*a, **kw):
+        raise subprocess.TimeoutExpired(["valgrind"], 900)
+    monkeypatch.setattr(ct_fndsa, "run_fndsa", hangs)
+    v = types.SimpleNamespace(has=lambda role: True, path="lib.so", set="FN-DSA-512",
+                              keypair=lambda: (b"", b"\x59" + bytes(1280)),
+                              sym={"sign": "crypto_sign_signature"}, max_sig=752,
+                              padded_len=666)
+    stages, ct = fndsa_audit._constant_time(v)
+    assert stages == {"unavailable": (0, 1)}
+    assert "did not finish within 900 s" in ct["unavailable"]
+
+
+def test_fndsa_constant_time_flag_is_accepted_with_audit_fndsa():
+    code, out = _cli("--constant-time")
+    assert code == 2 and "--audit-fndsa" in out and "does nothing without" in out
+
+
+# ----------------------------------------------------------------------
 # FN-DSA: Falcon's emulated floating point (pq_verify.fndsa_fpr), the fpr_*
 # stages of --audit-fndsa. tests/data/fpr_stub.c exports the functions under
 # PQClean's names, computed on the CPU's IEEE-754 arithmetic, with the three
@@ -9176,7 +9399,7 @@ def test_mceliece_constant_time_unavailable_is_a_finding():
 
 def test_constant_time_flag_names_every_audit_it_runs_with():
     code, out = _cli("--constant-time", "--acvp")
-    assert code == 2 and "--audit-kem, --audit-dsa or --audit-mceliece" in out
+    assert code == 2 and "--audit-kem, --audit-dsa, --audit-fndsa or --audit-mceliece" in out
 
 
 def test_mceliece_ct_vendor_rows_and_mutants_are_well_formed():
