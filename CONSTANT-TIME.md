@@ -17,7 +17,9 @@ The proof of concept agreed with this text after the five revisions recorded
 below. PQClean's ML-DSA declares nothing public at its pinned commit, so it
 is CANNOT VERIFY, like every other pinned ML-DSA build; judging it would need
 annotations added to its source first. The Classic McEliece port is
-specified in section 6 and not yet built.
+specified in section 6 and not yet built. FN-DSA, whose implementations
+declare nothing public, is judged by where its branches are instead
+(section 8, `pq_verify/ct_fndsa.py`).
 
 - [1. The architectural constraint](#1-the-architectural-constraint)
 - [2. The hook protocol](#2-the-hook-protocol)
@@ -26,6 +28,7 @@ specified in section 6 and not yet built.
 - [5. Scope](#5-scope)
 - [6. The Classic McEliece extension](#6-the-classic-mceliece-extension)
 - [7. What pq-verify cannot do here](#7-what-pq-verify-cannot-do-here)
+- [8. FN-DSA (Falcon)](#8-fn-dsa-falcon)
 - [Proof of concept](#proof-of-concept)
 - [Revisions](#revisions)
 
@@ -299,6 +302,99 @@ hardware, not the source. A clean constant-time report says the compiled
 code does not branch or index memory on secret data except where the
 implementation declared a value public, and that each declaration matched
 the policy. It says nothing more.
+
+## 8. FN-DSA (Falcon)
+
+Falcon's signer, like ML-DSA's, branches on secret-derived values by design.
+No Falcon implementation pinned here declares anything public: PQClean's has
+no annotations, and liboqs's copies have none either. Section 1's constraint
+then applies in full: marking from outside cannot tell those branches from a
+leak. `pq_verify/ct_fndsa.py` tells them apart by where they are.
+
+**What is secret.** The secret key after its header byte, which names the
+set. Every draw of the signer's randomness is secret too, except the 40-byte
+nonce, which the signature carries in clear. The driver takes the place of
+the library's `randombytes()`, as section 6's does, and installs itself
+through liboqs's custom-RNG hook. A signing call that draws nothing secret
+through it is refused: unmarked randomness would hide a leak in the base
+sampler, which reads nothing else. The key pair is the library's own, made
+outside Valgrind, and four messages are signed under memcheck.
+
+**The sites.** Each branch memcheck reports is placed at the innermost frame
+inside the library, inlined or not, and the source line its debug
+information names. The policy is a table of (function, source line) pairs,
+compared without PQClean's namespace prefix and with whitespace collapsed:
+
+| Function | Source line | Why the branch is by design |
+|---|---|---|
+| `sampler` | `if (BerExp(&spc->p, x, ccs)) {` | the rejection: Falcon scales its acceptance probability (ccs) so that the number of tries does not depend on the centre or on σ |
+| `BerExp` | `} while (!w && i > 0);` | the lazy comparison: one more random byte is compared with probability 1/256, whatever the secret |
+| `BerExp` | `return (int)(w >> 31);` | the rejection again: clang folds the sampler's test into BerExp's result and names this line |
+| `do_sign_dyn` | `if (is_short_half(sqn, s2tmp, logn)) {` | the norm bound: an accepted signature's norm follows from the signature and the public key, and a candidate over the bound is discarded |
+| `comp_encode` | four lines: the range check, the sign, the byte loop, the final flush | encoding s2, which the signature carries |
+| `trim_i8_decode` | `if (w == -mask2) {` | decoding the secret key: every valid key takes it the same way |
+| `complete_private` | `if (t2[u] == 0) {` and `if (gi < -127 \|\| gi > +127) {` | recomputing G: every valid key takes both the same way |
+
+For PQClean's clean code, liboqs's own Valgrind suppressions
+(`tests/constant_time/sig/passes/falcon_sign`) excuse the same sites for the
+same reasons. Its AVX2 entry names a line the sampler's test has since moved
+from, and the AVX2 sites fall to its list of issues not yet analysed. The
+table matches the text of a
+line, not its number, so one table holds for PQClean's clean and AVX2 code,
+whose numbers differ, and for liboqs's copies. It matches the function as
+well, so a line does not excuse the same text in another function.
+
+**No function-level exemption.** GCC 13.3 inlines `fpr_floor` into the
+sampler and compiles its branch-free select (`fpr.h:352`) into a conditional
+jump on the centre's exponent. An exemption for the sampler would have
+passed that jump. Matched by line, it is a finding;
+[AUDITS.md](AUDITS.md#fn-dsa-falcon-library-audit--draft-track-with-mutants)
+gives the measurements.
+
+**Verdicts.**
+
+- A branch at a site of the table is listed with its reason and count, not
+  judged.
+- Any other branch is a finding.
+- A secret memory address is a finding wherever it is, with or without debug
+  information: memcheck checks a value of the pointer's size there, and no
+  site is excused for it.
+- A branch that cannot be matched is CANNOT VERIFY: the debug information
+  gives it no source line (the library was built without `-g`, or the
+  compiler gave the instruction none), or the source is not where that
+  information says.
+- A secret operand memcheck needs public that is neither a branch nor an
+  address is CANNOT VERIFY. memcheck checks a vector shift's count, and
+  clang's vectorised rounding loop takes its counts from secret values. On
+  x86-64 such a shift takes the same time whatever its count, but that is a
+  statement about the processor, not something memcheck observed.
+
+**Not checked.** Key generation, which draws (f, g) and rejects them until
+the NTRU equation can be solved. The rejection loop's own balance: that the
+number of tries does not depend on the secret is the design's argument
+(PQClean's comment: the scaling makes the "rejection rate sufficiently
+decorrelated from the Gaussian center and standard deviation"), listed here,
+not verified. Floating-point instructions' timing, where the library computes
+on the CPU's doubles, as liboqs's AVX2 Falcon does: memcheck sees branches and
+addresses, not latency. A branch the compiler attributes to a listed line it
+does not come from would be excused with it. The converse errs the other
+way: a compiler that attributes one of the signer's own branches to another
+line makes it a finding.
+
+**Measured** (x86-64, Valgrind 3.22.0).
+
+| Build | Sites | Verdict |
+|---|---|---|
+| PQClean clean `0586a82`, GCC 13.3 `-O2 -g`, 512 and 1024 | 11: the 10 of the table, and `fpr_floor` (`fpr.h:352`) | fails, on `fpr_floor` |
+| liboqs 0.16.0 `5a1a854`, Falcon and padded Falcon, AVX2 at run time | 10, all of the table | passes |
+| PQClean clean, GCC 13.3 at `-O1`, `-O3`, `-Os` | as at `-O2` | fails, on `fpr_floor` |
+| PQClean clean, clang 18 at `-O1` to `-Os` | no `fpr_floor` jump; an encoder branch clang gives no source line, and at `-O2` and `-O3` vector-shift counts in `fpr_rint`, `fpr_ulsh` and `fpr_ursh` | CANNOT VERIFY |
+
+The control: `FPR_NORM64` shifting by 32 bits under an `if` instead of a mask
+leaves every result bit for bit the same and adds two findings, in `fpr_add`
+and `fpr_scaled`. CI re-runs the rows and the control
+(`tools/vendor_audits.json`). The self-test is the other checks': a branch
+and a discarded secret-indexed read, both of which must be reported.
 
 ---
 

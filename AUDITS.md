@@ -838,18 +838,56 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
     coefficients and its integer arithmetic. Most questions are near
     x = ln 2 and ccs = 1, where a changed coefficient shows most often.
 
+- **Constant time (`--constant-time`, `pq_verify/ct_fndsa.py`):** signing
+  under Valgrind memcheck, four messages, with the secret key (after its
+  header byte) and every draw of the signer's randomness but the 40-byte
+  nonce marked secret; the key pair is the library's own, made outside
+  Valgrind. Falcon's signer branches on secret-derived values by design, so
+  each branch memcheck reports is matched by its function, inlined or not,
+  and the text of its source line against the sites PQClean's signer takes
+  by design: the sampler's rejection and BerExp's lazy comparison, the norm
+  bound, the encoder of s2, and the key's validity checks. Those are listed,
+  not judged. Any other branch, and any secret memory address, fails. A
+  branch that cannot be matched (the debug information gives it no source
+  line, or the source is not where it says) is CANNOT VERIFY, as is a secret
+  operand memcheck needs public that is neither a branch nor an address, a
+  vector shift's count for one. Key generation is not checked: it rejects
+  candidate keys by design.
+
 A wrong-length public key is **not applicable**: neither the NIST API nor
 liboqs takes a key length, so the library would read past the buffer. So are
 the arithmetic stages for liboqs, one line each: the audit binds its
 `OQS_SIG_falcon_*` API, and on a CPU with AVX2 liboqs runs PQClean's AVX2
 Falcon, which computes on the CPU's floating point and exports no `fpr_*`.
 
+**PQClean's Falcon fails constant time, at one site.** Built as the table's
+rows are (GCC 13.3, `-O2 -g`, x86-64), its signer reports memcheck branches
+at eleven sites. Ten are the sites above, which liboqs's own Valgrind
+suppressions excuse for the same reasons
+(`tests/constant_time/sig/passes/falcon_sign`). The eleventh is in
+`fpr_floor` (`fpr.h:352`), which the sampler calls on its centre, once per
+sampled coefficient (1,024 times per FN-DSA-512 signature). Its source is a
+branch-free select:
+`xi ^= (xi ^ -(int64_t)t) & -(int64_t)((uint32_t)(63 - cc) >> 31)`. GCC
+inlines it into the sampler and compiles the select into a conditional jump
+on the centre's exponent, taken when |centre| < 1/2. Over 200 signatures for
+each of five keys per set, that was 0.13% to 0.61% of the sampler's calls,
+a rate that differs from key to key by more than chance. The jump is there
+at `-O1`, `-O2`, `-O3` and `-Os`. clang 18 does not emit it. liboqs lists
+the same line in its known issues (`tests/constant_time/sig/issues/falcon`:
+"This constant time error has not been studied/analysed"), and its portable
+build compiles the same `fpr.h`. Whether the jump's timing can be exploited
+is not something this check says. A whole-function exemption for the
+sampler would have passed it, which is why the sites are matched by line.
+liboqs's rows run its AVX2 Falcon, which has no `fpr_floor` jump: both
+pass.
+
 <!-- vendor-audits-fndsa:begin -->
-| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 10/10 | 38,692/38,692 | 14 | 14/14 | 38,945/38,945 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 42 | 1/1 | 237/237 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 42 | 1/1 | 237/237 **VERIFIED** (draft) |
+| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Constant time | Not applicable | Mutants caught | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 10/10 | 38,692/38,692 | 0/2 | 14 | 15/15 | 38,945/38,947 findings |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 2/2 | 42 | 1/1 | 239/239 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 2/2 | 42 | 1/1 | 239/239 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
@@ -905,6 +943,15 @@ nothing else (`"only"`); their signatures all verify:
 These do change PQClean's known-answer output. They stand for what the KAT
 cannot reach: a library whose signing randomness pq-verify does not control,
 or whose KATs were generated from its own sampler.
+
+One more makes the emulated floating point non-constant-time and nothing
+else: the first step of `FPR_NORM64`, the normalisation `fpr_add` and
+`fpr_scaled` use, shifts by 32 bits under an `if` instead of a mask. Every
+result stays bit for bit the same: every other stage of the audit passes as
+on the unmodified code, and PQClean's NIST KAT and test vectors hash as
+`META.yml` pins them (`"only"`, `"kat_unchanged"`). The constant-time stage
+fails it with two new findings, branches on a secret in `fpr_add` and in
+`fpr_scaled`, on top of the unmodified code's one (`"leaks_added"`).
 
 ## Classic McEliece library audit — not a FIPS standard, with mutants
 
@@ -1293,6 +1340,27 @@ each leaving every output correct:
 | the same build, on a message with a hint-weight rejection | ct:sign fails on position: the signature is declassified in an attempt that was rejected |
 | a table read indexed by a secret coefficient, its value discarded | ct:sign fails: secret used as a memory address in `mld_poly_chknorm_c`. With Valgrind's default translation it passed |
 | `mld_decompose` divides with a hardware division (identical signatures) | passes, as specified: memcheck cannot see timing; the division list names `poly_decompose` and `poly_use_hint` |
+
+**FN-DSA** (draft track; `--audit-fndsa ... --constant-time`,
+[CONSTANT-TIME.md](CONSTANT-TIME.md#8-fn-dsa-falcon)). Falcon declares
+nothing public, and its signer branches on secret-derived values by design,
+so the branches are matched instead: each by the function it is in, inlined
+or not, and the text of the source line its report names, read from the
+file the library's debug information points to. The sites, their reasons,
+and why a whole function is never excused, are in the
+[FN-DSA section](#fn-dsa-falcon-library-audit--draft-track-with-mutants).
+The rows build with debug information (`-g`, which does not change the
+code), and the driver supplies the signer's randomness as it does for
+Classic McEliece.
+
+| Library | Sets | ct:sign | Leaks |
+|---|---|---|---|
+| PQClean clean `0586a82` | 512 / 1024 | 0/2 | a branch on a secret in `fpr_floor` (`fpr.h:352`), at both sizes |
+| liboqs 0.16.0 `5a1a854`, Falcon and padded Falcon (AVX2 at run time) | 512 / 1024 | 2/2 each | none |
+
+| Planted leak | Caught in |
+|---|---|
+| `FPR_NORM64` shifts by 32 bits under an `if`, not a mask (PQClean; every other stage passes, and the KAT is unchanged) | ct:sign, in `fpr_add` and `fpr_scaled` |
 
 ## The contained worker, on the same libraries
 

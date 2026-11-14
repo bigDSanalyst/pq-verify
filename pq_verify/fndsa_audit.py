@@ -28,6 +28,10 @@ checked against pq_verify.fndsa (the reference verifier, itself checked by
                even; fpr_expm_p63 against the reference's ApproxExp, bit for
                bit (pq_verify.fndsa_fpr). Not applicable to a build on the
                CPU's floating point, which exports none of them
+    ct:sign    with --constant-time: signing under Valgrind memcheck; the
+               branches the signer takes by design are matched by function
+               and source line and listed, any other branch or a secret
+               address fails (pq_verify.ct_fndsa, CONSTANT-TIME.md section 8)
 
 Falcon's signatures are randomised (a fresh 40-byte nonce, a Gaussian
 sampler), and there are no final FIPS 206 vectors, so signing is checked for
@@ -484,8 +488,66 @@ def run(v):
     return T
 
 
+def _constant_time(v):
+    """--constant-time: ({stage: (p, t)}, result). Signing under memcheck
+    (pq_verify.ct_fndsa), with a key pair the library made outside Valgrind.
+    Asked for and not run is not a pass: a stage that fails, saying why."""
+    import subprocess
+    from . import ct_fndsa
+    from .ct_audit import Unavailable
+    if not (v.has("sign") and v.has("keypair")):
+        return {}, {"no_signer": "no keypair or signing entry point: there is no "
+                                 "signing to check"}
+    try:
+        _pk, sk = v.keypair()
+        r = ct_fndsa.run_fndsa(v.path, v.set, v.sym["sign"], sk,
+                               max(v.max_sig, v.padded_len) + 64)
+    except subprocess.TimeoutExpired as exc:
+        return ({"unavailable": (0, 1)},
+                {"unavailable": f"signing under memcheck did not finish within "
+                                f"{exc.timeout:g} s"})
+    except (Unavailable, RuntimeError, OSError) as exc:
+        return {"unavailable": (0, 1)}, {"unavailable": str(exc)}
+    return dict(r["stages"]), r
+
+
+def _print_constant_time(ct):
+    from .ct_audit import division_note
+    from .ct_fndsa import describe
+    if "no_signer" in ct:
+        print(f"  n/a   ct:sign      1: {ct['no_signer']}")
+        return
+    if "unavailable" in ct:
+        print(f"  FAIL  ct:sign      0/1   could not run ({ct['unavailable']})")
+        return
+    (stage, (p, t)), = ct["stages"].items()
+    if stage == "cannot-verify":
+        print(f"  CANNOT VERIFY  ct:sign: {ct['signatures']} signatures under memcheck; "
+              f"branches that cannot be matched to the signer's sites")
+    elif p == t:
+        print(f"  PASS  ct:sign      {p}/{t}   {ct['signatures']} signatures under "
+              f"memcheck; no secret-dependent branch or address beyond the signer's own "
+              f"sites")
+    else:
+        print(f"  FAIL  ct:sign      {p}/{t}   {ct['signatures']} signatures under "
+              f"memcheck; secret-dependent behaviour beyond the signer's own sites:")
+    for lk in ct["leaks"][:5]:
+        print(f"        ✗ {describe(lk)}")
+    for u in ct["unjudged"][:5]:
+        print(f"        ? {describe(u)}: {u['why']}")
+    for group in (ct["leaks"], ct["unjudged"]):
+        if len(group) > 5:
+            print(f"        ... and {len(group) - 5} more; see the JSON report")
+    if ct["intended"]:
+        print(f"        by design, listed, not judged ({ct['policy']}):")
+        for s in ct["intended"]:
+            print(f"          {describe(s)}")
+    print(f"  n/a   ct:keyGen    {ct['not_applicable']['keyGen']}")
+    print(f"        {division_note(ct)}")
+
+
 def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=True,
-                         prefix=None, fpr_seed=None, signatures=None):
+                         prefix=None, fpr_seed=None, signatures=None, constant_time=False):
     """Audit a third-party FN-DSA library; see the module docstring.
 
     Returns None when it cannot be audited at all (an ambiguous symbol, or no
@@ -494,7 +556,8 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
     (the arithmetic stages' seed and what they bound). fpr_seed (32 bytes)
     replays an earlier run's arithmetic inputs. signatures: how many the
     sampler stage asks for (default fndsa_stats.SIGNATURES; 0 skips it, as
-    not applicable).
+    not applicable). constant_time: also sign under Valgrind memcheck
+    (pq_verify.ct_fndsa); the result's 'constant_time' holds what it saw.
     """
     from . import fndsa_fpr, fndsa_stats
     from .core import DEGRADED
@@ -525,13 +588,28 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
     fpr = fndsa_fpr.run(v.path, v.exported, v.set, T, prefix=v.prefix, seed=fpr_seed)
     if fpr["reference"] not in (None, "confirmed"):
         DEGRADED["skipped_checks"].append(f"FN-DSA emulated arithmetic ({param_set})")
+    ct = None
+    if constant_time:
+        ct_stages, ct = _constant_time(v)
+        for op, st in ct_stages.items():
+            T.detail["ct:" + op] = st
+        if "no_signer" in ct:
+            T.not_applicable("ct:sign", 1, ct["no_signer"])
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
     verified = p_all == t_all and t_all > 0
+    # Constant time that cannot be judged is CANNOT VERIFY; when nothing else
+    # fails, that is the result, not FINDINGS PRESENT.
+    others_fail = any(p < t for s, (p, t) in T.detail.items() if s != "ct:cannot-verify")
+    status = ("VERIFIED (draft)" if verified else
+              "FINDINGS PRESENT" if t_all and others_fail else "CANNOT VERIFY")
     via = {"verify": v.sym.get("verify"), "reject": v.sym.get("verify"),
            "open": v.sym.get("open"), "keyGen": v.sym.get("keypair"),
            "sign": v.sym.get("sign"), "sampler": v.sym.get("sign")}
+    for s in T.detail:
+        if s.startswith("ct:"):
+            via[s] = v.sym.get("sign")
     impls = fpr["implementations"]
     for op, st in zip(fndsa_fpr.OPS, fndsa_fpr.STAGES):
         names = [i["symbols"][op] for i in impls if op in i["symbols"]]
@@ -567,23 +645,25 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
                   "case; its ApproxExp")
             print(f"         is within {fpr['reference_approx_exp_error'] / 2 ** 63:.1e} "
                   "of ccs exp(-x) on those checked")
+        if ct is not None:
+            _print_constant_time(ct)
         print("=" * 68)
-        status = "VERIFIED (draft)" if verified else (
-            "FINDINGS PRESENT" if t_all else "CANNOT VERIFY")
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
         print(f"  {F.DRAFT_NOTE}")
         print("  Signing is checked for validity, encoding and nonce reuse, not")
         print("  byte-for-byte, and the sampler by the moments of its signatures: a bias")
-        print("  that keeps them passes. Not a side-channel review.")
+        print("  that keeps them passes. " + (
+            "Constant time: branches and addresses only, not timing, power or "
+            "intermediate values." if constant_time else "Not a side-channel review."))
         if impls:
             print("  The emulated arithmetic is checked function by function; the FFT")
             print("  built on it is not.")
         print("=" * 68)
-    return {"verified": verified, "passed": p_all, "total": t_all,
+    return {"verified": verified, "status": status, "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "padded": v.padded, "failures": T.failures, "library": v.path,
             "vectors": F.sources(), "track": "draft", "standard": "FIPS 206 (draft)",
             "symbols": {k: s for k, s in v.sym.items() if s}, "fpr": fpr,
-            "sampler": sampler}
+            "sampler": sampler, "constant_time": ct}

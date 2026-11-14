@@ -638,7 +638,21 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
     p, t = result.get("passed", 0), result.get("total", 0)
     doc["verified"] = bool(result.get("verified"))
     doc["status"] = "VERIFIED" if doc["verified"] else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+        "CANNOT VERIFY" if result.get("status") == "CANNOT VERIFY" or not t
+        else "FINDINGS PRESENT")
+    ct = result.get("constant_time")
+    if ct:
+        doc["constant_time"] = ct
+        if "unavailable" not in ct and "sign" in ct.get("stages", {}):
+            doc["side_channel"]["constant_time_checked"] = {
+                "operations": ["sign"], "tool": ct.get("tool"), "policy": ct.get("policy"),
+                "scope": ("secret-dependent branches and memory addresses in this "
+                          "binary, by Valgrind memcheck taint; a branch at one of the "
+                          "signer's own sites, matched by function and source line, "
+                          "is listed, not judged; not key generation, instruction "
+                          "timing, floating-point latency, power, EM or "
+                          "microarchitecture"),
+                "leak_free": all(p_ == t_ for p_, t_ in ct["stages"].values())}
     doc["calling_convention"] = result.get("abi")
     doc["padded"] = bool(result.get("padded"))
     doc["symbols"] = result.get("symbols", {})
@@ -651,6 +665,20 @@ def to_json_fndsa_audit(result, artifact=None, param_set=None, library=None,
     fails = result.get("failures") or []
     findings = []
     for k, v in (result.get("detail") or {}).items():
+        if k.startswith("ct:") and v[0] != v[1]:
+            from .ct_fndsa import describe
+            ct = ct or {}
+            if "unavailable" in ct:
+                findings.append(f"FN-DSA (draft): constant time: requested but could not "
+                                f"run ({ct['unavailable']})")
+            elif k == "ct:cannot-verify":
+                findings.append("FN-DSA (draft): constant time: cannot verify: "
+                                + "; ".join(f"{describe(u)}: {u['why']}"
+                                            for u in ct.get("unjudged", [])[:3]))
+            else:
+                findings.append("FN-DSA (draft): stage ct:sign: memcheck: "
+                                + "; ".join(describe(lk) for lk in ct.get("leaks", [])[:3]))
+            continue
         if v[0] != v[1]:
             first = next((f for f in fails if f["stage"] == k), None)
             where = f"; first: {first['case']}: {first['detail']}" if first else ""

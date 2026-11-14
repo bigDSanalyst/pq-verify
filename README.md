@@ -385,7 +385,7 @@ output are in [AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AU
 
 | Implementation | What was audited | Result |
 |---|---|---|
-| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,548/1,548 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
+| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track, + constant time); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,548/1,548 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
 | liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
 | mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 240/240; edge cases 4,320/4,320 |
@@ -521,18 +521,32 @@ sampling tree conditions on a coefficient 0.5% too large, still signs
 validly; on every key tried, each failed this by more than 21 standard
 deviations.
 
-PQClean's Falcon passes. Fourteen planted bugs in its source each fail the
-audit in CI. The three arithmetic ones fail only the arithmetic stages, and
-the three sampler ones only the statistics
-([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md)).
+With `--constant-time`, signing also runs under Valgrind memcheck, with the
+secret key and the signer's randomness marked secret. Falcon's signer
+branches on secret-derived values by design, at a few known places: the
+sampler's rejection, the norm bound, the encoder and the key's validity
+checks. Each branch memcheck reports is matched by its function and source
+line against those, read from the library's debug information, and any other
+branch, or any secret memory address, fails. Allowing whole functions would
+not do: GCC 13 inlines `fpr_floor` into the sampler and compiles its
+branch-free select into a jump on the sampler's centre.
+
+PQClean's Falcon passes every stage but that one, which it fails on that
+jump at both sizes; liboqs's own Valgrind suppressions list the same line,
+as not yet analysed. liboqs's AVX2 Falcon, which computes on the CPU's
+floating point, passes it. Fifteen planted bugs in PQClean's source each fail
+the audit in CI. The three arithmetic ones fail only the arithmetic stages,
+the three sampler ones only the statistics, and a branch planted in the
+emulated floating point's normalisation only constant time
+([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md#fn-dsa-falcon-library-audit--draft-track-with-mutants)).
 
 What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
 and lives in one section of `pq_verify/fndsa.py`. Of signing, the emulated
 arithmetic is checked, and the sampler through the first two moments of
-its signatures. The FFT is not, nor a sampler defect that keeps those
-moments
+its signatures. The FFT's results are not (its branches and addresses are,
+with `--constant-time`), nor a sampler defect that keeps those moments
 ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
 
 ---
@@ -694,6 +708,12 @@ build without those declarations is CANNOT VERIFY.
 [CONSTANT-TIME.md](https://github.com/bigDSanalyst/pq-verify/blob/main/CONSTANT-TIME.md) is the specification, with its scope: it
 does not see the values a computation produces, the leak Berzati et al.
 exploited on ML-DSA's signing.
+
+**`--audit-fndsa ... --constant-time` checks FN-DSA's signing.** Falcon
+declares nothing public, so the branches its signer takes by design are
+matched by function and source line instead, which needs the library's
+debug information and its source. That is how it finds the jump GCC 13
+compiles PQClean's `fpr_floor` into. It does not check key generation.
 `--leakage` is not an exception: it is a design input computed from the NTT's
 structure, not an observation of execution.
 
@@ -778,7 +798,8 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 
 **For `--constant-time`:** Valgrind with its headers (`valgrind/memcheck.h`;
 `apt install valgrind`) and a C compiler, which builds the small driver that
-runs the library under memcheck.
+runs the library under memcheck. For FN-DSA, the library also needs its debug
+information (`-g`), and its source where that information says.
 
 **For `--audit-contained`:** Linux on x86-64 with seccomp and `/proc`, and a C
 compiler, which builds the worker when the audit runs. `kyber-py` computes the

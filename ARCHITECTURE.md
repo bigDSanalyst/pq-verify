@@ -448,6 +448,7 @@ pq_verify/
   dsa_audit.py             ML-DSA library audit
   ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
   ct_dsa.py                ML-DSA constant time, judged by the library's declassifications
+  ct_fndsa.py              FN-DSA constant time, the signer's own branches matched by line
   edge.py                  Wycheproof and CCTV edge-case vectors
   accumulated.py           Accumulated vectors: 10 000 random cases, one digest
   fresh.py                 Fresh, unpublished ACVP question sets

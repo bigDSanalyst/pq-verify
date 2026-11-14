@@ -140,8 +140,13 @@ def build_liboqs(src, out_dir, tag="", algs=LIBOQS_ALGS, generic=False, config=N
         shutil.rmtree(bdir)
     target = (["-DOQS_DIST_BUILD=OFF", "-DOQS_OPT_TARGET=generic"] if generic
               else ["-DOQS_DIST_BUILD=ON"])
+    # The default build carries debug information (-g, which does not change
+    # the code): the FN-DSA constant-time rows tell Falcon's own branches
+    # from others by source line. The Classic McEliece builds do not: that
+    # check names the innermost function, which inlined frames would change.
+    debug = ["-DCMAKE_C_FLAGS=-g"] if algs == LIBOQS_ALGS else []
     subprocess.run(["cmake", "-S", str(src), "-B", str(bdir), "-DBUILD_SHARED_LIBS=ON",
-                    "-DOQS_USE_OPENSSL=OFF", "-DOQS_BUILD_ONLY_LIB=ON", *target,
+                    "-DOQS_USE_OPENSSL=OFF", "-DOQS_BUILD_ONLY_LIB=ON", *target, *debug,
                     "-DCMAKE_BUILD_TYPE=Release", f"-DOQS_MINIMAL_BUILD={algs}"],
                    check=True, capture_output=True)
     subprocess.run(["cmake", "--build", str(bdir), "-j", str(os.cpu_count() or 2)],
@@ -411,7 +416,9 @@ def build_hqc(recipe, src, param_set, out_dir, tag=""):
 def build_fndsa(recipe, src, param_set, out_dir, tag=""):
     """Compile one FN-DSA (Falcon) parameter set. Signing draws its nonce
     and seeds from the system RNG: FN-DSA signing is audited for validity,
-    not byte-for-byte, so no randomness harness is linked."""
+    not byte-for-byte, so no randomness harness is linked. With debug
+    information (-g, which does not change the code): the constant-time
+    stage tells the signer's own branches from others by source line."""
     if recipe == "liboqs":
         return build_liboqs(src, out_dir, tag)
     n = param_set.rsplit("-", 1)[1]
@@ -420,7 +427,7 @@ def build_fndsa(recipe, src, param_set, out_dir, tag=""):
     if recipe == "pqclean-falcon":
         d = src / "crypto_sign" / f"falcon-{n}" / "clean"
         common = src / "common"
-        cmd = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared", "-I", str(common),
+        cmd = [os.environ.get("CC", "gcc"), "-O2", "-g", "-fPIC", "-shared", "-I", str(common),
                "-o", str(so), *sorted(str(p) for p in d.glob("*.c")),
                str(common / "fips202.c"), str(common / "randombytes.c")]
     else:
@@ -464,6 +471,24 @@ def falcon_kat_sha256(src, scheme, out_dir, tag=""):
     return out
 
 
+def kat_changes(src, msrc, mutant, out_dir, tag, clean_kat):
+    """None if PQClean's NIST KAT and test-vector generators, built from the
+    mutated tree, print what META.yml pins, as the unmodified tree's do (kept
+    in clean_kat, by scheme); else what differs. A build failure raises."""
+    scheme = mutant["file"].split("/")[1]
+    if scheme not in clean_kat:
+        clean_kat[scheme] = falcon_kat_sha256(src, scheme, out_dir)
+    mutated = falcon_kat_sha256(msrc, scheme, out_dir, tag=tag)
+
+    def short(h):
+        return h if h.startswith("exit") else f"{h[:16]}..."
+    seen = [f"{kind}: {short(mine)} (unmodified {short(clean_kat[scheme][kind][0])}, "
+            f"META.yml {short(str(pinned))})"
+            for kind, (mine, pinned) in mutated.items()
+            if not (pinned and clean_kat[scheme][kind][0] == pinned == mine)]
+    return "; ".join(seen) or None
+
+
 # ─────────────────────────────── audit ───────────────────────────────
 
 def audit_dsa(so, param_set, prefix=None):
@@ -500,6 +525,24 @@ def audit_fndsa(so, param_set, prefix=None):
     return {"results": {k: list(v) for k, v in r["detail"].items()},
             "not_applicable": r["not_applicable_total"],
             "sampler_failed": sorted(k for k, c in checks.items() if not c["ok"])}
+
+
+def audit_ct_fndsa(so, param_set, prefix=None):
+    """--audit-fndsa --constant-time's stage alone: ({stage: [p, t]}, the
+    leaks, the reports that could not be judged), each a "kind in function
+    (file:line)" string."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.fndsa_audit import VendorFNDSA, _constant_time
+    with contextlib.redirect_stdout(io.StringIO()):
+        stages, r = _constant_time(VendorFNDSA(so, param_set, prefix=prefix))
+
+    def site(x):
+        return f"{x['kind']} in {x['function']}" + (f" ({x['where']})" if x["where"] else "")
+    if "unavailable" in r or "no_signer" in r:
+        why = r.get("unavailable") or r["no_signer"]
+        return {f"ct:{k}": list(v) for k, v in stages.items()}, [], [f"not run: {why}"]
+    return ({f"ct:{k}": list(v) for k, v in stages.items()},
+            [site(x) for x in r["leaks"]], [site(x) for x in r["unjudged"]])
 
 
 def audit_slhdsa(so, param_set, prefix=None):
@@ -1076,23 +1119,15 @@ def check_fndsa(rows, workdir):
                 # it. Checked here, not taken on trust: both generators, built
                 # from the mutated tree, must print what META.yml pins, as the
                 # unmodified tree's do.
-                scheme = m["file"].split("/")[1]
                 try:
-                    if scheme not in clean_kat:
-                        clean_kat[scheme] = falcon_kat_sha256(src, scheme, workdir)
-                    mutated = falcon_kat_sha256(msrc, scheme, workdir, tag=f"-fnmut{i}")
+                    seen = kat_changes(src, msrc, m, workdir, f"-fnmut{i}", clean_kat)
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                     print(f"  ERROR  {label}: PQClean's KAT generator: {e}")
                     return 2
-                short = lambda h: h if h.startswith("exit") else f"{h[:16]}..."  # noqa: E731
-                seen = [f"{kind}: {short(mine)} (unmodified {short(clean_kat[scheme][kind][0])}, "
-                        f"META.yml {short(str(pinned))})"
-                        for kind, (mine, pinned) in mutated.items()
-                        if not (pinned and clean_kat[scheme][kind][0] == pinned == mine)]
                 if seen:
                     failures += 1
                     print(f"  DIFF   {label}: recorded as invisible to PQClean's known-answer "
-                          f"tests, but " + "; ".join(seen))
+                          f"tests, but {seen}")
                     continue
                 kat = ("; PQClean's NIST KAT and test vectors unchanged "
                        "(META.yml's sha256)")
@@ -1112,6 +1147,88 @@ def check_fndsa(rows, workdir):
         print(f"\n  {failures} FN-DSA row(s) or mutant(s) differ. Fix the regression, "
               f"or, if intended, update tools/vendor_audits.json and AUDITS.md in "
               f"the same PR and say why.")
+        return 1
+    return 0
+
+
+def check_fndsa_ct(rows, workdir):
+    """FN-DSA rows' constant-time records ("ct", "ct_leaks"): each set's
+    stage as recorded, with the same leaks, and nothing left unjudged. Every
+    "ct_mutants" entry must add the leaks it names to the unmodified build's
+    ("leaks_added"); one marked "only" passes every other stage of the audit
+    as the row records it, and one marked "kat_unchanged" leaves PQClean's
+    known-answer outputs as META.yml pins them."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import available
+    why = available()
+    if why:
+        print(f"  ERROR  FN-DSA constant-time rows cannot run: {why}")
+        return 2
+    failures, clean_kat = 0, {}
+    for row in rows:
+        if "ct" not in row:
+            continue
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        if not (src / ".git").exists():
+            fetch(row["url"], row["commit"], src)
+        base = {}
+        for ps in row["sets"]:
+            label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
+            got, leaks, unjudged = audit_ct_fndsa(build_fndsa(row["build"], src, ps, workdir),
+                                                  ps, prefix_for(row, ps))
+            base[ps] = leaks
+            want = row["ct_leaks"][ps]
+            if got == row["ct"][ps] and leaks == want and not unjudged:
+                print(f"  ok     {label}: " + (f"{len(leaks)} leak(s) as recorded: "
+                                               + "; ".join(leaks) if leaks else
+                                               "no secret-dependent branch or address "
+                                               "beyond the signer's own sites, as recorded"))
+                continue
+            failures += 1
+            print(f"  DIFF   {label}: recorded {row['ct'][ps]} {want}  now {got} {leaks}"
+                  + (f"; not judged: {'; '.join(unjudged)}" if unjudged else ""))
+        for i, m in enumerate(row.get("ct_mutants", [])):
+            label = f"{row['library']} ct mutant {m['name']!r} ({m['set']})"
+            try:
+                msrc = mutate(src, m, Path(workdir) / "mutants" / row["build"])
+                so = build_fndsa(row["build"], msrc, m["set"], workdir, tag=f"-fnctmut{i}")
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got, leaks, unjudged = audit_ct_fndsa(so, m["set"], prefix_for(row, m["set"], m))
+            added = [x for x in leaks if x not in base[m["set"]]]
+            if added != m["leaks_added"] or unjudged:
+                failures += 1
+                print(f"  {'MISSED' if not added else 'DIFF  '} {label}: recorded as adding "
+                      f"{'; '.join(m['leaks_added'])}, added {'; '.join(added) or 'nothing'}"
+                      + (f"; not judged: {'; '.join(unjudged)}" if unjudged else ""))
+                continue
+            note = ""
+            if m.get("only"):
+                # the leak is invisible to every other stage: the reason the
+                # constant-time stage exists
+                rest = audit_fndsa(so, m["set"], prefix_for(row, m["set"], m))
+                if rest is None or rest["results"] != row["results"][m["set"]]:
+                    failures += 1
+                    print(f"  DIFF   {label}: recorded as invisible to every other stage, "
+                          f"but the audit now gives {None if rest is None else rest['results']}")
+                    continue
+                note = "; every other stage passes as the unmodified build does"
+            if m.get("kat_unchanged"):
+                try:
+                    seen = kat_changes(src, msrc, m, workdir, f"-fnctmut{i}", clean_kat)
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    print(f"  ERROR  {label}: PQClean's KAT generator: {e}")
+                    return 2
+                if seen:
+                    failures += 1
+                    print(f"  DIFF   {label}: recorded as invisible to PQClean's known-answer "
+                          f"tests, but {seen}")
+                    continue
+                note += "; PQClean's NIST KAT and test vectors unchanged (META.yml's sha256)"
+            print(f"  caught {label}: adds {'; '.join(added)}{note}")
+    if failures:
+        print(f"\n  {failures} FN-DSA constant-time row(s) or mutant(s) differ.")
         return 1
     return 0
 
@@ -1471,8 +1588,8 @@ def hbs_markdown(rows):
 def fndsa_markdown(rows):
     lines = ["| Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected "
              "| keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) "
-             "| Not applicable | Mutants caught | Result |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| Constant time | Not applicable | Mutants caught | Result |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         def cell(*stages):
             p = sum(row["results"][ps].get(st, [0, 0])[0] for ps in row["sets"] for st in stages)
@@ -1480,17 +1597,19 @@ def fndsa_markdown(rows):
             return f"{p:,}/{t:,}" if t else "n/a"
         arithmetic = sorted({st for ps in row["sets"] for st in row["results"][ps]
                              if st.startswith("fpr_")})
-        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values())
-                for i in (0, 1))
+        ct = row.get("ct") or {}
+        ctp, ctt = (sum(v[i] for ps in ct for v in ct[ps].values()) for i in (0, 1))
+        p, t = (sum(v[i] for ps in row["sets"] for v in row["results"][ps].values()) + c
+                for i, c in ((0, ctp), (1, ctt)))
         na = sum(row["not_applicable"][ps] for ps in row["sets"])
-        muts = row.get("mutants", [])
+        muts = row.get("mutants", []) + row.get("ct_mutants", [])
         sets = " / ".join(s.rsplit("-", 1)[1] for s in row["sets"])
         lines.append(" | ".join([
             f"| {row['library']}",
             f"[`{row['commit'][:7]}`]({row['url']}/commit/{row['commit']}) ({row['date']})",
             sets, cell("verify"), cell("open"), cell("reject"), cell("keyGen"),
             cell("sign"), cell("sampler"), cell(*arithmetic) if arithmetic else "n/a",
-            f"{na:,}",
+            f"{ctp}/{ctt}" if ctt else "—", f"{na:,}",
             f"{len(muts)}/{len(muts)}" if muts else "—",
             f"{p:,}/{t:,} {'**VERIFIED** (draft)' if p == t else 'findings'} |"]))
     return "\n".join(lines)
@@ -1619,6 +1738,7 @@ def main(argv=None):
             code = max(code, check_hbs(hbs_rows, work))
         if a.only in (None, "FN-DSA"):
             code = max(code, check_fndsa(fndsa_rows, work))
+            code = max(code, check_fndsa_ct(fndsa_rows, work))
         if a.only in (None, "McEliece"):
             code = max(code, check_mceliece(mce_rows, work))
             code = max(code, check_mceliece_ct(mce_rows, work))

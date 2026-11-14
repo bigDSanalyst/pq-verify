@@ -4082,6 +4082,43 @@
             "covariance"
           ]
         }
+      ],
+      "ct": {
+        "FN-DSA-512": {
+          "ct:sign": [
+            0,
+            1
+          ]
+        },
+        "FN-DSA-1024": {
+          "ct:sign": [
+            0,
+            1
+          ]
+        }
+      },
+      "ct_leaks": {
+        "FN-DSA-512": [
+          "branch on a secret in fpr_floor (fpr.h:352)"
+        ],
+        "FN-DSA-1024": [
+          "branch on a secret in fpr_floor (fpr.h:352)"
+        ]
+      },
+      "ct_mutants": [
+        {
+          "name": "the emulated floating point normalises with a branch: FPR_NORM64's first step shifts by 32 bits under an if, not a mask",
+          "set": "FN-DSA-512",
+          "file": "crypto_sign/falcon-512/clean/fpr.c",
+          "find": "        nt = (uint32_t)((m) >> 32); \\\n        nt = (nt | -nt) >> 31; \\\n        (m) ^= ((m) ^ ((m) << 32)) & ((uint64_t)nt - 1); \\\n        (e) += (int)(nt << 5); \\\n",
+          "replace": "        if (((m) >> 32) == 0) { \\\n            (m) <<= 32; \\\n        } else { \\\n            (e) += 32; \\\n        } \\\n",
+          "leaks_added": [
+            "branch on a secret in fpr_add (fpr.c:207)",
+            "branch on a secret in fpr_scaled (fpr.c:110)"
+          ],
+          "only": true,
+          "kat_unchanged": true
+        }
       ]
     },
     {
@@ -4157,7 +4194,25 @@
             "reject"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "FN-DSA-512": {
+          "ct:sign": [
+            1,
+            1
+          ]
+        },
+        "FN-DSA-1024": {
+          "ct:sign": [
+            1,
+            1
+          ]
+        }
+      },
+      "ct_leaks": {
+        "FN-DSA-512": [],
+        "FN-DSA-1024": []
+      }
     },
     {
       "library": "liboqs 0.16.0 — Falcon (padded)",
@@ -4232,7 +4287,25 @@
             "reject"
           ]
         }
-      ]
+      ],
+      "ct": {
+        "FN-DSA-512": {
+          "ct:sign": [
+            1,
+            1
+          ]
+        },
+        "FN-DSA-1024": {
+          "ct:sign": [
+            1,
+            1
+          ]
+        }
+      },
+      "ct_leaks": {
+        "FN-DSA-512": [],
+        "FN-DSA-1024": []
+      }
     }
   ],
   "mceliece_audits": [
