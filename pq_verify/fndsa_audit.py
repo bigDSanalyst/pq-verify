@@ -47,6 +47,7 @@ ambiguous role is never guessed (--fndsa-symbol ROLE=SYMBOL).
 """
 import ctypes as _ct
 import re as _re
+import struct as _struct
 from fractions import Fraction as _Fraction
 
 from . import fndsa as F
@@ -234,8 +235,44 @@ KEY_CHECKS = ("f G - g F = q", "||(g, -f)||^2 < 1.17^2 q",
               "||(q f*/D, q g*/D)||^2 < 1.17^2 q")
 
 
+_TOPS = {}
+
+
+def _tops(n):
+    """The top bit of each of n 64-bit slots, as one integer."""
+    t = _TOPS.get(n)
+    if t is None:
+        t = _TOPS[n] = int.from_bytes(b"\0\0\0\0\0\0\0\x80" * n, "little")
+    return t
+
+
 def _zmul(a, b):
-    """a * b in Z[x]/(x^n + 1), exactly (Kronecker substitution)."""
+    """a * b in Z[x]/(x^n + 1), exactly (Kronecker substitution), each
+    coefficient in a 64-bit slot packed and unpacked by struct.
+
+    A coefficient packed as a signed slot, its top bit flipped, is the
+    coefficient plus 2^63; subtracting 2^63 per slot leaves the signed
+    Kronecker value. The product plus 2^63 per slot has every slot c + 2^63,
+    with no borrow between slots while |c| < 2^62; folding x^n = -1 is then
+    the low n slots minus the high n - 1, and the result read back the same
+    way. Wider operands take _zmul_wide."""
+    n = len(a)
+    if n * max(map(abs, a), default=0) * max(map(abs, b), default=0) >= 1 << 62:
+        return _zmul_wide(a, b)
+    try:
+        pa, pb = _struct.pack(f"<{n}q", *a), _struct.pack(f"<{n}q", *b)
+    except _struct.error:
+        return _zmul_wide(a, b)
+    t = _tops(n)
+    prod = (((int.from_bytes(pa, "little") ^ t) - t) * ((int.from_bytes(pb, "little") ^ t) - t)
+            + _tops(2 * n - 1))
+    d = (prod & ((1 << (64 * n)) - 1)) - (prod >> (64 * n)) - (1 << (64 * n - 1))
+    return list(_struct.unpack(f"<{n}q", ((d + t) ^ t).to_bytes(8 * n, "little")))
+
+
+def _zmul_wide(a, b):
+    """a * b in Z[x]/(x^n + 1), exactly (Kronecker substitution), for
+    coefficients of any size: slots as wide as the product needs."""
     n = len(a)
     k = (max(map(abs, a), default=0).bit_length() + max(map(abs, b), default=0).bit_length()
          + n.bit_length() + 2)

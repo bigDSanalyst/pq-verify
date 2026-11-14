@@ -496,8 +496,10 @@ def audit_fndsa(so, param_set, prefix=None):
         r = pqverify_audit_fndsa(so, param_set, verbose=False, prefix=prefix)
     if r is None:
         return None
+    checks = (r.get("sampler") or {}).get("checks", {})
     return {"results": {k: list(v) for k, v in r["detail"].items()},
-            "not_applicable": r["not_applicable_total"]}
+            "not_applicable": r["not_applicable_total"],
+            "sampler_failed": sorted(k for k, c in checks.items() if not c["ok"])}
 
 
 def audit_slhdsa(so, param_set, prefix=None):
@@ -999,8 +1001,9 @@ def check_hbs(rows, workdir):
 def check_fndsa(rows, workdir):
     """FN-DSA (draft track): each row's sets as recorded, and every mutant
     failed in the stages it names. A mutant marked "only" passes every other
-    stage; one marked "kat_unchanged" leaves the output of PQClean's NIST KAT
-    and test-vector generators as its META.yml pins them."""
+    stage; one with "sampler_checks" fails exactly those of the sampler
+    stage's checks; one marked "kat_unchanged" leaves the output of PQClean's
+    NIST KAT and test-vector generators as its META.yml pins them."""
     failures = 0
     clean_kat = {}
     for row in rows:
@@ -1021,7 +1024,9 @@ def check_fndsa(rows, workdir):
             got = audit_fndsa(so, ps, prefix_for(row, ps))
             want = {"results": row["results"][ps],
                     "not_applicable": row["not_applicable"][ps]}
-            if got == want:
+            # what is recorded, nothing else: the audit also says which sampler
+            # checks failed, for the mutants
+            if got is not None and all(got[k] == v for k, v in want.items()):
                 p, t = total(got["results"])
                 print(f"  ok     {label}: {p}/{t}, {got['not_applicable']} n/a, as recorded")
                 continue
@@ -1055,6 +1060,16 @@ def check_fndsa(rows, workdir):
             # the stages it names exist. A mutant another stage also catches
             # no longer shows that.
             extra = [s for s in bad if s not in m["fails"]] if m.get("only") else []
+            # "sampler_checks": which of the sampler stage's checks see it,
+            # so that a mutant planted for one check shows that check works
+            which = ""
+            if got is not None and not missed and "sampler_checks" in m:
+                which = f" ({', '.join(got['sampler_failed']) or 'no check'})"
+                if got["sampler_failed"] != sorted(m["sampler_checks"]):
+                    failures += 1
+                    print(f"  DIFF   {label}: the sampler stage failed{which}, recorded as "
+                          f"failing {', '.join(sorted(m['sampler_checks']))}")
+                    continue
             kat = ""
             if got is not None and not missed and not extra and m.get("kat_unchanged"):
                 # The point of such a mutant: the known-answer tests cannot see
@@ -1082,7 +1097,7 @@ def check_fndsa(rows, workdir):
                 kat = ("; PQClean's NIST KAT and test vectors unchanged "
                        "(META.yml's sha256)")
             if got is not None and not missed and not extra:
-                print(f"  caught {label}: fails {', '.join(bad)}"
+                print(f"  caught {label}: fails {', '.join(bad)}{which}"
                       + ("; every other stage passes" if m.get("only") else "") + kat)
                 continue
             failures += 1

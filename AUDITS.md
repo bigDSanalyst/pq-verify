@@ -815,15 +815,16 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   messages under one key from the library's own keypair
   (`pq_verify/fndsa_stats.py`). For each, s1 is recomputed exactly; the
   2n coefficients of all of them must be centred on 0 (a chi-square on the
-  2n means), of variance σ² taken over all of them, and symmetric, each
-  within 6 standard deviations of what an exact sampler gives. A biased
-  sampler still signs validly: this is the stage that sees one. On
-  PQClean's Falcon, 45 keys stayed within 3.3 standard deviations. A
-  defect that keeps these moments passes: a base sampler with one row of
-  its table zeroed, so that every value above 6 comes out one less (about
-  one draw in 4,000), does (measured). So does a covariance of the wrong
-  shape: a sampling tree 2% wider on one side and 2% narrower on the other
-  passed on 4 keys (measured).
+  2n means), of variance σ² taken over all of them, and symmetric, and at
+  each of the n/2 points of the FFT the centred 2×2 covariance of
+  (s1, s2) must be the identity times the variance (from exact sums, each
+  a Kronecker product). Each is held within 6 standard deviations of what
+  an exact sampler gives. A biased sampler still signs validly: this is
+  the stage that sees one. On PQClean's Falcon, 65 keys stayed within 3.3
+  standard deviations on the first three tests, and 11 within 1.7 on the
+  covariance. A defect that keeps the first two moments passes: a base
+  sampler with one row of its table zeroed, so that every value above 6
+  comes out one less (about one draw in 4,000), does (measured, 8 keys).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report
@@ -846,9 +847,9 @@ Falcon, which computes on the CPU's floating point and exports no `fpr_*`.
 <!-- vendor-audits-fndsa:begin -->
 | Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Not applicable | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 8/8 | 38,692/38,692 | 14 | 13/13 | 38,943/38,943 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 8/8 | n/a | 42 | 1/1 | 235/235 **VERIFIED** (draft) |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 10/10 | 38,692/38,692 | 14 | 14/14 | 38,945/38,945 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 42 | 1/1 | 237/237 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 42 | 1/1 | 237/237 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
@@ -887,12 +888,19 @@ this:
 The coefficient mutant stays within 2^-50 of the true value, so only the
 bit-for-bit comparison catches it.
 
-Two more change the sampler, and fail the signature statistics and nothing
-else (`"only"`); their signatures all verify:
+Three more change the sampler, and fail the signature statistics and
+nothing else (`"only"`); their signatures all verify:
 - the sampler's sign bit is 1 with probability 136/256, not 1/2: the
-  coefficient means drift by 53 to 61 standard deviations (9 keys);
+  coefficient means drift by 53 to 61 standard deviations (10 keys);
 - the signer draws with a σ 2% low: the variance sits 21 to 27 below
-  (8 keys).
+  (9 keys), and it fails the scale test alone (`"sampler_checks"`);
+- the top-level conditioning coefficient of `ffSampling` (the `l10` it
+  adds to the first half's target) is 0.5% too large: the covariance is
+  26 to 37 standard deviations off and every other test within 3.0
+  (10 keys); it fails the covariance test alone. Every leaf's σ is
+  untouched, so the sampler stays within its own preconditions. A 10%
+  error makes nearly every signature exceed the norm bound, and signing
+  stalls.
 
 These do change PQClean's known-answer output. They stand for what the KAT
 cannot reach: a library whose signing randomness pq-verify does not control,
