@@ -2419,7 +2419,7 @@ import re as _re
 
 _REPO = _pathlib.Path(__file__).resolve().parent.parent
 _DOCS = ("README.md", "QUICKSTART.md", "ARCHITECTURE.md", "HYBRID.md", "LIMITS.md",
-         "EVIDENCE.md", "SOURCE-AUDIT.md")
+         "EVIDENCE.md", "SOURCE-AUDIT.md", "docs/SCHEMES.md")
 
 
 def _doc_text(name):

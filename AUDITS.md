@@ -19,6 +19,49 @@ it, is in [EVIDENCE.md](EVIDENCE.md).
 
 ---
 
+## By library
+
+pq-verify has been run against the upstream projects below, with negative
+controls that correctly fail. Four have findings, each named in the table:
+PQClean's ML-KEM accepts NIST's invalid keys, xmss-reference has two
+key-state defects, the HQC submitters' AVX2 Reed–Muller decoder has two
+defects, and GCC 13.3's build of PQClean's clean Falcon branches on a secret.
+The rest verify clean. Exact commits, build commands and per-check output are
+in the sections below.
+
+| Implementation | What was audited | Result |
+|---|---|---|
+| liboqs 0.16.0, per implementation: its `OQS_*` API and each backend behind it | **full scheme** ML-KEM (+ constant time), ML-DSA and SLH-DSA, + Wycheproof/CCTV; FN-DSA (draft track, + constant time); 17 mutants, in liboqs's wrappers and in each backend | ML-KEM 4,569/4,569 per implementation; ML-DSA 1,068/1,068 through its public API, 1,548/1,548 through each backend; SLH-DSA 2,088/2,088 through its public API; every mutant caught |
+| liboqs (`mlkem-native` / `mldsa-native`) | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
+| PQClean | NTT symbol, ML-KEM + ML-DSA | 3/3 each |
+| mlkem-native ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | 240/240; edge cases 4,320/4,320 |
+| PQClean ML-KEM-512/768/1024 | **full scheme** + NIST's invalid keys + Wycheproof/CCTV edge cases | every valid output byte-exact; accepts all 30 of NIST's invalid keys (15 encapsulation, 15 decapsulation) and all 2,931 CCTV/Wycheproof invalid encapsulation keys |
+| mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, and every pre-hash function's verifier (NIST's vectors check three of twelve), + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 4 mutants and 6 constant-time controls | 1,542/1,542; constant time 6/6; every mutant and control as specified |
+| pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
+| PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
+| PQClean Falcon FN-DSA-512/1024 (draft track) | verify, malformed signatures, keyGen and signing; Falcon's emulated floating point, exactly; the statistics of 1,000 signatures; **constant-time signing**; 15 mutants | 38,945/38,947: every check passes but constant time, at one site: GCC 13.3 compiles `fpr_floor`'s branch-free select into a branch on the sampler's secret centre (below); every mutant caught |
+| Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness (no external μ or 256-byte contexts, which the harness protocol cannot carry): NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 4,755/4,755; ML-DSA 1,368/1,368; every mutant caught |
+| slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
+| cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
+| XMSS/xmss-reference (XMSS, XMSS^MT) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 6 mutants | 579/584: every vector passes; **two key-state defects** — the last leaf returns success with an invalid signature, and XMSS^MT h=40 keys never refuse (below); every mutant caught |
+| pq-crystals reference | NTT symbol, Kyber + Dilithium | 3/3 each |
+| BoringSSL | in-tree NIST vectors (NTT not exported) | 50/50 byte-exact |
+| PQClean Classic McEliece, and liboqs 0.16.0's through its API (AVX2 and clean backends), all 10 parameter sets (not a FIPS standard) | keys regenerated from their seed, its ciphertexts decoded, crafted ciphertexts against its own key, padding, **constant-time Encaps and Decaps**; 24 mutants, including liboqs's wrapper and 7 planted leaks | 404/404 each; constant time 20/20 each; every mutant caught |
+| PQClean HQC and the submitters' code (v5.0.0 and next-release; reference and AVX2), HQC-1/3/5 (standard not final) | the **code layer**: encoders, both decoders on built vectors, whole received words, and the inner decoder against its own symmetries with no reference decoder; 10 mutants | references 9,836/9,836; **the AVX2 Reed–Muller decoder has two defects**: it decodes some blocks inside the radius to the farther codeword, and it breaks under GCC `-O2` (strict aliasing) (below); the symmetry check finds both on its own; every mutant caught |
+
+The **full scheme** rows drive the library's own code with every NIST ACVP
+vector for the scheme and Wycheproof's edge cases: `--audit-kem` for ML-KEM,
+`--audit-dsa` for ML-DSA. `--audit-slhdsa` does the same for SLH-DSA with
+NIST's vectors and refusal checks of its own; no Wycheproof or CCTV SLH-DSA
+vectors are pinned. The NTT-level rows check the transform against an
+independently computed FIPS reference.
+
+Every pinned library also carries **mutants**, one planted bug each, which CI
+requires the audit to fail; how `--audit-dsa` reaches each FIPS 204 interface,
+and randomised APIs, is in [ARCHITECTURE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#how---audit-dsa-reaches-each-interface).
+
+---
+
 ## Summary
 
 | Implementation | Scheme | Method | Result |

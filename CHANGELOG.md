@@ -36,6 +36,13 @@ report says so.
 
 ### Changed
 
+- **A shorter README** (901 lines to 763). A table at the top says which
+  document answers which question. The table of audited implementations moved
+  to AUDITS.md (*By library*), and the FN-DSA, Classic McEliece and HQC
+  sections to `docs/SCHEMES.md`, whose flags the documentation tests now check.
+  The README's summary of findings now counts four libraries, not three: it
+  had left out the branch on a secret that GCC 13.3 puts in PQClean's Falcon,
+  which 2.18.0 reported, and AUDITS.md's table gains that row.
 - **v2.18.0 has its own Zenodo deposit**,
   [10.5281/zenodo.24217307](https://doi.org/10.5281/zenodo.24217307).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
