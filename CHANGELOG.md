@@ -3,7 +3,20 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.19.0] — 2026-11-15
+
+A feature release. `--constant-time` now says which of a library's integer
+divisions are reachable from the entry points that take secrets (Encaps and
+Decaps, or Sign), by a call graph read from objdump. memcheck cannot see
+instruction timing, so a division on the secret path is the one a timing
+reviewer has to weigh; the report marks it as the note-level SARIF rule
+`PQV012`, a pointer for review and not a verdict. The pinned PQClean and
+liboqs builds of ML-KEM and Falcon contain no integer division, so the gate
+is exercised by a planted one: a KyberSlash-class division put back into
+ML-KEM-512's ciphertext compression is reported reachable from Decaps while
+every memcheck stage and every NIST vector still passes. A call through a
+function pointer is not resolved, so "not reached" is a lower bound, and the
+report says so.
 
 ### Added
 
