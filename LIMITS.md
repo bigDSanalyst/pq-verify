@@ -185,7 +185,7 @@ about the library is claimed.
 - **Classic McEliece.** Encapsulation's error vectors are checked for
   weight, validity and repetition, not for their distribution. A pass says
   the library computes the scheme exactly, not that the scheme or a
-  parameter set is secure ([README](README.md#not-a-fips-standard-classic-mceliece)).
+  parameter set is secure ([README](docs/SCHEMES.md#not-a-fips-standard-classic-mceliece)).
 - **HQC.** The code layer only: the Reed–Solomon and Reed–Muller encoders and
   decoders. Not the KEM around it (key generation, encryption, sampling,
   hashing), and not constant time. Its rm-symmetry stage certifies that the

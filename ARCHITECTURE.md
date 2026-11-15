@@ -67,7 +67,7 @@ PQC evidence.
 
 | Track | Checks | What it verifies today | Being realigned toward |
 |---|---|---|---|
-| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](README.md#draft-track-fn-dsa-fips-206)). Correctness checks for the NTT side-channel countermeasures `--leakage` allocates: a masked NTT (run on each arithmetic share) and a shuffled one (each layer's butterflies in random order) must still compute the FIPS 203/204 transform. Nothing checks them yet |
+| **PQC** | 54 | ML-KEM/ML-DSA NTTs in their native fields, FIPS 203/204 zetas, FIPS 203/204/205 parameters, Freivalds, keygen/roundtrip, Coq NTT certificate | FN-DSA (draft FIPS 206): the Z_q engine now checks its NTT mod 12289 under `--fndsa` ([draft track](docs/SCHEMES.md#draft-track-fn-dsa-fips-206)). Correctness checks for the NTT side-channel countermeasures `--leakage` allocates: a masked NTT (run on each arithmetic share) and a shuffled one (each layer's butterflies in random order) must still compute the FIPS 203/204 transform. Nothing checks them yet |
 | Harness | 13 | solver soundness (UNSAT), reproducibility hash, Coq daemon, adversarial and malformed inputs | — |
 | Classical | 45 | GF(2) solving and null spaces, AES S-box affine structure, elliptic-curve point counts with certificates ([ECC.md](docs/ECC.md)) and the singular, anomalous and supersingular curves they reveal, SafeCurves-style screening | **HQC** (arithmetic over GF(2)[x]/(xⁿ−1)), **Classic McEliece** (systematic-form public keys over GF(2), GF(2ᵐ) fields). Classic McEliece is audited today (`--audit-mceliece`) in exact Python integers: the GF(2) engine holds at most 2048 variables and returns solutions, not the reduced matrix a public key is, so it is not used there yet. HQC's code layer is audited (`--audit-hqc`) by `pq_verify/hqc.py`, also in exact Python: GF(2⁸) tables, Reed–Solomon over it, and a Walsh–Hadamard maximum-likelihood decoder for RM(1,7). The curve checks have no PQC target: hybrid KEMs are checked by `--verify-hybrid`, which does not use them |
 | Research | 48 | Engine 6 (Gauss–Manin connections, Paper 7 [1]), CFL/DQBF pipeline, conformity gradient | standards constraints as SAT/QBF obligations (the CFL/DQBF pipeline). Engine 6 and the conformity gradient have no PQC target yet |
@@ -484,9 +484,10 @@ tools/                     Vendor audits, vector pinning, the re-pinning doctor
 pyproject.toml             Build config + console-script entry point
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
-sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.18.0)
-docs/                      CFL.md, DQBF.md, ECC.md, SEA.md: the research and classical
-                           engines; REPINNING.md: updating the pinned NIST vectors
+sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.19.0)
+docs/                      SCHEMES.md: FN-DSA, Classic McEliece and HQC; CFL.md,
+                           DQBF.md, ECC.md, SEA.md: the research and classical engines;
+                           REPINNING.md: updating the pinned NIST vectors
 README.md / QUICKSTART.md / ARCHITECTURE.md / HYBRID.md / AUDITS.md / LIMITS.md
 EVIDENCE.md / CONSTANT-TIME.md / SOURCE-AUDIT.md / SECURITY.md / CHANGELOG.md / LICENSE /
 CITATION.cff

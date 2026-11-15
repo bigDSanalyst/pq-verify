@@ -3,7 +3,20 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.19.0] — 2026-11-15
+
+A feature release. `--constant-time` now says which of a library's integer
+divisions are reachable from the entry points that take secrets (Encaps and
+Decaps, or Sign), by a call graph read from objdump. memcheck cannot see
+instruction timing, so a division on the secret path is the one a timing
+reviewer has to weigh; the report marks it as the note-level SARIF rule
+`PQV012`, a pointer for review and not a verdict. The pinned PQClean and
+liboqs builds of ML-KEM and Falcon contain no integer division, so the gate
+is exercised by a planted one: a KyberSlash-class division put back into
+ML-KEM-512's ciphertext compression is reported reachable from Decaps while
+every memcheck stage and every NIST vector still passes. A call through a
+function pointer is not resolved, so "not reached" is a lower bound, and the
+report says so.
 
 ### Added
 
@@ -23,6 +36,13 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A shorter README** (901 lines to 763). A table at the top says which
+  document answers which question. The table of audited implementations moved
+  to AUDITS.md (*By library*), and the FN-DSA, Classic McEliece and HQC
+  sections to `docs/SCHEMES.md`, whose flags the documentation tests now check.
+  The README's summary of findings now counts four libraries, not three: it
+  had left out the branch on a secret that GCC 13.3 puts in PQClean's Falcon,
+  which 2.18.0 reported, and AUDITS.md's table gains that row.
 - **v2.18.0 has its own Zenodo deposit**,
   [10.5281/zenodo.24217307](https://doi.org/10.5281/zenodo.24217307).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
