@@ -3,6 +3,15 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **v2.19.0 has its own Zenodo deposit**,
+  [10.5281/zenodo.24239295](https://doi.org/10.5281/zenodo.24239295).
+  CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
+  name it, replacing v2.18.0's.
+
 ## [2.19.0] — 2026-11-15
 
 A feature release. `--constant-time` now says which of a library's integer
