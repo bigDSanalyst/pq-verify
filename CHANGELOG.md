@@ -7,6 +7,17 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The README leads with what pq-verify finds in libraries.** Its Results
+  list now starts with the four findings in pinned upstream code. The
+  self-suite count and the per-layer protection allocation, which describe
+  pq-verify's own checks and its research side, moved lower (the allocation
+  to *Scope*). A paragraph under the introduction says the code is written
+  with AI assistance and where the evidence for its claims is.
+- **CITATION.cff lists one reference**, the verification-pipeline paper. The
+  three maths papers behind the research engines stay credited in
+  ARCHITECTURE.md and `pq_verify/core.py`.
+- **LIMITS.md says fault injection and masked implementations are not
+  checked.**
 - **v2.19.0 has its own Zenodo deposit**,
   [10.5281/zenodo.24239295](https://doi.org/10.5281/zenodo.24239295).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry
