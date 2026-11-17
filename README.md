@@ -21,6 +21,12 @@ Results are evidence toward FIPS 140-3 / CMVP readiness and CNSA 2.0, not a cert
 
 It is a verification tool, not a cryptographic library to deploy: it checks the implementations that do the work, from liboqs and Bouncy Castle to your own code; [those audited so far](#implementations-pq-verify-has-audited) are listed below.
 
+pq-verify is written with AI assistance (Claude) and directed by its
+maintainer. None of its claims rest on that: the pinned-library audits in
+[AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md) are re-run by CI, with planted bugs they must
+catch, and [EVIDENCE.md](https://github.com/bigDSanalyst/pq-verify/blob/main/EVIDENCE.md) gives the command and the CI job
+behind each claim, and lists what CI does not re-run.
+
 ## Which document to read
 
 | To | Read |
@@ -49,10 +55,6 @@ Layers of an audit:
 | **Parameters** | What does the lattice estimator give these parameters? | ML-KEM: the lattice-estimator's primal-uSVP cost, pinned; custom parameters: a calibrated primal-uSVP + hybrid estimate. Not a cryptanalysis ([limits](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#parameter-security)) |
 | **Composition** | Do the two halves of a hybrid agreement fit together? | RFC 10024 component order, offsets and lengths, per group |
 
-Plus per-layer algebraic protection allocation: which NTT layers are worth
-masking, computed from the transform's structure. That is a design input, not
-a measurement — see [Scope](#scope).
-
 Every result is **reproducible**: the vectors are pinned by SHA-256, a report
 on a library names that file by its SHA-256, and your own auditors can re-run
 it.
@@ -61,12 +63,13 @@ it.
 
 ## Results
 
-- **160/160** self-test across 6 field-native engines, of which **54 verify
-  PQC directly**; the others check the harness itself or are classical and
-  research engines, never counted as PQC evidence
-  ([how the checks are tracked](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#engines-and-where-they-are-heading)).
-  A check whose optional dependency is missing reports `⊘ SKIPPED`, never a
-  pass and never a failure
+- **In real libraries**: four findings in pinned upstream code — PQClean's
+  ML-KEM accepts NIST's invalid keys; xmss-reference has two key-state
+  defects; the HQC submitters' AVX2 Reed–Muller decoder has two defects; and
+  PQClean's Falcon, built with GCC 13.3, branches on a secret in `fpr_floor`,
+  a line whose source has no branch — and every planted bug caught, in each
+  library audited
+  ([which libraries, and how to reproduce each result](#implementations-pq-verify-has-audited))
 - **NIST ACVP**, every vector passing: ML-KEM 240/240, ML-DSA 615/615,
   SLH-DSA 1248/1248 across all 12 parameter sets, LMS 87/87. The default run
   (`--acvp-all`) checks 1566 of them; SLH-DSA's 624 sigGen vectors run with
@@ -78,6 +81,12 @@ it.
   reductions stay in bound, over every input in range. They are about the
   algorithms as written in Coq, not about compiled code; the rest is tested
   ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#proofs-and-tests))
+- **pq-verify's own self-suite, 160/160**, across 6 field-native engines, of which **54 verify
+  PQC directly**; the others check the harness itself or are classical and
+  research engines, never counted as PQC evidence
+  ([how the checks are tracked](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#engines-and-where-they-are-heading)).
+  A check whose optional dependency is missing reports `⊘ SKIPPED`, never a
+  pass and never a failure
 
 All of it on commodity hardware (Google Colab CPU); each item in full, with
 the native full-KEM, non-circular KAT and lattice-estimator results, is in
@@ -521,6 +530,11 @@ the [Quick start](#quick-start); what is checked, and how, is in
 pq-verify verifies the **algebraic substance** of ML-KEM/ML-DSA (NTT, module-LWE relations, parameter security) natively in Z₃₃₂₉ / Z₈₃₈₀₄₁₇. The **non-algebraic layers** (SHAKE/SHA3 hashing, sampling, compression, the FO transform) are bit/byte operations verified by NIST ACVP end-to-end testing, not native field solving.
 
 The forward NTTs and the modular reductions are proved in Coq, over every input in range. Everything else, end to end, is tested byte for byte against NIST's pinned vectors, which shows agreement on those inputs, not on every input ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#proofs-and-tests)). Each claim here says which of the two it rests on.
+
+pq-verify also prints a per-layer algebraic protection allocation: which NTT
+layers would expose the secret if observed, computed from the transform's
+structure. That is a design input for masking, not a measurement of any
+implementation.
 
 Everything pq-verify does not check — schemes, side channels, parameter
 security, which paths are proved and which are only tested — is collected in

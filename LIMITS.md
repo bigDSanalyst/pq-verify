@@ -236,6 +236,15 @@ and code path described above
 which layers would expose the secret if observed, as an input to masking
 design.
 
+Fault injection and masked implementations are not checked. pq-verify does
+not simulate faults (an instruction skipped, a glitched comparison, a flipped
+bit) or check what a library does under one, so it says nothing about the
+fault resistance of an implicit-rejection comparison or of a signature's norm
+check. Nor does it check masked or otherwise side-channel-protected
+implementations: their functional equivalence and probing security need such
+an implementation to test, and tools built for it. The allocation `--leakage`
+prints is a design input, not a check of any implementation.
+
 ## Parameter security
 
 `pqverify_params` is not a cryptanalysis.
