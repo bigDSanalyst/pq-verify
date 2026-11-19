@@ -61,7 +61,8 @@ Gaussian signatures give the covariance's z a mean of +0.08 +- 0.10 and a
 standard deviation of 0.94 (80 runs of FN-DSA-512). Simulated audits of
 independent D_{Z,sigma} coefficients give the shape's z a mean of -0.21
 and a standard deviation of 1.01, its upper tail lighter than a normal
-one's: 46 of 4,000,000 runs of FN-DSA-512 passed 4, against 127.
+one's: 46 of 4,000,000 runs of FN-DSA-512 passed 4, against 127, and 30
+of 2,000,000 of FN-DSA-1024, against 63.
 
 On PQClean's Falcon-512 with 1,000 signatures, four planted defects still
 sign validly:
