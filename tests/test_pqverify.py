@@ -7055,9 +7055,10 @@ def _sampler_checks(acc, asked):
 
 def test_sampler_statistics_pass_an_exact_gaussian():
     res = _sampler_checks(_sampler_acc(_gaussian_rows(2026, 400)), 400)
-    assert set(res) == {"valid", "centred", "scale", "symmetric", "covariance"}
+    assert set(res) == {"valid", "centred", "scale", "symmetric", "covariance", "shape"}
     assert all(ok for ok, _z, _d in res.values()), res
     assert "400 of 400" in res["valid"][2]
+    assert "s1: chi-square" in res["shape"][2] and "(24 bins)" in res["shape"][2]
 
 
 def test_sampler_statistics_catch_drift_scale_and_asymmetry():
@@ -7070,12 +7071,15 @@ def test_sampler_statistics_catch_drift_scale_and_asymmetry():
     assert not res["centred"][0] and res["centred"][1] > 4 * THRESHOLD
     assert res["scale"][0] and res["symmetric"][0]
     assert res["covariance"][0]                 # centred: an offset is not a shape
+    assert res["shape"][0]
     res = _sampler_checks(_sampler_acc(_gaussian_rows(8, 400, scale=0.96)), 400)
     assert not res["scale"][0] and res["scale"][1] < -4 * THRESHOLD
     assert res["centred"][0] and res["symmetric"][0]
     assert res["covariance"][0]                 # normalised: a scale is not a shape
+    assert res["shape"][0]                      # nor to the shape test: sigma is fitted
     res = _sampler_checks(_sampler_acc(_gaussian_rows(9, 400, flip=0.1)), 400)
     assert not res["symmetric"][0] and res["symmetric"][1] > 4 * THRESHOLD
+    assert res["shape"][0]                      # |x|: a sign is not a shape
 
 
 def test_sampler_statistics_catch_a_covariance_of_the_wrong_shape():
@@ -7088,9 +7092,73 @@ def test_sampler_statistics_catch_a_covariance_of_the_wrong_shape():
     res = _sampler_checks(_sampler_acc(rows), 400)
     assert not res["covariance"][0] and res["covariance"][1] > 2 * THRESHOLD, res["covariance"]
     assert res["centred"][0] and res["scale"][0] and res["symmetric"][0]
+    assert res["shape"][0]          # s2 is still Gaussian, of a slightly larger variance
 
 
-def test_fndsa_zmul_is_exact_on_both_paths():
+def test_sampler_shape_catches_a_signer_that_redraws_on_a_bound():
+    """A signer that redraws whenever some |s2| exceeds 547 (3.3 sigma, where
+    the format allows 2047): a third of its signatures are drawn again, and
+    those it keeps lie inside the norm bound, centred, symmetric and
+    spherical, with a variance 0.3% low -- within the scale test's noise
+    at 400 signatures. The tail of |s2| is gone, and only the shape test
+    sees it, pointing there."""
+    import random
+    from pq_verify.fndsa_stats import SIGMA, THRESHOLD
+    rng = random.Random(11)
+    sigma, rows = SIGMA[9], []
+    while len(rows) < 400:
+        s = [round(rng.gauss(0, sigma)) for _ in range(1024)]
+        if max(abs(x) for x in s[512:]) <= 547:
+            rows.append(s)
+    res = _sampler_checks(_sampler_acc(rows), 400)
+    assert not res["shape"][0] and res["shape"][1] > 1.5 * THRESHOLD, res["shape"]
+    assert all(res[k][0] for k in ("valid", "centred", "scale", "symmetric", "covariance")), res
+    import re
+    m = re.search(r"furthest from it: \d+ <= \|s2\| < \d+ \(([\d.]+) to [\d.]+ sigma\), "
+                  r"([\d,]+) where ([\d,.]+) were expected", res["shape"][2])
+    assert m, res["shape"][2]           # a bin of |s2|, in the tail, short of its share
+    assert float(m[1]) >= 3.0 and int(m[2].replace(",", "")) < float(m[3].replace(",", ""))
+
+
+def test_sampler_shape_catches_a_distribution_of_the_wrong_shape():
+    """Laplace coefficients of the right variance: centred, symmetric,
+    spherical and of the right scale, so every other test passes; the shape
+    test fails by more than a hundred standard deviations."""
+    import random
+    from pq_verify.fndsa_stats import SIGMA, THRESHOLD
+    rng = random.Random(12)
+    b = SIGMA[9] / 2 ** 0.5             # Var(b (E1 - E2)) = 2 b^2 = sigma^2
+    rows = [[round(b * (rng.expovariate(1) - rng.expovariate(1))) for _ in range(1024)]
+            for _ in range(400)]
+    res = _sampler_checks(_sampler_acc(rows), 400)
+    assert not res["shape"][0] and res["shape"][1] > 15 * THRESHOLD, res["shape"]
+    assert all(res[k][0] for k in ("valid", "centred", "scale", "symmetric", "covariance")), res
+
+
+def test_sampler_shape_bins_and_its_normal_score():
+    """The bins: as many of equal probability as SHAPE_BINS, the top one
+    halved while each half keeps SHAPE_TAIL expected draws (less part of one
+    where an edge rounds to an integer), edges strictly
+    increasing, probabilities summing to 1; a tiny sigma gets fewer bins,
+    not an error. Wilson and Hilferty's score sits within 0.06 below the
+    exact normal score at 6, on the safe side: at the chi-square's exact
+    upper 9.87e-10 point (computed with mpmath) it gives 5.94 to 5.96."""
+    import math
+    from pq_verify.fndsa_stats import (SHAPE_BINS, SHAPE_TAIL, SIGMA, shape_bins,
+                                       wilson_hilferty)
+    for logn, total, halvings in ((9, 512_000, 9), (10, 1_024_000, 10), (9, 51_200, 6)):
+        edges, probs = shape_bins(SIGMA[logn], total)
+        assert len(probs) == SHAPE_BINS + halvings, (logn, total)
+        assert all(a < b for a, b in zip(edges, edges[1:]))
+        assert abs(math.fsum(probs) - 1) < 1e-12
+        assert all(abs(p - 1 / SHAPE_BINS) < 0.006 for p in probs[:SHAPE_BINS - 1])
+        assert SHAPE_TAIL - 1 < total * probs[-1] < 2 * SHAPE_TAIL     # integer edges
+    edges, probs = shape_bins(0.6, 10_000)
+    assert 2 <= len(probs) < SHAPE_BINS and abs(math.fsum(probs) - 1) < 1e-12
+    for df, exact in ((40, 118.721767139), (48, 131.723796677), (50, 134.909994992),
+                      (64, 156.641331877)):
+        assert 5.93 < wilson_hilferty(exact, df) < 6.0, df
+    assert abs(wilson_hilferty(48, 48) - (2 / (9 * 48)) ** 0.5) < 1e-12   # its mean: ~0
     """_zmul packs 64-bit slots with struct while every coefficient of the
     product is below 2^62, and otherwise takes the general packing: both
     must equal the schoolbook product, at the boundary and past it."""
@@ -7150,6 +7218,7 @@ def test_sampler_collect_recomputes_s1_and_refuses_what_does_not_verify(monkeypa
     assert res["valid"][0] and acc["count"] == 120 and acc["largest_norm"] > 0
     assert not res["centred"][0] and res["centred"][1] > 1000
     assert not res["covariance"][0] and "nothing varies" in res["covariance"][2]
+    assert not res["shape"][0]          # one signature's histogram, 120 times over
     monkeypatch.setattr(St, "_message", lambda i: b"another message " + bytes([i % 256]))
     answers = {1: RuntimeError("signing returned an error"), 2: b"\x31" + sig[1:]}
     acc = St.collect(Signer(lambda i: answers.get(i, sig)), pk, b"", 5)
@@ -7157,16 +7226,16 @@ def test_sampler_collect_recomputes_s1_and_refuses_what_does_not_verify(monkeypa
     assert acc["count"] == 0 and acc["invalid"] == 5
     assert not res["valid"][0] and "signing returned an error" in res["valid"][2]
     assert all(not res[k][0] and "too few" in res[k][2]
-               for k in ("centred", "scale", "symmetric"))
+               for k in ("centred", "scale", "symmetric", "covariance", "shape"))
 
 
 def test_fndsa_audit_sampler_stage_is_not_applicable_without_a_signer(tmp_path):
     so = _fndsa_shim(tmp_path)
     r = _fndsa_audit(so)
     assert "sampler" not in r["detail"]
-    assert r["not_applicable"]["sampler"] == [5, "no keypair and signing entry points"]
+    assert r["not_applicable"]["sampler"] == [6, "no keypair and signing entry points"]
     r = _fndsa_audit(so, signatures=0)
-    assert r["not_applicable"]["sampler"] == [5, "not asked (--fndsa-signatures 0)"]
+    assert r["not_applicable"]["sampler"] == [6, "not asked (--fndsa-signatures 0)"]
     assert r["sampler"]["signatures_asked"] == 0
 
 
@@ -7190,7 +7259,7 @@ def test_fndsa_report_prints_the_sampler_z_scores(tmp_path, monkeypatch):
 
     def stand_in(v, tally, signatures=fndsa_stats.SIGNATURES):
         zs = {"valid": None, "centred": -0.09, "scale": 0.51, "symmetric": 1.96,
-              "covariance": 0.77}
+              "covariance": 0.77, "shape": -0.42}
         for name in fndsa_stats.CHECKS:
             tally.rec("sampler", True, f"{name}: stand-in", "")
         return {"signatures_asked": signatures, "signatures": signatures,
@@ -7206,9 +7275,10 @@ def test_fndsa_report_prints_the_sampler_z_scores(tmp_path, monkeypatch):
     so = _fndsa_shim(tmp_path)
     monkeypatch.setattr(fndsa_stats, "run", stand_in)
     r, out = report(so)
-    assert r["detail"]["sampler"] == (5, 5)
+    assert r["detail"]["sampler"] == (6, 6)
     assert ("sampler: 1000 signatures under one key; centred z = -0.09, "
-            "scale z = +0.51, symmetric z = +1.96, covariance z = +0.77 (limit 6)") in out
+            "scale z = +0.51, symmetric z = +1.96, covariance z = +0.77, "
+            "shape z = -0.42 (limit 6)") in out
     monkeypatch.undo()
     r, out = report(so)                 # the stage did not run: no such line
     assert "sampler" not in r["detail"] and "under one key;" not in out

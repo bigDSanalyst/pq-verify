@@ -41,11 +41,14 @@ KAT output byte for byte the same.
 
 Its sampler is checked by its output: 1,000 signatures under one of the
 library's keys must be centred on 0, symmetric, of variance σ² over all
-their coefficients, and of the right covariance shape at every point of the
-FFT. A sampler whose sign bit leans 53:47, whose σ is 2% low, or whose
-sampling tree conditions on a coefficient 0.5% too large, still signs
-validly; on every key tried, each failed this by more than 21 standard
-deviations.
+their coefficients, of the right covariance shape at every point of the
+FFT, and distributed as the discrete Gaussian. A sampler whose sign bit
+leans 53:47, whose σ is 2% low, or whose sampling tree conditions on a
+coefficient 0.5% too large, still signs validly; on every key tried, each
+failed this by more than 21 standard deviations. A signer that redraws
+whenever a coefficient of s2 passes 3.6σ also signs validly, its variance
+within the scale test's limit; the distribution test fails it by more than
+7 standard deviations.
 
 With `--constant-time`, signing also runs under Valgrind memcheck, with the
 secret key and the signer's randomness marked secret. Falcon's signer
@@ -60,9 +63,9 @@ branch-free select into a jump on the sampler's centre.
 PQClean's Falcon passes every stage but that one, which it fails on that
 jump at both sizes; liboqs's own Valgrind suppressions list the same line,
 as not yet analysed. liboqs's AVX2 Falcon, which computes on the CPU's
-floating point, passes it. Fifteen planted bugs in PQClean's source each fail
+floating point, passes it. Sixteen planted bugs in PQClean's source each fail
 the audit in CI. The three arithmetic ones fail only the arithmetic stages,
-the three sampler ones only the statistics, and a branch planted in the
+the four sampler ones only the statistics, and a branch planted in the
 emulated floating point's normalisation only constant time
 ([AUDITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/AUDITS.md#fn-dsa-falcon-library-audit--draft-track-with-mutants)).
 
@@ -70,9 +73,9 @@ What is checked is Falcon round 3, the scheme FIPS 206 standardises.
 Verification is integer arithmetic that the final standard is not expected to
 change; framing (headers, padding, how a context string is bound) may change,
 and lives in one section of `pq_verify/fndsa.py`. Of signing, the emulated
-arithmetic is checked, and the sampler through the first two moments of
-its signatures. The FFT's results are not (its branches and addresses are,
-with `--constant-time`), nor a sampler defect that keeps those moments
+arithmetic is checked, and the sampler through the statistics of its
+signatures. The FFT's results are not (its branches and addresses are,
+with `--constant-time`), nor a sampler defect its signatures average away
 ([LIMITS.md](https://github.com/bigDSanalyst/pq-verify/blob/main/LIMITS.md#within-a-covered-scheme)).
 
 ---
