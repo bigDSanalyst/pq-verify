@@ -39,7 +39,7 @@ in the sections below.
 | mldsa-native ML-DSA-44/65/87 | **full scheme**: keyGen, sigGen and sigVer over internal, pure, pre-hash and external μ, and every pre-hash function's verifier (NIST's vectors check three of twelve), + Wycheproof; **constant-time key generation and signing**, judged against its own declassifications; 4 mutants and 6 constant-time controls | 1,542/1,542; constant time 6/6; every mutant and control as specified |
 | pq-crystals dilithium ref ML-DSA-44/65/87 | **full scheme** (no external-μ API) + Wycheproof; 6 mutants | 1,338/1,338; every mutant caught |
 | PQClean ML-DSA-44/65/87 | **full scheme** (pure ML-DSA only) + Wycheproof; 1 mutant | 1,068/1,068; the mutant caught |
-| PQClean Falcon FN-DSA-512/1024 (draft track) | verify, malformed signatures, keyGen and signing; Falcon's emulated floating point, exactly; the statistics of 1,000 signatures; **constant-time signing**; 15 mutants | 38,945/38,947: every check passes but constant time, at one site: GCC 13.3 compiles `fpr_floor`'s branch-free select into a branch on the sampler's secret centre (below); every mutant caught |
+| PQClean Falcon FN-DSA-512/1024 (draft track) | verify, malformed signatures, keyGen and signing; Falcon's emulated floating point, exactly; the statistics of 1,000 signatures; **constant-time signing**; 16 mutants | 38,947/38,949: every check passes but constant time, at one site: GCC 13.3 compiles `fpr_floor`'s branch-free select into a branch on the sampler's secret centre (below); every mutant caught |
 | Bouncy Castle 1.86 (Java) ML-KEM-512/768/1024 and ML-DSA-44/65/87 | **full scheme** through pq-verify's own harness (no external μ or 256-byte contexts, which the harness protocol cannot carry): NIST's vectors byte-exact, NIST's invalid keys, Wycheproof/CCTV, and every pre-hash function's verifier; 5 mutants planted in its own sources | ML-KEM 4,755/4,755; ML-DSA 1,368/1,368; every mutant caught |
 | slhdsa-c SLH-DSA, all 12 parameter sets | **full scheme**: keyGen (seeded and through its own RBG callback), sigGen and sigVer over internal, pure and pre-hash, and every pre-hash function's verifier (NIST's vectors check two of twelve); refusals of over-long contexts, unknown hash names and a failed RBG; 13 mutants | 1,740/1,740; every mutant caught |
 | cisco/hash-sigs (LMS/HSS) | verify, keyGen, sigGen byte-exact, malformed signatures, **key state**; 5 mutants | 686/686; every mutant caught |
@@ -858,16 +858,21 @@ final FIPS 206, and it is not part of any FIPS 203/204/205 result.
   messages under one key from the library's own keypair
   (`pq_verify/fndsa_stats.py`). For each, s1 is recomputed exactly; the
   2n coefficients of all of them must be centred on 0 (a chi-square on the
-  2n means), of variance σ² taken over all of them, and symmetric, and at
+  2n means), of variance σ² taken over all of them, and symmetric; at
   each of the n/2 points of the FFT the centred 2×2 covariance of
   (s1, s2) must be the identity times the variance (from exact sums, each
-  a Kronecker product). Each is held within 6 standard deviations of what
-  an exact sampler gives. A biased sampler still signs validly: this is
-  the stage that sees one. On PQClean's Falcon, 65 keys stayed within 3.3
-  standard deviations on the first three tests, and 11 within 1.7 on the
-  covariance. A defect that keeps the first two moments passes: a base
-  sampler with one row of its table zeroed, so that every value above 6
-  comes out one less (about one draw in 4,000), does (measured, 8 keys).
+  a Kronecker product); and |s1| and |s2| must each follow the discrete
+  Gaussian of their own variance (a chi-square over 25 bins, 26 for
+  FN-DSA-1024, the far tail in bins of its own). Each is held within 6
+  standard deviations of what an exact sampler gives. A biased sampler
+  still signs validly: this is the stage that sees one. On PQClean's
+  Falcon, 149 keys stayed within 3.7 standard deviations on the first
+  three tests, the 95 run with the covariance test within 3.1 on it, and
+  the 84 run with the distribution test within 2.3 on it. A defect inside
+  the sampler that the signing basis averages away passes: a base sampler
+  with one row of its table zeroed, so that every value above 6 comes out
+  one less (about one draw in 4,000), passes every test, the
+  distribution's included (measured, 16 keys).
 - **Emulated arithmetic (`fpr_*`):** where the library exports Falcon's
   emulation of binary64 (`pq_verify/fndsa_fpr.py`), each function is asked
   1,214 to 10,006 questions from Falcon's domain, from a seed the report
@@ -928,9 +933,9 @@ pass.
 <!-- vendor-audits-fndsa:begin -->
 | Library | Commit | Sets | Verify (pinned) | Open (pinned) | Malformed rejected | keyGen | sign | Signature statistics | Emulated arithmetic (fpr_*) | Constant time | Not applicable | Mutants caught | Result |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 10/10 | 38,692/38,692 | 0/2 | 14 | 15/15 | 38,945/38,947 findings |
-| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 2/2 | 42 | 1/1 | 239/239 **VERIFIED** (draft) |
-| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 10/10 | n/a | 2/2 | 42 | 1/1 | 239/239 **VERIFIED** (draft) |
+| PQClean clean | [`0586a82`](https://github.com/PQClean/PQClean/commit/0586a824fc0d49df0b6b6e9179d8d15d06d0974f) (2026-08-04) | 512 / 1024 | 14/14 | 16/16 | 135/135 | 30/30 | 48/48 | 12/12 | 38,692/38,692 | 0/2 | 14 | 16/16 | 38,947/38,949 findings |
+| liboqs 0.16.0 — Falcon | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 12/12 | n/a | 2/2 | 42 | 1/1 | 241/241 **VERIFIED** (draft) |
+| liboqs 0.16.0 — Falcon (padded) | [`5a1a854`](https://github.com/open-quantum-safe/liboqs/commit/5a1a854b0dc9f2141bdc771c555ee60c37950183) (2026-07-09) | 512 / 1024 | 14/14 | n/a | 135/135 | 30/30 | 48/48 | 12/12 | n/a | 2/2 | 42 | 1/1 | 241/241 **VERIFIED** (draft) |
 <!-- vendor-audits-fndsa:end -->
 
 Every mutant plants one bug class in PQClean's source; CI requires the audit
@@ -969,19 +974,27 @@ this:
 The coefficient mutant stays within 2^-50 of the true value, so only the
 bit-for-bit comparison catches it.
 
-Three more change the sampler, and fail the signature statistics and
+Four more change the sampler, and fail the signature statistics and
 nothing else (`"only"`); their signatures all verify:
 - the sampler's sign bit is 1 with probability 136/256, not 1/2: the
-  coefficient means drift by 53 to 61 standard deviations (10 keys);
+  coefficient means drift by 51 to 62 standard deviations (20 keys);
 - the signer draws with a σ 2% low: the variance sits 21 to 27 below
-  (9 keys), and it fails the scale test alone (`"sampler_checks"`);
+  (18 keys), and it fails the scale test alone (`"sampler_checks"`);
 - the top-level conditioning coefficient of `ffSampling` (the `l10` it
   adds to the first half's target) is 0.5% too large: the covariance is
-  26 to 37 standard deviations off and every other test within 3.0
-  (10 keys); it fails the covariance test alone. Every leaf's σ is
-  untouched, so the sampler stays within its own preconditions. A 10%
-  error makes nearly every signature exceed the norm bound, and signing
-  stalls.
+  22 to 40 standard deviations off and the centring, scale and symmetry
+  tests within 3.0 (20 keys); it fails the covariance test alone. Every
+  leaf's σ is untouched, so the sampler stays within its own
+  preconditions. A 10% error makes nearly every signature exceed the norm
+  bound, and signing stalls.
+- the signer's shortness test also refuses any coefficient of s2 beyond
+  ±597 (3.6σ, where the encoding allows ±2047), so one signature in seven
+  is drawn again: the tail of |s2| is gone while its variance is only
+  about half a percent low, and the distribution test alone fails it, at
+  7.5 to 9.1 standard deviations (20 keys).
+
+The distribution test, run on half the keys of the first three (29), saw
+none of them: it stayed within 2.0.
 
 These do change PQClean's known-answer output. They stand for what the KAT
 cannot reach: a library whose signing randomness pq-verify does not control,

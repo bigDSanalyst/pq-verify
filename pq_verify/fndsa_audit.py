@@ -20,8 +20,10 @@ checked against pq_verify.fndsa (the reference verifier, itself checked by
                and in range, and no nonce repeats
     sampler    N more signatures (1,000 by default) under one vendor key:
                every one valid, and their coefficients centred, of variance
-               sigma^2 and symmetric, within 6 standard deviations of what an
-               exact sampler gives (pq_verify.fndsa_stats)
+               sigma^2, symmetric, spherical at every point of the FFT, and
+               distributed as the discrete Gaussian, each within 6 standard
+               deviations of what an exact sampler gives
+               (pq_verify.fndsa_stats)
     fpr_*      Falcon's emulated floating point, when the library exports it
                (PQClean's and the reference's clean builds): fpr_scaled, add,
                mul, div and sqrt against exact rounding to nearest, ties to
@@ -37,9 +39,10 @@ Falcon's signatures are randomised (a fresh 40-byte nonce, a Gaussian
 sampler), and there are no final FIPS 206 vectors, so signing is checked for
 what every valid signature must satisfy, not byte-for-byte. A signer that
 reuses a nonce, or emits a vector outside the norm bound or a non-canonical
-encoding, fails. A sampler biased in the signatures' first two moments fails
-the sampler stage; one biased in a way that keeps them would not, and the
-report says so.
+encoding, fails. A sampler whose bias shows in its signatures' coefficients,
+in their first two moments or in their distribution, fails the sampler stage;
+a defect inside the sampler that the signing basis averages away would not,
+and the report says so.
 
 Calling conventions, by symbol name:
   nist   the NIST API, as PQClean and Falcon's reference export it:
@@ -655,8 +658,8 @@ def pqverify_audit_fndsa(so_path, param_set="FN-DSA-512", symbols=None, verbose=
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
         print(f"  {F.DRAFT_NOTE}")
         print("  Signing is checked for validity, encoding and nonce reuse, not")
-        print("  byte-for-byte, and the sampler by the moments of its signatures: a bias")
-        print("  that keeps them passes. " + (
+        print("  byte-for-byte, and the sampler by the statistics of its signatures; a")
+        print("  sampler defect that they average away passes. " + (
             "Constant time: branches and addresses only, not timing, power or "
             "intermediate values." if constant_time else "Not a side-channel review."))
         if impls:

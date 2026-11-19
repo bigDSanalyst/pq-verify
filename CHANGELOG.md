@@ -5,6 +5,38 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **FN-DSA: the sampler stage tests the distribution of the signatures'
+  coefficients.** A sixth test, `shape`, holds the histograms of |s1| and
+  |s2| to the discrete Gaussian of their own variance: 16 bins of equal
+  probability, the top one halved and halved again down to about 50
+  expected draws (25 bins for FN-DSA-512 at 1,000 signatures, 26 for
+  FN-DSA-1024), and Pearson's chi-square on 48 (50) degrees of freedom,
+  as a Wilson–Hilferty normal score held to 6 like the other tests.
+  Fitting σ leaves the scale to the scale test, and |x| the sign to the
+  symmetry test, so neither defect fails twice.
+  - **Why:** the five earlier tests see the first two moments. A signer
+    that redraws whenever a coefficient of s2 passes a bound keeps them: at
+    3.6σ one signature in seven is redrawn, and the variance stays within
+    the scale test's limit. PQClean's Falcon-512 with that bound
+    planted in its shortness test fails the new test at 7.5 to 9.1 and
+    every other test passes (20 keys); it is a new CI mutant, recorded as
+    failing `shape` alone.
+  - **False positives:** at most 7.1e-10 per audit from the new test (the
+    chi-square's exact tail where the score reaches 6; fitting σ only
+    lowers it), so a correct library still fails the stage about three
+    times in 10^8 audits. On 84 new PQClean keys (60 of FN-DSA-512, 24 of
+    FN-DSA-1024) its z stayed within 2.3, and in 4,000,000 simulated
+    FN-DSA-512 audits it averaged −0.21 with a standard deviation of 1.01,
+    its upper tail lighter than a normal one's.
+  - **Still not seen:** a defect inside the sampler that the signing basis
+    averages away. A base sampler with one row of its table zeroed passes
+    the new test too (measured, 8 keys), as LIMITS.md says.
+  - The stage now counts six checks per parameter set: the FN-DSA vendor
+    rows record 12/12 statistics, PQClean's result is 38,947/38,949 (its
+    constant-time finding unchanged) and liboqs's 241/241 per row.
+
 ### Changed
 
 - **The README leads with what pq-verify finds in libraries.** Its Results

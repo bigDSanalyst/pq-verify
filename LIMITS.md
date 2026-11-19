@@ -154,19 +154,25 @@ about the library is claimed.
     - inputs outside Falcon's own domain: subnormals, infinities, NaNs.
   - **The sampler, through its signatures.** 1,000 signatures under one
     of the library's keys are tested for centring, symmetry, variance σ²
-    (over all the coefficients together) and the shape of their
-    covariance (at each point of the FFT), each to 6 standard deviations.
-    It is a statistical test of the first two moments, not of the
-    distribution:
-    - a defect that keeps them passes: a base sampler with one row of its
-      table zeroed, so that every value above 6 comes out one less (about
-      one draw in 4,000), does (measured);
+    (over all the coefficients together), the shape of their covariance
+    (at each point of the FFT) and the distribution of their coefficients
+    (|s1| and |s2| each against the discrete Gaussian of their own
+    variance), each to 6 standard deviations. It tests what the signatures
+    show, not the sampler inside them:
+    - a defect inside the sampler that the signing basis averages away
+      passes. Each coefficient of a signature is a weighted sum of 2n of
+      the sampler's draws, near Gaussian whatever their own shape: a base
+      sampler with one row of its table zeroed, so that every value above
+      6 comes out one less (about one draw in 4,000), passes every test,
+      the distribution's included (measured);
     - so does a covariance off only at particular coefficients, which the
       FFT averages across its points, and correlation between different
       points of the FFT;
     - so does a smaller bias than 1,000 signatures resolve: a sign bit
       within about one point of 1/2, a σ within about half a percent,
-      the conditioning coefficient of `ffSampling` 0.1% off;
+      the conditioning coefficient of `ffSampling` 0.1% off, a signer that
+      redraws whenever a coefficient passes a bound beyond about 3.7σ
+      (3.9σ for FN-DSA-1024);
     - so does one that shows only under other keys, after more signatures,
       or for particular messages;
     - a sampler so wrong that nearly every signature fails the norm bound
