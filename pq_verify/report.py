@@ -176,6 +176,8 @@ _FINDING_MAP = (
     ("source:",     "PQV010"),
     ("stage containment", "PQV011"),
     ("cannot verify", "PQV000"),
+    ("no NIST vector ran", "PQV000"),        # a KEM stage that never ran
+    ("lack dk, c or k", "PQV000"),           # KEM vectors that could not be run
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
     ("hybrid:",     "PQV007"),
@@ -434,6 +436,8 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                      for k, v in (result.get("detail") or {}).items()}
     if result.get("bounds"):
         doc["bounds"] = result["bounds"]
+    if result.get("decaps_not_run"):
+        doc["decaps_not_run"] = result["decaps_not_run"]
     keycheck = result.get("keycheck") or {}
     doc["keycheck"] = keycheck
     findings = []
@@ -473,6 +477,13 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
         if k == "bounds":
             from .bounds import finding as _bounds_finding
             findings.append(_bounds_finding(result["bounds"]))
+            continue
+        if k.startswith("not_run:"):
+            findings.append(f"stage {k[8:]}: no NIST vector ran, so it was not checked")
+            continue
+        if k == "decapsSkipped":
+            findings.append(f"stage decaps: {v[1]} vector(s) lack dk, c or k and were "
+                            f"not run, so they were not checked")
             continue
         m = keycheck.get(k)
         if m is None:

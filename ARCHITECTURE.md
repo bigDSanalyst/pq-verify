@@ -130,8 +130,10 @@ actually works in**. Kyber's NTT is checked in Z₃₃₂₉ directly; Dilithium
 Z₈₃₈₀₄₁₇. That is what "field-native" means, and it is why the checks are exact
 rather than an encoding of an encoding.
 
-Six C/C++ engines are compiled at runtime from sources embedded in `core.py` —
-no build step, no external `.c` files, no toolchain beyond `gcc`/`g++`.
+Six C/C++ engines are compiled at runtime from source that ships in the
+package: five as strings in `core.py`, and the period engine's four sources as
+plain files in `pq_verify/engines/`. There is no build step and no toolchain
+beyond `gcc`/`g++`.
 
 | Engine | Field | What it verifies |
 |---|---|---|

@@ -134,8 +134,9 @@ obtained. Keep `K` private: it is the seed the questions were derived from.
 
 Other things that are deliberate, not bugs:
 
-- **The C engines are compiled at runtime** with `gcc`, from source embedded in
-  `pq_verify/core.py`, into a private `0700` directory created per process.
+- **The C engines are compiled at runtime** with `gcc` and `g++`, from source
+  shipped in the package (`pq_verify/core.py` and `pq_verify/engines/`), into
+  a private `0700` directory created per process.
   Where no compiler is available the affected checks are reported as skipped
   rather than passed.
 - **`PQV_CFL_SO`**, if set, is `dlopen`ed. It must be an absolute path, it is
