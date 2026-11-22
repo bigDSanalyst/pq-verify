@@ -484,7 +484,7 @@ tools/                     Vendor audits, vector pinning, the re-pinning doctor
 pyproject.toml             Build config + console-script entry point
 DEMO.ipynb                 One-click Colab demo → 1566/1566
 vendor_audit_template.py   Drop-in NTT audit: runs pq-verify --audit-so → JSON report
-sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.19.0)
+sample_report.json         Its report for PQClean's ML-KEM-1024 NTT (pq-verify 2.20.0)
 docs/                      SCHEMES.md: FN-DSA, Classic McEliece and HQC; CFL.md,
                            DQBF.md, ECC.md, SEA.md: the research and classical engines;
                            REPINNING.md: updating the pinned NIST vectors
