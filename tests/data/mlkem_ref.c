@@ -10,12 +10,18 @@
  *                      re-encrypt (no implicit rejection)
  *   -DMUT_COMPRESS     Compress rounds down
  *   -DMUT_OVERRUN      encaps writes one byte past the shared secret
+ *   -DMUT_OVERRUN_INPUT decaps writes one byte past the ciphertext it was given
+ *   -DMUT_CRASH_UNDER_VALGRIND  decaps aborts under Valgrind; natively it is correct
  *   -DPQV_HOOK=fn      key generation first calls fn(coins), which the test
  *                      defines in another file: a planted behaviour
  */
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef MUT_CRASH_UNDER_VALGRIND
+#include <stdlib.h>
+#include <valgrind/valgrind.h>
+#endif
 
 #ifndef K
 #define K 3
@@ -434,6 +440,12 @@ int NAME(dec)(uint8_t *ss, const uint8_t *ct, const uint8_t *dk)                
     memcpy(ss, kr, 32);
 #ifndef MUT_NO_REJECT
     if (memcmp(again, ct, CT_BYTES)) J(z, 32, ct, CT_BYTES, ss);
+#endif
+#ifdef MUT_OVERRUN_INPUT
+    ((uint8_t *)ct)[CT_BYTES] ^= 0xff;
+#endif
+#ifdef MUT_CRASH_UNDER_VALGRIND
+    if (RUNNING_ON_VALGRIND) abort();
 #endif
     (void)test; (void)z;
     return 0;

@@ -2679,6 +2679,27 @@ def _repo_text_files():
     return out
 
 
+def test_nothing_tells_anyone_to_exec_core_py():
+    """ARCHITECTURE.md said exec(open('pq_verify/core.py').read()) ran the
+    self-suite and loaded the API. It stopped at the self-suite's first
+    relative import, for releases. Its replacement must provide every name
+    the same block goes on to use."""
+    offenders = []
+    pat = _re.compile(r"exec\(\s*open\(\s*['\"][^'\"]*core\.py['\"]")
+    for name, text in _repo_text_files().items():
+        if _pathlib.PurePath(name).name in _HISTORY_FILES:
+            continue
+        offenders += [f"{name}: {m.group(0)}" for m in pat.finditer(text)]
+    assert not offenders, offenders
+    arch = (_REPO / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    block = arch.split("### Other install routes")[1].split("```python")[1].split("```")[0]
+    assert "from pq_verify.core import *" in block
+    ns = {}
+    exec("from pq_verify.core import *", ns)
+    used = set(_re.findall(r"^(\w+)\(", block, _re.M))
+    assert used and used <= set(ns), sorted(used - set(ns))
+
+
 def test_nothing_tells_anyone_to_exec_a_standalone_script():
     """Those files are not shipped, and the 2.6.x ones carry CWE-426/CWE-59.
 
@@ -3127,16 +3148,87 @@ def test_a_kem_that_stays_inside_its_buffers_passes_the_bounds_check(tmp_path):
     assert "PASS  bounds" in out.getvalue()
 
 
-def _mlkem_ref_so(tmp_path, k=3):
+def _mlkem_ref_so(tmp_path, k=3, defines=()):
     import shutil, subprocess
     cc = shutil.which("cc") or shutil.which("gcc")
     if not cc:
         pytest.skip("no C compiler")
-    so = tmp_path / f"libmlkemref{k}.so"
+    so = tmp_path / f"libmlkemref{k}{''.join(defines)}.so"
     src = pathlib.Path(__file__).resolve().parent / "data" / "mlkem_ref.c"
-    subprocess.run([cc, "-std=gnu11", "-O1", "-fPIC", "-shared", f"-DK={k}", "-o", str(so),
-                    str(src)], check=True, capture_output=True)
+    subprocess.run([cc, "-std=gnu11", "-O1", "-fPIC", "-shared", f"-DK={k}",
+                    *(f"-D{d}" for d in defines), "-o", str(so), str(src)],
+                   check=True, capture_output=True)
     return str(so)
+
+
+def test_kem_constant_time_run_that_crashes_fails_its_stage_not_the_audit(tmp_path):
+    """A library that crashed under memcheck made run_kem raise: the whole
+    audit was lost, NIST results and all (the CLI said CANNOT VERIFY; the
+    Python API raised). Now that operation's stage fails, saying why, and the
+    rest of the audit stands. A decaps that aborts only under Valgrind is
+    correct natively, so every NIST stage still passes."""
+    from pq_verify import ct_audit
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem, _rule_for
+    why = ct_audit.available()
+    if why:
+        pytest.skip(why)
+    so = _mlkem_ref_so(tmp_path, defines=("MUT_CRASH_UNDER_VALGRIND",))
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                               constant_time=True)
+    d = r["detail"]
+    assert (d["keyGen"], d["encaps"], d["decaps"]) == ((25, 25), (25, 25), (10, 10))
+    assert d["ct:decaps"] == (0, 1) and r["verified"] is False
+    failed = r["constant_time"]["failed"]
+    assert set(failed) == {"decaps"}
+    assert failed["decaps"] == ("the run under memcheck failed: the driver failed "
+                                "(decaps, killed by SIGABRT)"), failed
+    text = out.getvalue()
+    assert "FAIL  ct:decaps  0/1  cannot verify: the run under memcheck failed" in text
+    assert "PASS  ct:encaps  1/1" in text           # the other operation keeps its result
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    f = [x for x in doc["findings"] if x.startswith("stage ct:decaps")]
+    assert f and f[0].startswith("stage ct:decaps: cannot verify:") and _rule_for(f[0]) == "PQV000"
+    assert doc["side_channel"]["constant_time_checked"]["leak_free"] is None
+
+
+def _ct_failures():
+    import subprocess
+    return ((RuntimeError("the driver failed (exit 139): ['Segmentation fault']"), "exit 139"),
+            (subprocess.TimeoutExpired(["valgrind"], 1800), "did not finish within 1800 s"))
+
+
+def test_dsa_constant_time_run_that_fails_is_a_failing_stage(monkeypatch):
+    """As for ML-KEM: a crash or a timeout under memcheck raised out of
+    --audit-dsa --constant-time. It is now the failing stage --audit-fndsa
+    already used, saying why."""
+    import types
+    from pq_verify import dsa_audit, ct_dsa
+    monkeypatch.setattr(ct_dsa, "hooked", lambda path: True)
+    v = types.SimpleNamespace(path="lib.so", abi="mldsa-native",
+                              sym={"keypair_seed": "kp", "sign_internal": "sg"})
+    for exc, said in _ct_failures():
+        def fail(*a, _exc=exc, **k):
+            raise _exc
+        monkeypatch.setattr(ct_dsa, "run_dsa", fail)
+        stages, ct = dsa_audit._constant_time(v, "ML-DSA-65")
+        assert stages == {"unavailable": (0, 1)} and said in ct["unavailable"], ct
+
+
+def test_mceliece_constant_time_run_that_fails_is_a_failing_stage(tmp_path, monkeypatch):
+    from pq_verify import mceliece_audit
+    so = _mceliece_shim(tmp_path, "mceliece348864")
+    for exc, said in _ct_failures():
+        def fail(v, _exc=exc):
+            raise _exc
+        monkeypatch.setattr(mceliece_audit, "constant_time", fail)
+        with _isolated_degraded(), contextlib.redirect_stdout(io.StringIO()):
+            r = mceliece_audit.pqverify_audit_mceliece(so, "mceliece348864",
+                                                       constant_time_check=True)
+        assert r["detail"]["ct:unavailable"] == (0, 1)
+        assert said in r["constant_time"]["unavailable"]
+        assert all(p == t for s, (p, t) in r["detail"].items() if not s.startswith("ct:"))
 
 
 def _kem_vector_dir(tmp_path, mutate):
@@ -12847,6 +12939,24 @@ def test_a_write_outside_a_buffer_in_the_worker_is_a_finding(tmp_path):
     assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"bounds"}
     assert "the K buffer, after the end" in r["failures"][0]["case"]
     assert r["detail"]["encaps"] == (25, 25)       # the answers themselves were right
+
+
+def test_a_write_past_an_input_buffer_in_the_worker_is_a_finding(tmp_path):
+    """The worker put the inputs it handed the library between guard bytes
+    but checked only the outputs' guards, so a decaps that wrote past the
+    ciphertext it was given passed --audit-contained. The in-process audit,
+    which checks every buffer it hands over, failed it; now both do."""
+    from pq_verify.core import pqverify_audit_kem
+    so = _contained_lib(tmp_path, defines=("MUT_OVERRUN_INPUT",))
+    r = _contained(so)
+    assert r["status"] == "FINDINGS PRESENT" and _failing(r) == {"bounds"}, r["failures"]
+    assert "dec: the c buffer, after the end" in r["failures"][0]["case"]
+    assert r["detail"]["decaps"] == (10, 10)       # the answers themselves were right
+    with contextlib.redirect_stdout(io.StringIO()):
+        inproc = pqverify_audit_kem(so, "ML-KEM-512", edge=False, accumulated=0)
+    assert inproc["detail"]["bounds"] == (0, 1)
+    first = inproc["bounds"]["outside"][0]
+    assert (first["function"], first["argument"], first["where"]) == ("decaps", 2, "after the end")
 
 
 def test_containment_that_cannot_be_confirmed_cannot_verify(tmp_path, monkeypatch):

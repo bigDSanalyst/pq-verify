@@ -431,7 +431,10 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                           "binary, by Valgrind memcheck taint; not instruction "
                           "timing (division), power, EM or microarchitecture, "
                           "and not key generation"),
-                "leak_free": all(p == t for p, t in ct["stages"].values())}
+                # Unknown, not false, when a run did not finish: a stage that
+                # failed for that reason is not a leak.
+                "leak_free": (None if ct.get("failed") else
+                              all(p == t for p, t in ct["stages"].values()))}
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}
     if result.get("bounds"):
@@ -468,6 +471,8 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
             ct = result.get("constant_time") or {}
             if "unavailable" in ct:
                 findings.append(f"constant time: requested but could not run ({ct['unavailable']})")
+            elif k[3:] in (ct.get("failed") or {}):
+                findings.append(f"stage {k}: cannot verify: {ct['failed'][k[3:]]}")
             else:
                 where = "; ".join(f"{l['kind']} in {l['function']}"
                                   for l in (ct.get("leaks") or {}).get(k[3:], []))

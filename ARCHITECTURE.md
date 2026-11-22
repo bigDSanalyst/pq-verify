@@ -237,7 +237,8 @@ something, so re-pinning is a deliberate, reviewed act rather than a live depend
 ### Other install routes
 
 ```python
-exec(open('pq_verify/core.py').read())   # 160-check self-suite + loads the API
+from pq_verify.core import *       # the API, from an install or a checkout's root
+main(quick=True)                   # the 160-check self-suite
 
 pqverify_acvp()                    # full NIST ACVP, all parameter sets
 pqverify_params('ML-KEM-1024')     # parameter security check

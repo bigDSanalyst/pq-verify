@@ -728,27 +728,37 @@ static decaps_fn f_decaps;
 static size_t EK, DK, CT;
 #define SS 32
 
-/* One reply: the outputs, or the refusal; and, either way, whether the
-   library wrote outside a buffer it was given. */
-static void reply(const char *entry, int rc,
-                  const char *n1, const uint8_t *b1, size_t l1,
-                  const char *n2, const uint8_t *b2, size_t l2)
-{
-    const char *o1 = outside(b1, l1), *o2 = b2 ? outside(b2, l2) : NULL;
+/* A buffer handed to the library: its name in the protocol, and where. */
+struct buf { const char *name; const uint8_t *p; size_t n; };
 
+/* One reply: the outputs, or the refusal; and, either way, whether the
+   library wrote outside a buffer it was given -- an output or an input.
+   The inputs are guarded as the outputs are, and used to be left unchecked:
+   pq-verify's in-process audit checks every buffer it hands over. */
+static void reply(const char *entry, int rc, const struct buf *out, int n_out,
+                  const struct buf *in, int n_in)
+{
+    const struct buf *hit = NULL;
+    const char *where = NULL;
+    int i;
+
+    for (i = 0; i < n_out + n_in && !where; i++) {
+        hit = i < n_out ? &out[i] : &in[i - n_out];
+        where = outside(hit->p, hit->n);
+    }
     if (rc != 0) {
         printf("{\"error\":\"%s returned %d\"", entry, rc);
     } else {
-        printf("{\"outputs\":{\"%s\":\"", n1);
-        put_hex(b1 + GUARD, l1);
-        if (b2) {
-            printf("\",\"%s\":\"", n2);
-            put_hex(b2 + GUARD, l2);
+        fputs("{\"outputs\":{", stdout);
+        for (i = 0; i < n_out; i++) {
+            printf("%s\"%s\":\"", i ? "," : "", out[i].name);
+            put_hex(out[i].p + GUARD, out[i].n);
+            fputs("\"", stdout);
         }
-        fputs("\"}", stdout);
+        fputs("}", stdout);
     }
-    if (o1 || o2)
-        printf(",\"outside\":\"%s: the %s buffer, %s\"", entry, o1 ? n1 : n2, o1 ? o1 : o2);
+    if (where)
+        printf(",\"outside\":\"%s: the %s buffer, %s\"", entry, hit->name, where);
     fputs("}\n", stdout);
     fflush(stdout);
 }
@@ -762,21 +772,33 @@ static void serve(const struct request *r)
         a = input(r, "randomness", 64);
         x = guarded(EK); y = guarded(DK);
         rc = f_keypair(x + GUARD, y + GUARD, a + GUARD);
-        reply("keypair_derand", rc, "ek", x, EK, "dk", y, DK);
+        {
+            const struct buf out[] = {{"ek", x, EK}, {"dk", y, DK}};
+            const struct buf in[] = {{"randomness", a, 64}};
+            reply("keypair_derand", rc, out, 2, in, 1);
+        }
         free(a); free(x); free(y);
     } else if (!strcmp(r->function, "ML_KEM_Encaps")) {
         a = input(r, "ek", EK);
         b = input(r, "randomness", 32);
         x = guarded(CT); y = guarded(SS);
         rc = f_encaps(x + GUARD, y + GUARD, a + GUARD, b + GUARD);
-        reply("enc_derand", rc, "c", x, CT, "K", y, SS);
+        {
+            const struct buf out[] = {{"c", x, CT}, {"K", y, SS}};
+            const struct buf in[] = {{"ek", a, EK}, {"randomness", b, 32}};
+            reply("enc_derand", rc, out, 2, in, 2);
+        }
         free(a); free(b); free(x); free(y);
     } else if (!strcmp(r->function, "ML_KEM_Decaps")) {
         a = input(r, "c", CT);
         b = input(r, "dk", DK);
         x = guarded(SS);
         rc = f_decaps(x + GUARD, a + GUARD, b + GUARD);
-        reply("dec", rc, "K", x, SS, NULL, NULL, 0);
+        {
+            const struct buf out[] = {{"K", x, SS}};
+            const struct buf in[] = {{"c", a, CT}, {"dk", b, DK}};
+            reply("dec", rc, out, 1, in, 2);
+        }
         free(a); free(b); free(x);
     } else {
         fatal("a function this worker does not serve", r->function);

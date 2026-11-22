@@ -817,11 +817,18 @@ def _constant_time(v, param_set):
         why = ("the declassification policy covers mldsa-native 2.x's internal API "
                "(keypair_internal, signature_internal) only (CONSTANT-TIME.md, section 3)")
         return {'cannot-verify': (0, 1)}, {'cannot_verify': why}
+    import subprocess
     try:
         r = ct_dsa.run_dsa(v.path, param_set, kp, sg)
     except ct_dsa.NotHooked as exc:
         return {'cannot-verify': (0, 1)}, {'cannot_verify': str(exc)}
-    except Unavailable as exc:
+    except subprocess.TimeoutExpired as exc:
+        # As --audit-fndsa does: a run that did not finish fails the stage,
+        # saying why, and the NIST results stand. It used to raise.
+        return ({'unavailable': (0, 1)},
+                {'unavailable': f"the run under memcheck did not finish within "
+                                f"{exc.timeout:g} s"})
+    except (Unavailable, RuntimeError, OSError) as exc:
         # Asked for and not run is not a pass: a stage that fails, saying why.
         return {'unavailable': (0, 1)}, {'unavailable': str(exc)}
     return dict(r['stages']), r

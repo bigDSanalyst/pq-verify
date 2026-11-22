@@ -192,9 +192,20 @@ def _run(exe, args, work, tag, timeout):
            exe, *args]
     p = run_group(cmd, timeout=timeout)
     if p.returncode not in (0,):
-        raise RuntimeError(f"the driver failed ({tag}, exit {p.returncode}): "
-                           f"{(p.stderr or '').strip().splitlines()[-1:]}")
+        raise RuntimeError(f"the driver failed ({tag}, {_ended(p.returncode)})"
+                           + "".join(f": {l}" for l in (p.stderr or "").strip().splitlines()[-1:]))
     return _parse(xml)
+
+
+def _ended(rc):
+    """How a process ended, for a report: 'exit 3' or 'killed by SIGABRT'."""
+    if rc < 0:
+        import signal
+        try:
+            return f"killed by {signal.Signals(-rc).name}"
+        except ValueError:
+            return f"killed by signal {-rc}"
+    return f"exit {rc}"
 
 
 def _parse(path):
@@ -352,10 +363,16 @@ def division_fields(lib, entries=None):
 
 
 def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
-    """{'stages': {op: (passed, 1)}, 'leaks': {op: [...]}, 'not_applicable':
-    {...}, 'divisions': {...} or None, 'divisions_not_listed': why or None,
-    'division_reachability': {...} (pq_verify.reach), 'selftest': bool} -- or
-    raises Unavailable."""
+    """{'stages': {op: (passed, 1)}, 'leaks': {op: [...]}, 'failed': {op:
+    why}, 'not_applicable': {...}, 'divisions': {...} or None,
+    'divisions_not_listed': why or None, 'division_reachability': {...}
+    (pq_verify.reach), 'selftest': bool} -- or raises Unavailable.
+
+    An operation whose run under memcheck crashed, failed or did not finish
+    fails its own stage and says why in 'failed'; the others keep their
+    results. It used to raise, which lost the whole audit, NIST results and
+    all. Unavailable stays what it says: the tools, or memcheck's self-test,
+    are not there."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -366,16 +383,28 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
         exe = _driver(work)
         base = [lib, kp, enc, dec, str(ek_n), str(dk_n), str(ct_n),
                 str(_RANK[param_set]), str(iterations)]
-        st = _run(exe, ["selftest", *base], work, "selftest", timeout)
+        try:
+            st = _run(exe, ["selftest", *base], work, "selftest", timeout)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise Unavailable(f"memcheck's self-test did not run: {exc}") from exc
         if not SELFTEST_KINDS <= {kind for kind, _ in st}:
             raise Unavailable(SELFTEST_MISSED)
-        stages, leaks = {}, {}
+        stages, leaks, failed = {}, {}, {}
         for op in OPS:
-            found = _attribute(_run(exe, [op, *base], work, op, timeout), lib)
+            try:
+                found = _attribute(_run(exe, [op, *base], work, op, timeout), lib)
+            except subprocess.TimeoutExpired as exc:
+                stages[op], leaks[op] = (0, 1), []
+                failed[op] = f"the run under memcheck did not finish within {exc.timeout:g} s"
+                continue
+            except RuntimeError as exc:
+                stages[op], leaks[op] = (0, 1), []
+                failed[op] = f"the run under memcheck failed: {exc}"
+                continue
             stages[op] = (int(not found), 1)
             leaks[op] = [{"kind": KINDS[k], "function": f, "count": n}
                          for (k, f), n in sorted(found.items())]
-        return {"stages": stages, "leaks": leaks, "selftest": True,
+        return {"stages": stages, "leaks": leaks, "failed": failed, "selftest": True,
                 "not_applicable": {
                     "keyGen": "the public matrix seed is derived from the secret seed "
                               "and rejection-sampled; libraries declassify it "
