@@ -6313,7 +6313,9 @@ def test_action_with_nothing_to_check_is_not_verified(tmp_path):
 def test_action_hybrid_verdict_comes_from_the_report(tmp_path, kem_vectors, fail):
     """Under fail-on-finding=false every exit code is 0, and the hybrid task
     wrote no report, so a transcript that did not verify gave verified=true
-    and a summary line that said VERIFIED."""
+    and a summary line that said VERIFIED. A genuine transcript verifies only
+    where kyber-py can check its ML-KEM half; without it (the base install)
+    that half is not checked, and the transcript is not verified."""
     root, _ = _action_run_step()
     spoof = str(root / "tests" / "data" / "hybrid_spoof.json")
     rc, outputs, summary = _run_action(tmp_path, acvp="false", hybrid=spoof, fail=fail)
@@ -6321,10 +6323,21 @@ def test_action_hybrid_verdict_comes_from_the_report(tmp_path, kem_vectors, fail
     assert (rc != 0) == (fail == "true")
     line = next(l for l in summary.splitlines() if "Hybrid transcript" in l)
     assert "VERIFIED" not in line.replace("CANNOT VERIFY", ""), line
+    try:
+        import kyber_py  # noqa: F401  (what checks the ML-KEM half)
+        checkable = True
+    except ImportError:
+        checkable = False
     good = _write_transcript(tmp_path, "good.json", _transcript("X25519MLKEM768", kem_vectors))
     rc, outputs, summary = _run_action(tmp_path, acvp="false", hybrid=good, fail=fail)
-    assert rc == 0 and outputs["verified"] == "true", outputs
-    assert "- **Hybrid transcript**: VERIFIED" in summary
+    line = next(l for l in summary.splitlines() if "Hybrid transcript" in l)
+    if checkable:
+        assert rc == 0 and outputs["verified"] == "true", outputs
+        assert line == "- **Hybrid transcript**: VERIFIED", line
+    else:
+        assert outputs["verified"] == "false", outputs
+        assert (rc != 0) == (fail == "true")
+        assert "VERIFIED" not in line.replace("CANNOT VERIFY", ""), line
 
 
 def test_every_action_is_pinned_to_a_commit():
