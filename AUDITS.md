@@ -1323,6 +1323,22 @@ sees it, though the processor still performs it. Every run commits each
 instruction's result (`--vex-iropt-register-updates=allregs-at-each-insn`),
 and every row below reproduced unchanged with it.
 
+memcheck does not report a division whose operand is secret, the KyberSlash
+pattern. On x86-64, with gdb installed, each operation is therefore run a
+second time with Valgrind's gdbserver on, and gdb, attached through vgdb,
+stops at every integer division instruction in the library. While secrets
+are live, the driver calls marker functions around the operation, and at each
+division gdb reads memcheck's shadow registers for the dividend and the
+divisor, or for a divisor in memory the shadow bits of those bytes. One that
+carries secret bits fails the stage (`PQV013`, error level). The same run's
+self-test divides once by a secret dividend and once by a public one, and
+exactly the first must be reported, or the stage is CANNOT VERIFY. So is a
+shadow register that cannot be read, an operand form the check does not
+parse, or a run that does not exit normally. Each site is checked on its
+first 1,024 executions while secrets are live, and the report says when a
+site reached that. Without gdb, or on another architecture, the divisions are
+listed and the report says why they were not checked.
+
 | Library | Sets | ct:encaps | ct:decaps | Integer divisions |
 |---|---|---|---|---|
 | mlkem-native `fc269bc` | 512 / 768 / 1024 | 3/3 | 3/3 | none |
@@ -1337,18 +1353,47 @@ pass every NIST, Wycheproof, CCTV and accumulated stage -- and caught here:
 | a lookup table indexed by a secret coefficient (`poly_tomsg`) | ct:decaps |
 | `memcmp` in the FO re-encryption check (`crypto_kem_dec`) | ct:decaps |
 
-Not checked, and said so in every report: instruction timing (KyberSlash's
-secret division is invisible to memcheck; the library's integer divisions
-are listed instead, those reachable from Encaps or Decaps marked by
-call-graph reachability -- the note-level rule `PQV012`, a review pointer and
-not a verdict, whose "not reached" is a lower bound because function-pointer
-calls are not resolved), key generation, and anything physical. The pinned
-builds have no integer division, so the gate is proved by a negative control:
-a KyberSlash-class divide by q put back into ML-KEM-512's ciphertext
-compression (`poly_compress`), computing the same value so every NIST vector
-still passes, is reported reachable from Decaps while every constant-time stage
-stays green -- the listing catches what memcheck cannot (`tools/vendor_audit.py`,
-`"reach_adds"`, `"kat_unchanged"`).
+The library's integer divisions are also listed, and those reachable from
+Encaps or Decaps are marked by call-graph reachability. This is the note-level
+rule `PQV012`, a review pointer and not a verdict, whose "not reached" is a
+lower bound because function-pointer calls are not resolved. It points at
+divisions the run may not have executed. Not checked, and said so in every
+report: instruction latency itself, key generation, and anything physical.
+The pinned builds above have no integer division, so both checks are proved
+by a negative control. A KyberSlash-class divide by q is put back into
+ML-KEM-512's ciphertext compression (`poly_compress`), computing the same
+value, so every NIST vector still passes and memcheck still reports nothing.
+It is reported reachable from Decaps (`PQV012`) and fails ct:encaps and
+ct:decaps through its secret dividend (`PQV013`): every one of the first
+1,024 executions of its division, checked while secrets were live, carried
+secret bits (`tools/vendor_audit.py`, `"reach_adds"`, `"fails"`,
+`"kat_unchanged"`).
+
+**pq-crystals' reference, before and after the KyberSlash fixes**
+(`ct_division_audits`; gcc 13.3 `-Os`, x86-64). The same build of two
+pinned commits:
+
+| Commit | Sets | ct:encaps | ct:decaps | A division took a secret operand in | memcheck alone |
+|---|---|---|---|---|---|
+| [`4ecce06`](https://github.com/pq-crystals/kyber/commit/4ecce06d584a4e7cecc42f141aadae39b8431b06) (2023-07-26), before the fixes | 512 / 768 / 1024 | 0/3 | 0/3 | Encaps: `poly_compress`, `polyvec_compress`; Decaps: those and `poly_tomsg` | silent |
+| [`11d00ff`](https://github.com/pq-crystals/kyber/commit/11d00ff1f20cfca1f72d819e5a45165c1e0a2816) (2023-12-29), with both fixes | 512 / 768 / 1024 | 3/3 | 3/3 | none | silent |
+
+At `4ecce06`, every one of the first 1,024 executions of each of those
+divisions while secrets were live carried secret bits, and memcheck itself
+reported nothing. Between the two commits the library changes only in
+`poly.c` and `polyvec.c`: `bc8e640` removes the division by q from
+`poly_tomsg`, and `11d00ff` removes it from the compression functions. At both
+commits gcc `-Os` also emits divisions of public values. They are in SHAKE,
+of lengths: SHAKE256's runs in both operations and never took a secret
+operand. The other is `gen_matrix`'s `buflen % 3`, which runs only when
+rejection sampling needs another block. Whether a division by a
+constant becomes a division instruction is the compiler's choice. In this
+code, gcc 13.3 at `-O1` to `-O3`, and clang 18.1 at every level, emit none,
+so the row names its compiler and level. This is draft FIPS 203 code: its key
+generation predates the final standard's domain separation (pq-crystals
+`3c874cd`, 2024-08-17). Against NIST's ML-KEM-768 vectors, `4ecce06` scores
+keyGen 0/25, encaps 25/25 and decaps 10/10, so only the constant-time stages
+are recorded.
 
 **Classic McEliece** (not FIPS; `--audit-mceliece ... --constant-time`). The
 NIST API takes no coins, so the driver supplies the randomness: it defines

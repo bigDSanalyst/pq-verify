@@ -103,6 +103,11 @@ def load_hbs_table(path=TABLE):
         return json.load(fh).get("hbs_audits", [])
 
 
+def load_ct_division_table(path=TABLE):
+    with open(path) as fh:
+        return json.load(fh).get("ct_division_audits", [])
+
+
 # ─────────────────────────────── build ───────────────────────────────
 
 # liboqs: one shared library for every parameter set, configured as
@@ -182,13 +187,21 @@ def fetch(url, commit, dest):
         raise RuntimeError(f"fetched {head}, pinned {commit}")
 
 
-def build(recipe, src, param_set, out_dir, tag=""):
-    """Compile one parameter set of a library to a shared object."""
+# pq-crystals' Kyber reference: its own randombytes.c (getrandom), which the
+# constant-time driver never calls -- it uses the derandomised entry points.
+KYBER_REF_C = ("kem.c", "indcpa.c", "polyvec.c", "poly.c", "ntt.c", "cbd.c", "reduce.c",
+               "verify.c", "symmetric-shake.c", "fips202.c", "randombytes.c")
+
+
+def build(recipe, src, param_set, out_dir, tag="", cc=None, opt="-O2"):
+    """Compile one parameter set of a library to a shared object. `cc`, when
+    given, overrides $CC: a row whose result depends on the code one compiler
+    emits names it."""
     if recipe == "liboqs":
         return build_liboqs(src, out_dir, tag)
     level = param_set.rsplit("-", 1)[1]
     so = Path(out_dir) / f"{recipe}{level}{tag}.so"
-    cc = [os.environ.get("CC", "gcc"), "-O2", "-fPIC", "-shared"]
+    cc = [cc or os.environ.get("CC", "gcc"), opt, "-fPIC", "-shared"]
     if recipe == "mlkem-native":
         rb = Path(out_dir) / "randombytes.c"
         rb.write_bytes(_RANDOMBYTES)
@@ -200,6 +213,10 @@ def build(recipe, src, param_set, out_dir, tag=""):
         cmd = cc + ["-I", str(common), "-o", str(so),
                     *sorted(str(p) for p in d.glob("*.c")),
                     str(common / "fips202.c"), str(common / "randombytes.c")]
+    elif recipe == "pqcrystals-kyber":
+        k = {"512": 2, "768": 3, "1024": 4}[level]
+        cmd = cc + [f"-DKYBER_K={k}", "-o", str(so),
+                    *(str(Path(src) / "ref" / f) for f in KYBER_REF_C)]
     else:
         raise ValueError(f"unknown build recipe {recipe!r}")
     subprocess.run(cmd, check=True, capture_output=True)
@@ -617,8 +634,9 @@ def reach_problem(reach):
 
 
 def audit_ct(so, param_set, prefix=None):
-    """The --constant-time stages alone: {stage: [p, t]}, the leaks, and the
-    division reachability (reach_summary)."""
+    """The --constant-time stages alone: {stage: [p, t]}, the leaks, the
+    division reachability (reach_summary), and the secret-division check's
+    result (PQV013: whether it ran, and on what)."""
     sys.path.insert(0, str(REPO))
     from pq_verify.ct_audit import run_kem
     from pq_verify.core import _resolve_kem_symbols
@@ -627,7 +645,7 @@ def audit_ct(so, param_set, prefix=None):
     r = run_kem(so, param_set, f["keypair"], f["encaps"], f["decaps"])
     return ({"ct:" + k: list(v) for k, v in r["stages"].items()},
             {k: [f"{l['kind']} in {l['function']}" for l in v] for k, v in r["leaks"].items()},
-            reach_summary(r))
+            reach_summary(r), r.get("division_check") or {})
 
 
 def audit_ct_dsa(so, param_set, prefix=None):
@@ -727,8 +745,9 @@ def check_ct_dsa(rows, workdir):
 def check_ct(rows, workdir):
     """ML-KEM rows' "ct" results, and every "ct_mutants" leak caught."""
     sys.path.insert(0, str(REPO))
-    from pq_verify.ct_audit import available
-    why = available()
+    from pq_verify.ct_audit import available, DIVISION_KIND
+    from pq_verify import ct_div
+    why = available() or ct_div.available()       # PQV013 needs gdb and vgdb too
     if why:
         print(f"  ERROR  constant-time rows cannot run: {why}")
         return 2
@@ -742,8 +761,8 @@ def check_ct(rows, workdir):
         base_reach = {}
         for ps in row["sets"]:
             label = f"{row['library']} @ {row['commit'][:7]} {ps} (constant time)"
-            got, leaks, reach = audit_ct(build(row["build"], src, ps, workdir), ps,
-                                         prefix_for(row, ps))
+            got, leaks, reach, _ = audit_ct(build(row["build"], src, ps, workdir), ps,
+                                            prefix_for(row, ps))
             base_reach[ps] = reach
             bad = reach_problem(reach)
             if got == row["ct"][ps] and not bad:
@@ -763,13 +782,15 @@ def check_ct(rows, workdir):
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 print(f"  ERROR  {label}: {e}")
                 return 2
-            got, leaks, reach = audit_ct(so, m["set"], prefix_for(row, m["set"], m))
+            got, leaks, reach, divcheck = audit_ct(so, m["set"], prefix_for(row, m["set"], m))
             if m.get("reach_adds"):
                 # A KyberSlash-class division: operand-dependent latency, which
-                # memcheck cannot see, so the constant-time stages still pass --
-                # only reachability reports it, and only when it is on the
-                # secret path. The mutant proves both: the stages are unchanged,
-                # and the division it introduces is newly reachable.
+                # memcheck's own reports cannot see. Reachability marks the
+                # function; the secret-division check (PQV013) sees the division
+                # execute with a secret operand. The mutant proves all of it: the
+                # division is newly reachable, it fails each stage in "fails"
+                # through a secret operand in those functions, and every other
+                # stage is as recorded.
                 added = [f for f in reach["reachable"]
                          if f not in base_reach[m["set"]]["reachable"]]
                 missed = [f for f in m["reach_adds"] if f not in added]
@@ -778,13 +799,25 @@ def check_ct(rows, workdir):
                     print(f"  MISSED {label}: {', '.join(missed)} not newly reachable "
                           f"from the secret-input path.")
                     continue
-                if got != row["ct"][m["set"]]:
+                want_fail = set(m.get("fails", []))
+                not_caught = [st for st in sorted(want_fail)
+                              if got.get(st) != [0, 1] or not any(
+                                  x == f"{DIVISION_KIND} in {fn}"
+                                  for fn in m["reach_adds"] for x in leaks.get(st[3:], []))]
+                if not_caught:
                     failures += 1
-                    print(f"  DIFF   {label}: recorded as invisible to memcheck, but the "
-                          f"constant-time stages are now {got} (were {row['ct'][m['set']]}).")
+                    print(f"  MISSED {label}: {', '.join(not_caught)} not failed by a secret "
+                          f"division operand in {', '.join(m['reach_adds'])}; the "
+                          f"secret-division check: {divcheck.get('why') or divcheck.get('ops')}")
                     continue
-                note = ("invisible to memcheck (the stages still pass), caught only by "
-                        "reachability")
+                others = {k: v for k, v in got.items() if k not in want_fail}
+                if others != {k: v for k, v in row["ct"][m["set"]].items() if k not in want_fail}:
+                    failures += 1
+                    print(f"  DIFF   {label}: the other constant-time stages are now "
+                          f"{others} (were {row['ct'][m['set']]}).")
+                    continue
+                note = (f"reachable from the secret-input path, and a secret operand of "
+                        f"its division fails {', '.join(sorted(want_fail))} (PQV013)")
                 if m.get("kat_unchanged"):
                     want = {k: list(v) for k, v in row["expected"].items()}
                     want.update({k: list(v) for k, v in row["edge"][m["set"]].items()})
@@ -795,7 +828,7 @@ def check_ct(rows, workdir):
                               f"the conformance audit differs from NIST's vectors.")
                         continue
                     note += "; ML-KEM conformance unchanged against NIST's vectors"
-                print(f"  caught {label}: reachable integer division in "
+                print(f"  caught {label}: integer division in "
                       f"{', '.join(m['reach_adds'])} -- {note}")
                 continue
             missed = [s for s in m["fails"] if got.get(s, [0, 0])[0] == got.get(s, [0, 0])[1]]
@@ -807,6 +840,77 @@ def check_ct(rows, workdir):
                 print(f"  caught {label}: {'; '.join(x for v in leaks.values() for x in v)}")
     if failures:
         print(f"\n  {failures} constant-time row(s) or mutant(s) differ.")
+        return 1
+    return 0
+
+
+def check_ct_divisions(rows, workdir):
+    """ct_division_audits: builds whose integer divisions the secret-division
+    check (PQV013) must judge exactly as recorded. Each row names its
+    compiler and optimisation level, since whether a division by a constant
+    becomes a division instruction is the compiler's choice. For every set:
+    the check ran on both operations (a check that did not run is never a
+    match); the constant-time stages are as recorded; the functions whose
+    division took a secret operand are exactly those recorded per stage, and
+    none elsewhere; and with "memcheck_silent", memcheck itself reported
+    nothing, so the division check alone decides the stage."""
+    sys.path.insert(0, str(REPO))
+    from pq_verify.ct_audit import available, DIVISION_KIND
+    from pq_verify import ct_div
+    if not rows:
+        return 0
+    why = available() or ct_div.available()
+    if why:
+        print(f"  ERROR  secret-division rows cannot run: {why}")
+        return 2
+    failures = 0
+    for row in rows:
+        src = Path(workdir) / row["build"] / row["commit"][:12]
+        if not (src / ".git").exists():
+            fetch(row["url"], row["commit"], src)
+        for ps in row["sets"]:
+            label = (f"{row['library']} @ {row['commit'][:7]} {ps} "
+                     f"({row['cc']} {row['opt']}, secret divisions)")
+            try:
+                so = build(row["build"], src, ps, workdir, tag=f"-{row['commit'][:7]}",
+                           cc=row["cc"], opt=row["opt"])
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                print(f"  ERROR  {label}: {e}")
+                return 2
+            got, leaks, _, dc = audit_ct(so, ps, prefix_for(row, ps))
+            problems = []
+            if not dc.get("checked"):
+                problems.append(f"the division check did not run: {dc.get('why')}")
+            else:
+                for op in ("encaps", "decaps"):
+                    r = dc["ops"].get(op)
+                    if r is None:
+                        problems.append(f"{op}: not checked (memcheck's run failed)")
+                    elif r.get("not_verified"):
+                        problems.append(f"{op}: cannot verify: {r['not_verified']}")
+            if got != row["ct"][ps]:
+                problems.append(f"stages {got}, recorded {row['ct'][ps]}")
+            prefix = f"{DIVISION_KIND} in "
+            secret = {f"ct:{op}": sorted({x[len(prefix):] for x in v if x.startswith(prefix)})
+                      for op, v in leaks.items()}
+            secret = {k: v for k, v in secret.items() if v}
+            want = {k: sorted(v) for k, v in row["secret_divisions"][ps].items()}
+            if secret != want:
+                problems.append(f"secret division operands in {secret}, recorded {want}")
+            if row.get("memcheck_silent"):
+                other = [x for v in leaks.values() for x in v if not x.startswith(prefix)]
+                if other:
+                    problems.append(f"memcheck reported {other}, recorded silent")
+            if problems:
+                failures += 1
+                print(f"  DIFF   {label}: {'; '.join(problems)}")
+                continue
+            what = ("; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(secret.items()))
+                    if secret else "no division took a secret operand")
+            print(f"  ok     {label}: {what}, as recorded"
+                  + ("; memcheck alone silent" if row.get("memcheck_silent") else ""))
+    if failures:
+        print(f"\n  {failures} secret-division row(s) differ.")
         return 1
     return 0
 
@@ -1773,6 +1877,7 @@ def main(argv=None):
                     help="re-audit one scheme's rows")
     a = ap.parse_args(argv)
     rows, dsa_rows, hbs_rows = load_table(), load_dsa_table(), load_hbs_table()
+    div_rows = load_ct_division_table()
     slhdsa_rows = load_slhdsa_table()
     fndsa_rows = load_fndsa_table()
     mce_rows = load_mceliece_table()
@@ -1798,6 +1903,7 @@ def main(argv=None):
         if a.only in (None, "ML-KEM"):
             code = max(code, check_all(rows, work))
             code = max(code, check_ct(rows, work))
+            code = max(code, check_ct_divisions(div_rows, work))
         if a.only in (None, "ML-DSA"):
             code = max(code, check_dsa(dsa_rows, work))
             code = max(code, check_ct_dsa(dsa_rows, work))

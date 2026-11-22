@@ -16,6 +16,11 @@ name: Vendor audits (pinned)
 # Classic McEliece and SLH-DSA have liboqs builds of their own, so their sets
 # do not slow the other rows.
 #
+# pq-crystals' Kyber reference is built with gcc -Os at two pinned commits,
+# before and after the KyberSlash fixes, and its constant-time stages alone
+# re-run: the secret-division check (PQV013) must fail the first exactly where
+# recorded and pass the second.
+#
 # The harness job re-audits through Crucible's Go harnesses at their pinned
 # commit, and through pq-verify's own Bouncy Castle harness against the
 # bcprov jar pinned by sha256 (fetched from Maven Central), with that row's
@@ -82,8 +87,9 @@ jobs:
       - name: System dependencies
         # hash-sigs and xmss-reference hash with OpenSSL; valgrind runs the
         # ML-KEM, ML-DSA, FN-DSA and Classic McEliece rows' constant-time
-        # stages; CMake builds liboqs
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind cmake
+        # stages, and gdb reads the ML-KEM divisions' operands through vgdb
+        # (PQV013); CMake builds liboqs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev valgrind gdb cmake
       - name: Install
         # kyber-py computes the answers to the fresh questions the contained
         # worker is asked about each ML-KEM library

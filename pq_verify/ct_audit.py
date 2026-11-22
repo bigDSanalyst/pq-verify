@@ -73,6 +73,10 @@ static void discarded_read(const uint8_t *s) {
 """
 
 DRIVER_C = r"""
+#ifdef PQV_DIVTAINT
+#define _GNU_SOURCE
+#include <link.h>
+#endif
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -96,6 +100,37 @@ static void fill(uint8_t *p, size_t n) {
 static volatile int sink;
 @DISCARDED_READ@
 
+#ifdef PQV_DIVTAINT
+/* The secret-division check (pq_verify.ct_div), in its own build of this
+   driver: gdb reads the library's load bias at pqv_ct_loaded, counts
+   divisions only between pqv_ct_armed and pqv_ct_disarmed, and requires
+   pqv_ct_div's first division (a secret dividend) reported and its second
+   (a public one) not. */
+__attribute__((noinline)) void pqv_ct_loaded(uintptr_t load_bias)
+{ __asm__ volatile("" : : "r"(load_bias) : "memory"); }
+__attribute__((noinline)) void pqv_ct_armed(void) { __asm__ volatile("" ::: "memory"); }
+__attribute__((noinline)) void pqv_ct_disarmed(void) { __asm__ volatile("" ::: "memory"); }
+__attribute__((noinline)) uint32_t pqv_ct_div(uint32_t a, uint32_t b) { return a / b; }
+static volatile uint32_t pqv_div_sink;
+static int pqv_div_tested;
+static void ARM(void) {
+    pqv_ct_armed();
+    if (!pqv_div_tested) {
+        volatile uint32_t q = 3329;
+        uint32_t s = 123457, p = 7654321;
+        SECRET(&s, sizeof s);
+        pqv_div_sink = pqv_ct_div(s, q);      /* a secret dividend: must be reported */
+        pqv_div_sink = pqv_ct_div(p, q);      /* a public one: must not be */
+        PUBLIC(&s, sizeof s);
+        pqv_div_tested = 1;
+    }
+}
+#define DISARM() pqv_ct_disarmed()
+#else
+#define ARM() ((void)0)
+#define DISARM() ((void)0)
+#endif
+
 int main(int argc, char **argv) {
     if (argc != 11) { fprintf(stderr, "usage\n"); return 2; }
     const char *mode = argv[1];
@@ -112,6 +147,11 @@ int main(int argc, char **argv) {
     }
     void *h = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
     if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 3; }
+#ifdef PQV_DIVTAINT
+    { struct link_map *lm = NULL; uintptr_t b = 0;
+      if (dlinfo(h, RTLD_DI_LINKMAP, &lm) == 0 && lm) b = (uintptr_t)lm->l_addr;
+      pqv_ct_loaded(b); }
+#endif
     kp_t kp = (kp_t)dlsym(h, argv[3]);
     enc_t enc = (enc_t)dlsym(h, argv[4]);
     dec_t dec = (dec_t)dlsym(h, argv[5]);
@@ -124,16 +164,20 @@ int main(int argc, char **argv) {
         fill(m, 32);
         if (!strcmp(mode, "encaps")) {
             SECRET(m, 32);
+            ARM();
             if (enc(c, ss, ek, m)) { fprintf(stderr, "encaps failed\n"); return 4; }
+            DISARM();
             PUBLIC(c, ct_n); PUBLIC(ss, 32); PUBLIC(m, 32);
         } else {
             if (enc(c, ss, ek, m)) { fprintf(stderr, "encaps failed\n"); return 4; }
             fill(c2, ct_n);
             /* dk = dk_pke (384k) || ek || H(ek) || z: the first and last parts are secret */
             SECRET(dk, 384 * k); SECRET(dk + dk_n - 32, 32);
+            ARM();
             if (dec(ss, c, dk)) { fprintf(stderr, "decaps failed\n"); return 4; }
             PUBLIC(ss, 32);
             if (dec(ss, c2, dk)) { fprintf(stderr, "decaps (implicit rejection) failed\n"); return 4; }
+            DISARM();
             PUBLIC(ss, 32); PUBLIC(dk, dk_n);
         }
     }
@@ -173,13 +217,17 @@ def available():
     return None
 
 
-def _driver(work):
-    src = os.path.join(work, "pqv_ct_driver.c")
-    exe = os.path.join(work, "pqv_ct_driver")
+def _driver(work, div=False):
+    """The constant-time driver; div=True builds the secret-division check's
+    variant (-DPQV_DIVTAINT), whose hooks the memcheck driver does without."""
+    tag = "_div" if div else ""
+    src = os.path.join(work, f"pqv_ct_driver{tag}.c")
+    exe = os.path.join(work, f"pqv_ct_driver{tag}")
     with open(src, "w") as fh:
         fh.write(DRIVER_C)
     cc = shutil.which("cc") or shutil.which("gcc")
-    p = subprocess.run([cc, "-O1", "-g", "-o", exe, src, "-ldl"],
+    p = subprocess.run([cc, "-O1", "-g", *(["-DPQV_DIVTAINT"] if div else []),
+                        "-o", exe, src, "-ldl"],
                        capture_output=True, text=True)
     if p.returncode:
         raise Unavailable(f"the driver did not build: {p.stderr.strip()[-300:]}")
@@ -318,10 +366,37 @@ def division_note(ct):
     """The report's line on a constant-time result's division list."""
     divs = ct.get("divisions")
     if divs:
-        return f"integer divisions (not checked for timing): {', '.join(sorted(divs))}"
+        how = ("operands checked at run time, below"
+               if (ct.get("division_check") or {}).get("checked") else
+               "not checked for timing")
+        return f"integer divisions ({how}): {', '.join(sorted(divs))}"
     if divs is None:
         return f"integer divisions: not listed ({ct.get('divisions_not_listed') or 'no list made'})"
     return "integer divisions: none in the library's code"
+
+
+def division_check_note(ct):
+    """The report's line on the secret-division check (PQV013), or None when
+    there was no division to check (division_note already says so)."""
+    dc = ct.get("division_check")
+    if not dc or dc.get("sites") == 0:
+        return None
+    if not dc.get("checked"):
+        return f"secret-division check (PQV013): not run: {dc.get('why')}"
+    parts = []
+    for op, r in dc.get("ops", {}).items():
+        if r.get("not_verified"):
+            parts.append(f"{op}: cannot verify: {r['not_verified']}")
+            continue
+        n = len(r["executed"])
+        s = f"{op}: {n} of {dc['sites']} division site(s) executed while secrets were live"
+        s += (f", secret operand at {', '.join(r['secret'])}" if r.get("secret")
+              else ", no secret operand" if n else "")
+        if r.get("capped"):
+            s += (f" (the first {dc['max_checks']} executions of "
+                  f"{', '.join(r['capped'])} checked)")
+        parts.append(s)
+    return "secret-division check (PQV013, shadow registers via vgdb): " + "; ".join(parts)
 
 
 def reachability_note(ct):
@@ -404,7 +479,9 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
             stages[op] = (int(not found), 1)
             leaks[op] = [{"kind": KINDS[k], "function": f, "count": n}
                          for (k, f), n in sorted(found.items())]
+        div = _division_check(lib, work, base, stages, leaks, failed, timeout)
         return {"stages": stages, "leaks": leaks, "failed": failed, "selftest": True,
+                "division_check": div,
                 "not_applicable": {
                     "keyGen": "the public matrix seed is derived from the secret seed "
                               "and rejection-sampled; libraries declassify it "
@@ -414,6 +491,61 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
                                        text=True).stdout.strip()}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+DIVISION_KIND = "secret operand of an integer division"
+
+
+def _division_check(lib, work, base, stages, leaks, failed, timeout):
+    """The secret-division check (pq_verify.ct_div, PQV013) on every
+    operation memcheck could run. A division that took a secret operand
+    while secrets were live fails that operation's stage, as a memcheck leak
+    does. Returns what the report says: whether it ran and, if not, why."""
+    from . import ct_div
+    text, machine, why = _disassemble(lib)
+    if text is None:
+        return {"checked": False, "why": why}
+    if machine != ct_div.X86_64:
+        return {"checked": False,
+                "why": (f"it reads x86-64 registers; the library is for ELF machine "
+                        f"{machine}")}
+    lib_sites = ct_div.sites(text)
+    if not lib_sites:
+        return {"checked": False, "sites": 0,
+                "why": "the library's code has no integer division instruction"}
+    why = ct_div.available()
+    if why:
+        return {"checked": False, "sites": len(lib_sites), "why": why}
+    exe = _driver(work, div=True)
+    exe_text, _, why = _disassemble(exe)
+    if exe_text is None:
+        raise Unavailable(f"the driver could not be disassembled: {why}")
+    selftest = ct_div.selftest_site(exe_text)
+    ops = {}
+    for op in OPS:
+        if op in failed:                    # memcheck's run of it already failed
+            continue
+        res = ct_div.run(exe, [op, *base], lib_sites, selftest, timeout=timeout)
+        secret, why_not = ct_div.judge(res)
+        recs = res.get("sites", {})
+        ops[op] = {"executed": sorted(k for k, r in recs.items() if r.get("checked")),
+                   "capped": sorted(k for k, r in recs.items() if r.get("capped")),
+                   "secret": [s["site"] for s in secret]}
+        if why_not:
+            # Not checked is not a pass. A stage memcheck already failed keeps
+            # its leaks; otherwise it fails saying why.
+            ops[op]["not_verified"] = why_not
+            stages[op] = (0, 1)
+            if not leaks[op]:
+                failed[op] = why_not
+            continue
+        if secret:
+            stages[op] = (0, 1)
+            leaks[op] += [{"kind": DIVISION_KIND, "function": s["fn"], "count": s["secret"],
+                           "site": s["site"], "operand": " and ".join(s["what"]),
+                           "checked": s["checked"]} for s in secret]
+    return {"checked": True, "sites": len(lib_sites), "ops": ops,
+            "max_checks": ct_div.MAX_CHECKS}
 
 
 # ─────────────────────── Classic McEliece (not FIPS) ───────────────────────

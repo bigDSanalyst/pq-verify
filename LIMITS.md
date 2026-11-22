@@ -216,18 +216,28 @@ electromagnetic or microarchitectural behaviour
 
 | Audit | Checked under Valgrind memcheck | Not checked |
 |---|---|---|
-| `--audit-kem` (ML-KEM) | Encaps and Decaps: secret-dependent branches and memory addresses | key generation (the public matrix seed is derived from the secret seed) |
+| `--audit-kem` (ML-KEM) | Encaps and Decaps: secret-dependent branches and memory addresses; on x86-64 with gdb installed, the operands of every integer division the library executes while secrets are live (`PQV013`) | key generation (the public matrix seed is derived from the secret seed) |
 | `--audit-dsa` (ML-DSA) | key generation and signing, in a build with the library's own declassifications compiled in and pq-verify's shim in front of them; every declassification is judged by the site table for that implementation ([CONSTANT-TIME.md](CONSTANT-TIME.md)) | any other build, which is CANNOT VERIFY: Sign branches on secret-derived values by design. Today only mldsa-native's portable C backend has a site table |
 | `--audit-mceliece` (Classic McEliece) | Encaps and Decaps, the same way | key generation (its retries are declassified by design); inside the error-vector sampler, reports are listed, not judged |
 | `--audit-fndsa` (FN-DSA, draft track) | signing, with the secret key and the signer's randomness secret. Each branch is matched by its function and source line against the sites Falcon's signer takes by design (the sampler's rejection, BerExp's lazy comparison, the norm bound, the encoder, the key's validity checks), which are listed, not judged; any other branch, and any secret memory address, fails | key generation (it rejects candidate keys by design). A build without debug information, or whose source is not where that information says, is CANNOT VERIFY, as is a secret operand memcheck needs public that is neither a branch nor an address (clang's vectorised rounding shifts by a secret count). Floating-point instructions' timing, where the library computes on the CPU's doubles (liboqs's AVX2 Falcon) |
 
 Not covered by it at all: SLH-DSA, LMS/HSS, XMSS, HQC and the hybrid
-groups. Within its scope memcheck cannot see instruction timing (KyberSlash's
-secret division; the library's integer divisions are listed for a reviewer
-instead, on x86, ARM and RISC-V, with those reachable from the secret-input
-entry points marked by call-graph reachability -- the note-level rule `PQV012`,
-a review pointer and not a timing verdict, whose "not reached" is a lower bound
-because calls through a function pointer are not resolved), the values a
+groups. Within its scope memcheck cannot see instruction timing, KyberSlash's
+secret division. For ML-KEM on x86-64, with gdb and vgdb installed, the
+secret-division check (`PQV013`) reads memcheck's shadow bits for the dividend
+and divisor of each integer division the library executes while secrets are
+live. It sees only divisions that run in the audit, the first 1,024
+executions of each, and only division instructions in the library's own code,
+not a call into a shared library's division routine. It has memcheck's
+precision: an operand memcheck cannot prove public is reported. It does not
+measure latency, which depends on the processor. Everywhere else (ML-DSA,
+Classic McEliece, FN-DSA, other architectures, or without gdb) the library's
+integer divisions are listed for a reviewer instead, on x86, ARM and RISC-V;
+an ML-KEM report says why the check did not run. Those reachable from the
+secret-input entry points are marked by call-graph reachability, the
+note-level rule `PQV012`: a review pointer and not a timing verdict, whose
+"not reached" is a lower bound because calls through a function pointer are
+not resolved. Nor does memcheck see the values a
 computation produces (Berzati et al.'s
 template attack on ML-DSA's signing-time values,
 [CONSTANT-TIME.md](CONSTANT-TIME.md#5-scope)) or anything below the

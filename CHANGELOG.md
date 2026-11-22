@@ -5,6 +5,49 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--audit-kem --constant-time` checks the operands of the divisions the
+  library executes on secrets (`PQV013`).** memcheck reports a branch or an
+  address that depends on a secret, but not a division that takes one, which
+  is how KyberSlash leaked the key. On x86-64, with gdb installed, each
+  operation now runs a second time under memcheck with its gdbserver on, and
+  gdb, attached through vgdb, stops at every integer division instruction in
+  the library. While the driver has secrets marked, gdb reads memcheck's
+  shadow registers for the dividend and the divisor at each one; a divisor in
+  memory is read from the shadow bits of its bytes. A secret operand fails the
+  stage. The report names the site and the operand, and says how many of the
+  executions checked carried secret bits. In SARIF it is the new error-level
+  rule `PQV013`. The report's closing line names division operands among what
+  was checked.
+  - **What makes a silent run mean something.** A self-test in the same run
+    divides once by a secret dividend and once by a public one, and exactly
+    the first must be reported. Divisions count only between the driver's
+    markers around the operation, so setup code cannot use up a site's 1,024
+    checks. A register that cannot be read, an operand the check does not
+    parse, or a run that does not exit normally is `cannot verify`
+    (`PQV000`), never a pass.
+  - **Pinned in CI** (`ct_division_audits` in `tools/vendor_audits.json`).
+    - pq-crystals' Kyber reference before the KyberSlash fixes (`4ecce06`),
+      built with gcc 13.3 `-Os`, fails ct:encaps (`poly_compress`,
+      `polyvec_compress`) and ct:decaps (those and `poly_tomsg`) for all
+      three sets. Every one of the first 1,024 executions of each had a
+      secret dividend, while memcheck itself reported nothing.
+    - The commit that fixed it (`11d00ff`), built the same way, passes.
+    - At `-O1` to `-O3`, and with clang 18.1 at every level, that code
+      compiles to no division instruction.
+    - PQClean's planted KyberSlash mutant, which reachability (`PQV012`)
+      only pointed at, now fails both stages too.
+  - **Unchanged.** mlkem-native, PQClean and liboqs have no integer
+    division, so their recorded results stand. Without gdb, or on another
+    architecture, divisions are listed as before, and the report says why
+    they were not checked. The vendor-audit job now installs gdb.
+  - **Scope.** The check sees only divisions that execute, the first 1,024
+    times each does while secrets are live, and only division instructions
+    in the library's own code. It has memcheck's precision, and it does not
+    measure latency. ML-DSA, Classic McEliece and FN-DSA list their
+    divisions only.
+
 ### Fixed
 
 - **NTT scan (`pqverify_scan`, `--audit-so`): a correct Montgomery-domain
