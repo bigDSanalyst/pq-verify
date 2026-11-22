@@ -48,6 +48,7 @@ are the same. An ambiguous role is never guessed (--mceliece-symbol,
 import ctypes as _ct
 import random
 import re as _re
+import subprocess
 
 from . import mceliece as M
 
@@ -443,7 +444,12 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
                 ct_res = constant_time(v)
                 for op, val in ct_res["stages"].items():
                     T.detail["ct:" + op] = val
-            except CT.Unavailable as exc:
+            except subprocess.TimeoutExpired as exc:
+                # As --audit-fndsa does: it used to raise and lose the audit.
+                ct_res = {"unavailable": f"the run under memcheck did not finish "
+                                         f"within {exc.timeout:g} s"}
+                T.detail["ct:unavailable"] = (0, 1)
+            except (CT.Unavailable, RuntimeError, OSError) as exc:
                 # Asked for and not run is not a pass: a stage that fails, saying why.
                 ct_res = {"unavailable": str(exc)}
                 T.detail["ct:unavailable"] = (0, 1)

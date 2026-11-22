@@ -57,9 +57,28 @@ versioning](https://semver.org/spec/v2.0.0.html).
 - **The Action: nothing to check was `verified=true`.** With `acvp: false`
   and no library or transcript, nothing ran and the step passed. It now
   fails with `verified` false.
-- **`exec(open('pq_verify/core.py').read())`, ARCHITECTURE.md's route,
-  looked for `vectors/`, `coq/` and `engines/` in the checkout's root.** It
-  now finds the package directory under the working directory.
+- **ARCHITECTURE.md's `exec(open('pq_verify/core.py').read())` did not
+  work**, and had not since before 2.20.0: the self-suite stops at its first
+  relative import (`ImportError: attempted relative import with no known
+  parent package`). It is replaced by `from pq_verify.core import *` and
+  `main(quick=True)`, which load the same API and run the same 160 checks.
+  Making `exec` itself work would load a second copy of `core.py` beside the
+  imported package, with its own record of skipped checks, so the integrity
+  verdict could miss one.
+- **`--audit-contained` did not check the inputs' guard bytes.** The worker
+  put every input it handed the library between guards but checked only the
+  outputs', so a decaps that wrote past the ciphertext it was given passed.
+  The in-process audit, which checks every buffer, failed it. Both now do.
+- **A constant-time run that crashed or timed out under memcheck lost the
+  whole audit.** `--audit-kem --constant-time` raised, and the CLI reported
+  CANNOT VERIFY, discarding the NIST results that had passed; through the
+  Python API the exception escaped. That operation's `ct:` stage now fails,
+  saying why (`cannot verify: the run under memcheck failed: the driver
+  failed (decaps, killed by SIGABRT)`, rule `PQV000`), and the other
+  operation and every NIST stage keep their results. `Unavailable` still
+  means the tools, or memcheck's self-test, are missing. `--audit-dsa` and
+  `--audit-mceliece` raised the same way; they now fail their constant-time
+  stage as `--audit-fndsa` already did.
 
 ### Changed
 

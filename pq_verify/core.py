@@ -6347,20 +6347,13 @@ _VECTOR_BUNDLES = {
 }
 
 def _pkg_dir():
-    """Directory of this module. When it is run through exec(), where
-    __file__ is undefined, the package directory under the working
-    directory if there is one (ARCHITECTURE.md's route,
-    `exec(open('pq_verify/core.py').read())` from a checkout's root), else
-    the working directory. It used to be the working directory always, so
-    that route looked for vectors/, coq/ and engines/ in the checkout's
-    root, where none of them are."""
+    """Directory of this module. Falls back to CWD when run via exec() as a
+    standalone script, where __file__ is undefined."""
     import os as _o
     try:
         return _o.path.dirname(_o.path.abspath(__file__))
     except NameError:
-        cwd = _o.getcwd()
-        sub = _o.path.join(cwd, "pq_verify")
-        return sub if _o.path.isfile(_o.path.join(sub, "core.py")) else cwd
+        return _o.getcwd()
 
 def _bundle_name(key=None):
     """The archive that holds `key` ('DIR/file.json'); the main one if None."""
@@ -7417,6 +7410,10 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
             print(f"  FAIL  constant time: could not run ({ct_res['unavailable']})")
         elif ct_res:
             for op, (p, t) in ct_res['stages'].items():
+                if op in (ct_res.get('failed') or {}):
+                    print(f"  FAIL  ct:{op:7s} {p}/{t}  cannot verify: "
+                          f"{ct_res['failed'][op]}")
+                    continue
                 print(f"  {'PASS' if p == t else 'FAIL'}  ct:{op:7s} {p}/{t}  no secret-dependent "
                       f"branch or memory access (Valgrind memcheck)")
                 for lk in ct_res['leaks'][op][:3]:
