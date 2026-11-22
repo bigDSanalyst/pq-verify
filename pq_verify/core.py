@@ -7414,12 +7414,22 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                     print(f"  FAIL  ct:{op:7s} {p}/{t}  cannot verify: "
                           f"{ct_res['failed'][op]}")
                     continue
+                _divs = (" or division operand"
+                         if (ct_res.get('division_check') or {}).get('checked') else "")
                 print(f"  {'PASS' if p == t else 'FAIL'}  ct:{op:7s} {p}/{t}  no secret-dependent "
-                      f"branch or memory access (Valgrind memcheck)")
+                      f"branch, memory access{_divs} (Valgrind memcheck)")
                 for lk in ct_res['leaks'][op][:3]:
+                    if lk.get('site'):
+                        print(f"        \u2717 secret {lk['operand']} of the division at "
+                              f"{lk['site']} ({lk['count']} of {lk['checked']} executions "
+                              f"checked)")
+                        continue
                     print(f"        \u2717 {lk['kind']} in {lk['function']} "
                           f"({lk['count']} report(s))")
             print(f"        {_ct.division_note(ct_res)}")
+            _dcn = _ct.division_check_note(ct_res)
+            if _dcn:
+                print(f"        {_dcn}")
             _rn = _ct.reachability_note(ct_res)
             if _rn:
                 print(f"        {_rn}")
@@ -7429,9 +7439,12 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
               f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
         print(f"  This audits the vendor's OWN keygen/encaps/decaps against")
         print(f"  NIST's published vectors, including the invalid keys it")
-        print(f"  must refuse. " + ("Constant-time: branches and addresses only, not "
-                                   "timing or power." if constant_time else
-                                   "It is not a side-channel review."))
+        _divs_checked = ((ct_res or {}).get("division_check") or {}).get("checked")
+        print(f"  must refuse. " + (
+            ("Constant-time: branches, addresses and division operands, "
+             "not timing or power." if _divs_checked else
+             "Constant-time: branches and addresses only, not timing or power.")
+            if constant_time else "It is not a side-channel review."))
         print("=" * 68)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,

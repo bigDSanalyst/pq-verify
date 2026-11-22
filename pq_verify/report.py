@@ -166,11 +166,25 @@ RULES = {
                  "may still be reached at run time."),
         "level": "note",
     },
+    "PQV013": {
+        "name": "SecretDivisionOperand",
+        "short": "A hardware division took a secret operand at run time",
+        "full": ("While the library ran on marked secrets under Valgrind memcheck, "
+                 "the dividend or divisor of an integer division instruction carried "
+                 "secret bits: memcheck's shadow registers (or, for a divisor in "
+                 "memory, the shadow bits of those bytes), read through vgdb at the "
+                 "instruction. Division latency depends on its operands on many "
+                 "processors, which is how KyberSlash leaked the key. x86-64 only, "
+                 "and the latency itself is not measured: whether the division "
+                 "leaks on a given processor depends on that processor."),
+        "level": "error",
+    },
 }
 
 _FINDING_MAP = (
     # Scheme prefixes first: a finding's own text may contain a later needle
     # ("LMS malformed" holds "malformed", which means CannotVerify below).
+    ("secret-dependent division", "PQV013"),
     ("ML-DSA:",     "PQV008"),
     ("LMS/XMSS:",   "PQV009"),
     ("source:",     "PQV010"),
@@ -427,10 +441,17 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
         if "unavailable" not in ct:
             doc["side_channel"]["constant_time_checked"] = {
                 "operations": sorted(ct["stages"]), "tool": ct.get("tool"),
-                "scope": ("secret-dependent branches and memory addresses in this "
-                          "binary, by Valgrind memcheck taint; not instruction "
-                          "timing (division), power, EM or microarchitecture, "
-                          "and not key generation"),
+                "scope": (("secret-dependent branches and memory addresses in this "
+                           "binary, by Valgrind memcheck taint, and the operands of "
+                           "every integer division executed while secrets were live "
+                           "(x86-64, shadow registers through vgdb); not instruction "
+                           "timing itself, power, EM or microarchitecture, and not "
+                           "key generation")
+                          if (ct.get("division_check") or {}).get("checked") else
+                          ("secret-dependent branches and memory addresses in this "
+                           "binary, by Valgrind memcheck taint; not instruction "
+                           "timing (division), power, EM or microarchitecture, "
+                           "and not key generation")),
                 # Unknown, not false, when a run did not finish: a stage that
                 # failed for that reason is not a leak.
                 "leak_free": (None if ct.get("failed") else
@@ -474,10 +495,18 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
             elif k[3:] in (ct.get("failed") or {}):
                 findings.append(f"stage {k}: cannot verify: {ct['failed'][k[3:]]}")
             else:
-                where = "; ".join(f"{l['kind']} in {l['function']}"
-                                  for l in (ct.get("leaks") or {}).get(k[3:], []))
-                findings.append(f"stage {k}: secret-dependent behaviour under Valgrind "
-                                f"memcheck: {where}")
+                op_leaks = (ct.get("leaks") or {}).get(k[3:], [])
+                divs = [l for l in op_leaks if l.get("site")]
+                rest = [l for l in op_leaks if not l.get("site")]
+                if rest or not divs:
+                    where = "; ".join(f"{l['kind']} in {l['function']}" for l in rest)
+                    findings.append(f"stage {k}: secret-dependent behaviour under Valgrind "
+                                    f"memcheck: {where}")
+                for l in divs:          # one finding per division, each PQV013
+                    findings.append(
+                        f"stage {k}: secret-dependent division at {l['site']}: its "
+                        f"{l['operand']} carried secret bits in {l['count']} of the "
+                        f"{l['checked']} executions checked while secrets were live")
             continue
         if k == "bounds":
             from .bounds import finding as _bounds_finding

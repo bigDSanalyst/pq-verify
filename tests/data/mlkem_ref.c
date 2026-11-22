@@ -12,6 +12,11 @@
  *   -DMUT_OVERRUN      encaps writes one byte past the shared secret
  *   -DMUT_OVERRUN_INPUT decaps writes one byte past the ciphertext it was given
  *   -DMUT_CRASH_UNDER_VALGRIND  decaps aborts under Valgrind; natively it is correct
+ *   -DMUT_DIV_COMPRESS Compress divides by q with a hardware division (KyberSlash):
+ *                      same results, secret dividends in encaps and decaps
+ *   -DMUT_DIV_PUBLIC   encaps and decaps also divide two public values
+ *   -DMUT_DIV_MEMORY   encaps divides by a secret-derived divisor read from memory
+ *                      (x86-64 only)
  *   -DPQV_HOOK=fn      key generation first calls fn(coins), which the test
  *                      defines in another file: a planted behaviour
  */
@@ -278,12 +283,19 @@ static void decode(poly *f, const uint8_t *in, int d)      /* ByteDecode_d */
     }
 }
 
+static volatile uint32_t pqvref_sink;
+
 static void compress(poly *f, int d)
 {
     int i;
+#ifdef MUT_DIV_COMPRESS
+    volatile uint32_t q = Q;            /* a division the compiler cannot strength-reduce */
+#endif
     for (i = 0; i < N; i++)
 #ifdef MUT_COMPRESS
         f->c[i] = (int16_t)((((uint32_t)f->c[i] << d) / Q) & ((1u << d) - 1));
+#elif defined(MUT_DIV_COMPRESS)
+        f->c[i] = (int16_t)(((((uint32_t)f->c[i] << d) + Q / 2) / q) & ((1u << d) - 1));
 #else
         f->c[i] = (int16_t)(((((uint32_t)f->c[i] << d) + Q / 2) / Q) & ((1u << d) - 1));
 #endif
@@ -414,6 +426,16 @@ int NAME(enc_derand)(uint8_t *ct, uint8_t *ss, const uint8_t *ek, const uint8_t 
     }
 #endif
     H(ek, EK_BYTES, h);
+#ifdef MUT_DIV_PUBLIC
+    { volatile uint32_t a = EK_BYTES, b = 7; pqvref_sink = a / b; }
+#endif
+#if defined(MUT_DIV_MEMORY) && defined(__x86_64__)
+    {
+        uint32_t lo = 1000000, hi = 0, d = (uint32_t)m[0] + Q;
+        __asm__ volatile("divl %2" : "+a"(lo), "+d"(hi) : "m"(d));
+        pqvref_sink = lo;
+    }
+#endif
     G2(m, 32, h, 32, kr);
     pke_encrypt(ct, ek, m, kr + 32);
     memcpy(ss, kr, 32);
@@ -430,6 +452,9 @@ int NAME(dec)(uint8_t *ss, const uint8_t *ct, const uint8_t *dk)                
     uint8_t m[32], kr[64], test[32];
 
     tables();
+#ifdef MUT_DIV_PUBLIC
+    { volatile uint32_t a = CT_BYTES, b = 7; pqvref_sink = a / b; }
+#endif
 #ifndef MUT_NO_DK_CHECK
     H(ek, EK_BYTES, test);                                  /* the hash check */
     if (memcmp(test, h, 32)) return -1;

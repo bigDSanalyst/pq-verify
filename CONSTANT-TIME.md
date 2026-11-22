@@ -231,7 +231,7 @@ result in the third column, for the reason in the fourth.
 | 3 | the signature declassified with `w0` and `w1_packed`, before `c̃` and `h` are packed and before the hint-weight check (a known site, at the wrong point), on a message accepted at its first attempt | **fail**: value, and only value | the position is the one the table allows, so only the comparison sees it: the bytes declassified are not the returned signature |
 | 4 | the same build, on a message whose signing includes a hint-weight rejection | **fail**: position | the signature is declassified in an attempt that was rejected. Any other rejection ends its attempt before this point, so it takes a hint-weight rejection to expose it |
 | 5 | a table read indexed by a secret coefficient inside `mld_poly_chknorm_c`, its value discarded | **fail**: secret used as an address | memcheck `UninitValue`, with every instruction's result committed (section 2) |
-| 6 | `mld_decompose` divides with a hardware division instruction (same results) | **memcheck silent**, division listed | memcheck does not see instruction timing; the division list is the separate reviewer's artefact, as for KyberSlash in ML-KEM |
+| 6 | `mld_decompose` divides with a hardware division instruction (same results) | **memcheck silent**, division listed | memcheck does not see instruction timing; the division list is the separate reviewer's artefact. ML-KEM's secret-division check (`PQV013`, section 5) is not part of this audit |
 | — | the driver's self-test: a branch on a marked secret, and a read indexed by one whose register is overwritten at once | both must be reported | otherwise the run is CANNOT VERIFY |
 
 Verify is not a control: its inputs are public, so memcheck has nothing to
@@ -248,6 +248,24 @@ RISC-V, and the calls it names to the compiler's division routines, which a
 processor without a division instruction uses instead. On any other
 architecture, or without objdump, the report says the list was not made, and
 why, rather than show none.
+
+For ML-KEM, `--audit-kem --constant-time` goes further on x86-64 when gdb is
+installed. It runs each operation again with Valgrind's gdbserver on, and gdb,
+attached through vgdb, stops at every integer division instruction in the
+library. While the driver has secrets marked, gdb reads memcheck's shadow
+registers for the dividend and the divisor at each one; a divisor in memory
+is read from the shadow bits of its bytes. A secret operand fails the stage
+(the error-level SARIF rule `PQV013`). A self-test in the same run must see a
+secret dividend reported and a public one not, or the stage cannot be
+verified. The check sees only divisions that execute, the first 1,024 times
+each does while secrets are live, and it does not measure latency, which
+depends on the processor. pq-crystals' Kyber reference from before the
+KyberSlash fixes, built with gcc `-Os`, fails it in `poly_tomsg`,
+`poly_compress` and `polyvec_compress` with memcheck itself silent, and the
+commit that fixed them passes
+([AUDITS.md](AUDITS.md#constant-time---constant-time)). The ML-DSA audit this
+document specifies does not run the check, so its divisions are listed only,
+as control 6 shows.
 
 Of the functions that list names, the report says which are reachable from the
 audited secret-input entry points -- Encaps and Decaps for a KEM, Sign for a
@@ -266,8 +284,8 @@ Falcon have no integer division at all, so there is nothing to reach; the gate
 is exercised by a negative control instead. A KyberSlash-class division
 reintroduced into ML-KEM's ciphertext compression -- a variable-time divide by
 q that computes the same value, so every NIST vector still passes -- is caught
-as reachable from Decaps while every constant-time stage stays green: the
-listing sees what memcheck cannot.
+as reachable from Decaps. It also fails ML-KEM's constant-time stages through
+its secret dividend (`PQV013`), while memcheck's own reports stay empty.
 
 memcheck sees addresses only of the memory
 accesses Valgrind translates. By default the translator deletes a load whose value is

@@ -380,6 +380,15 @@ it cannot see) records exactly its scope:
 }
 ```
 
+When the secret-division check ran (x86-64, gdb installed), the scope says so:
+"secret-dependent branches and memory addresses in this binary, by Valgrind
+memcheck taint, and the operands of every integer division executed while
+secrets were live (x86-64, shadow registers through vgdb); not instruction
+timing itself, power, EM or microarchitecture, and not key generation". What
+it checked is under `constant_time.division_check`: each operation's division
+sites executed while secrets were live, those with a secret operand, and
+those that reached the 1,024 checks per site.
+
 `--audit-dsa ... --constant-time` records the same, with the site table its
 declassifications were judged by ([CONSTANT-TIME.md](CONSTANT-TIME.md)):
 
@@ -450,6 +459,7 @@ pq_verify/
   isolate.py               Runs a vendor audit in a child process
   dsa_audit.py             ML-DSA library audit
   ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
+  ct_div.py                Secret operands of ML-KEM's divisions, through vgdb (PQV013)
   ct_dsa.py                ML-DSA constant time, judged by the library's declassifications
   ct_fndsa.py              FN-DSA constant time, the signer's own branches matched by line
   reach.py                 Call-graph reachability: which listed divisions a secret-input entry reaches

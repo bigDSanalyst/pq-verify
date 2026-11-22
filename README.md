@@ -394,6 +394,7 @@ SARIF-to-ASFF conversion step.
 | `PQV010` | Undefined behaviour, an overflow or a wrong reduction in the C source |
 | `PQV011` | The library did what the contained worker's filter forbids, or left a process behind |
 | `PQV012` | An integer division is reachable from a secret-input entry point (note; a review pointer, not a timing verdict) |
+| `PQV013` | An integer division took a secret operand at run time (`--audit-kem --constant-time`, x86-64, with gdb) |
 | `PQV000` | The run could not verify this — not a pass and not a failure |
 
 `--fail-on-finding` exits non-zero, so it can gate a merge.
@@ -560,14 +561,20 @@ every memory address that depends on them, naming the function -- the
 technique mlkem-native and BoringSSL use on themselves. It catches the
 Clangover class (a compiler-introduced branch on a secret bit) and
 cache-timing table lookups; three such leaks planted in PQClean, each leaving
-every output correct, are caught in CI. It does **not** see instruction
-timing -- KyberSlash's secret division -- so the report lists the library's
-integer divisions for a reviewer instead, marking those reachable from Encaps
-or Decaps by call-graph reachability (the note-level rule `PQV012`, a pointer
-and not a verdict; a KyberSlash-class division put back into ML-KEM's
-compression is caught as reachable from Decaps while every memcheck stage stays
-green); it cannot check key generation (the public matrix seed is derived from
-the secret seed); and it measures nothing physical. The report records exactly that scope, and without the flag
+every output correct, are caught in CI. memcheck does **not** see
+instruction timing -- KyberSlash's secret division -- so on x86-64, with gdb
+installed, pq-verify also stops at every integer division the library executes
+while secrets are live and reads memcheck's shadow registers for its dividend
+and divisor; one that carries secret bits fails the stage (the error-level rule
+`PQV013`). pq-crystals' reference from before the KyberSlash fixes, built with
+gcc -Os, fails it in `poly_tomsg`, `poly_compress` and `polyvec_compress` while
+memcheck itself reports nothing, and the commit that fixed it passes. It sees
+only the divisions that run, and does not measure their latency. Elsewhere the
+library's integer divisions are listed for a reviewer, those reachable from
+Encaps or Decaps marked by call-graph reachability (the note-level rule
+`PQV012`, a pointer and not a verdict). It cannot check key generation (the
+public matrix seed is derived from the secret seed), and it measures nothing
+physical. The report records exactly that scope, and without the flag
 claims nothing ([the report fields](https://github.com/bigDSanalyst/pq-verify/blob/main/ARCHITECTURE.md#side-channel-report-fields)).
 
 **`--audit-dsa ... --constant-time` does the same for ML-DSA's key generation
@@ -680,7 +687,10 @@ pip install "pq-verify[full]"   # kyber-py, dilithium-py, sympy, slh-dsa
 **For `--constant-time`:** Valgrind with its headers (`valgrind/memcheck.h`;
 `apt install valgrind`) and a C compiler, which builds the small driver that
 runs the library under memcheck. For FN-DSA, the library also needs its debug
-information (`-g`), and its source where that information says.
+information (`-g`), and its source where that information says. For ML-KEM's
+secret-division check (`PQV013`, x86-64), also gdb (`apt install gdb`); vgdb
+comes with Valgrind. Without gdb the divisions are listed, not checked, and
+the report says so.
 
 **For `--audit-contained`:** Linux on x86-64 with seccomp and `/proc`, and a C
 compiler, which builds the worker when the audit runs. `kyber-py` computes the

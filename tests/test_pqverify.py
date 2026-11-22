@@ -3193,6 +3193,161 @@ def test_kem_constant_time_run_that_crashes_fails_its_stage_not_the_audit(tmp_pa
     assert doc["side_channel"]["constant_time_checked"]["leak_free"] is None
 
 
+# ----------------------------------------------------------------------
+# PQV013: secret operands of the library's integer divisions, at run time
+# (pq_verify.ct_div). tests/data/mlkem_ref.c plants: MUT_DIV_COMPRESS, a
+# KyberSlash-class division by q; MUT_DIV_PUBLIC, a division of two public
+# values while secrets are live; MUT_DIV_MEMORY, a secret divisor in memory.
+# ----------------------------------------------------------------------
+
+_OBJDUMP_DIVS = """
+0000000000001100 <compress>:
+    1134:\tdiv    %edi
+0000000000001200 <enc>:
+    12df:\tdivl   0x2c(%rsp)
+    12e5:\tidivq  -0x8(%rbp,%rax,8)
+    12f0:\tdivb   0x2eca(%rip)        # 41c0 <q>
+    1300:\tmov    0x2eca(%rip),%rdx        # 3fd0 <divisor-0x38>
+"""
+
+
+def test_division_sites_are_read_with_their_operands():
+    from pq_verify.ct_div import sites
+    got = [(s["fn"], s["offset"] - s["fn_start"], s["mnemonic"], s["operands"])
+           for s in sites(_OBJDUMP_DIVS)]
+    assert got == [("compress", 0x34, "div", "%edi"),
+                   ("enc", 0xdf, "divl", "0x2c(%rsp)"),
+                   ("enc", 0xe5, "idivq", "-0x8(%rbp,%rax,8)"),
+                   ("enc", 0xf0, "divb", "0x2eca(%rip)")]   # not the mov naming "divisor"
+
+
+@pytest.mark.parametrize("result, why", [
+    ({"errors": ["compress+0x34: RuntimeError: no shadow register $raxs1"]}, "check failed"),
+    ({"errors": [], "exit_code": 134, "selftest": [True, False]}, "did not exit normally"),
+    ({"errors": [], "exit_code": None, "selftest": [True, False]}, "did not exit normally"),
+    ({"errors": [], "exit_code": 0, "selftest": []}, "self-test"),
+    ({"errors": [], "exit_code": 0, "selftest": [False, False]}, "self-test"),
+    ({"errors": [], "exit_code": 0, "selftest": [True, True]}, "self-test"),
+])
+def test_division_check_fails_closed(result, why):
+    """Silence counts only from a run whose own planted secret division was
+    reported, whose public one was not, that ended normally and read every
+    operand it met. The first draft's wrong register names made every read
+    fail inside gdb, and it would have reported no secret division."""
+    from pq_verify.ct_div import judge
+    secret, why_not = judge(dict({"sites": {}}, **result))
+    assert secret == [] and why in why_not
+
+
+def test_division_check_reports_the_secret_sites():
+    from pq_verify.ct_div import judge
+    secret, why_not = judge({"errors": [], "exit_code": 0, "selftest": [True, False],
+                             "sites": {"f+0x1": {"fn": "f", "checked": 9, "secret": 0},
+                                       "g+0x2": {"fn": "g", "checked": 9, "secret": 3,
+                                                 "what": ["dividend"]}}})
+    assert why_not is None and [s["site"] for s in secret] == ["g+0x2"]
+
+
+def _division_check_or_skip():
+    import platform
+    from pq_verify import ct_audit, ct_div
+    why = ct_audit.available() or ct_div.available()
+    if why:
+        pytest.skip(why)
+    if platform.machine() not in ("x86_64", "AMD64"):
+        pytest.skip("the secret-division check reads x86-64 registers")
+
+
+def _kem_ct(tmp_path, define):
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    so = _mlkem_ref_so(tmp_path, defines=(define,))
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                               constant_time=True)
+    return r, to_json_kem(r, param_set="ML-KEM-768"), out.getvalue()
+
+
+def test_a_kyberslash_division_fails_encaps_and_decaps(tmp_path):
+    """Memcheck's own reports cannot see a division's timing: a KyberSlash-
+    class division by q passed --constant-time. Its dividend carries secret
+    bits in Encaps and in Decaps's re-encryption, and both now fail, each with
+    a PQV013 finding naming the site. The NIST stages are unchanged."""
+    from pq_verify.report import _rule_for
+    _division_check_or_skip()
+    r, doc, text = _kem_ct(tmp_path, "MUT_DIV_COMPRESS")
+    d = r["detail"]
+    assert (d["keyGen"], d["encaps"], d["decaps"]) == ((25, 25), (25, 25), (10, 10))
+    assert d["ct:encaps"] == (0, 1) and d["ct:decaps"] == (0, 1)
+    divs = [f for f in doc["findings"] if "secret-dependent division at compress+" in f]
+    assert {f.split(": ")[0] for f in divs} == {"stage ct:encaps", "stage ct:decaps"}, divs
+    assert all("its dividend carried secret bits" in f and _rule_for(f) == "PQV013"
+               for f in divs)
+    assert "secret dividend of the division at compress+" in text
+    assert "secret-division check (PQV013" in text
+
+
+def test_a_division_of_public_values_is_not_reported(tmp_path):
+    """A division executed while secrets are live, on public values, is
+    checked and passes: Encaps stays 1/1."""
+    _division_check_or_skip()
+    r, doc, text = _kem_ct(tmp_path, "MUT_DIV_PUBLIC")
+    assert r["detail"]["ct:encaps"] == (1, 1)
+    ops = r["constant_time"]["division_check"]["ops"]
+    assert ops["encaps"]["executed"] and ops["encaps"]["secret"] == []
+    assert not [f for f in doc["findings"] if "secret-dependent division" in f]
+    assert "no secret operand" in text
+
+
+def test_a_secret_divisor_in_memory_is_reported(tmp_path):
+    """A divisor read from memory is not in a register: its shadow bits are
+    read from memory (Valgrind's get_vbits) at the operand's address."""
+    _division_check_or_skip()
+    r, doc, _ = _kem_ct(tmp_path, "MUT_DIV_MEMORY")
+    assert r["detail"]["ct:encaps"] == (0, 1)
+    f = [x for x in doc["findings"] if x.startswith("stage ct:encaps: secret-dependent division")]
+    assert f and "its divisor carried secret bits" in f[0], doc["findings"]
+
+
+def test_the_division_check_without_gdb_lists_as_before(tmp_path, monkeypatch):
+    """Without gdb or vgdb the divisions are listed, not checked, as before
+    the check existed: memcheck's stages stand and the report says why."""
+    from pq_verify import ct_div
+    _division_check_or_skip()
+    monkeypatch.setattr(ct_div, "available", lambda: "gdb is not installed")
+    r, doc, text = _kem_ct(tmp_path, "MUT_DIV_COMPRESS")
+    assert r["detail"]["ct:encaps"] == (1, 1)
+    dc = r["constant_time"]["division_check"]
+    assert dc["checked"] is False and dc["why"] == "gdb is not installed"
+    assert "secret-division check (PQV013): not run: gdb is not installed" in text
+    assert "integer divisions (not checked for timing): compress" in text
+    assert "and the operands of every integer division" not in (
+        doc["side_channel"]["constant_time_checked"]["scope"])
+
+
+def test_a_division_check_whose_self_test_fails_cannot_verify(tmp_path, monkeypatch):
+    """gdb attached but the planted secret division not reported: silence
+    would mean nothing, so the stage fails, saying why."""
+    from pq_verify import ct_div
+    from pq_verify.report import _rule_for
+    _division_check_or_skip()
+    monkeypatch.setattr(ct_div, "run", lambda *a, **k: {
+        "errors": [], "exit_code": 0, "selftest": [False, False], "sites": {}})
+    r, doc, _ = _kem_ct(tmp_path, "MUT_DIV_PUBLIC")
+    assert r["detail"]["ct:encaps"] == (0, 1)
+    why = r["constant_time"]["failed"]["encaps"]
+    assert "self-test" in why
+    f = [x for x in doc["findings"] if x.startswith("stage ct:encaps: cannot verify")]
+    assert f and _rule_for(f[0]) == "PQV000"
+
+
+def test_pqv013_is_an_error_level_rule():
+    from pq_verify.report import RULES, _rule_for
+    assert RULES["PQV013"]["level"] == "error"
+    assert _rule_for("stage ct:decaps: secret-dependent division at f+0x4: its dividend "
+                     "carried secret bits in 3 of the 3 executions checked") == "PQV013"
+
+
 def _ct_failures():
     import subprocess
     return ((RuntimeError("the driver failed (exit 139): ['Segmentation fault']"), "exit 139"),
@@ -8838,11 +8993,97 @@ def test_ct_vendor_rows_and_mutants_are_well_formed():
         for m in row.get("ct_mutants", []):
             assert m["set"] in row["sets"]
             if "reach_adds" in m:
-                # a reachability mutant (a division memcheck cannot see): it
-                # names the functions it makes reachable, not failing stages
-                assert m["reach_adds"] and "fails" not in m
+                # a division mutant: it names the functions it makes reachable
+                # and the stages its secret operand fails (PQV013)
+                assert m["reach_adds"]
+                assert set(m["fails"]) == {"ct:encaps", "ct:decaps"}, m["name"]
             else:
                 assert set(m["fails"]) <= {"ct:encaps", "ct:decaps"}
+
+
+def test_ct_division_rows_are_well_formed():
+    """Each secret-division row names its compiler and level, and records for
+    every set both stages, and the functions with a secret division operand
+    for exactly the stages it records as failing."""
+    mod, _ = _vendor_audit()
+    rows = mod.load_ct_division_table()
+    assert rows, "the pre-fix and fixed pq-crystals Kyber rows"
+    for row in rows:
+        assert row["cc"] and row["opt"].startswith("-O"), row["library"]
+        assert set(row["ct"]) == set(row["sets"]) == set(row["secret_divisions"])
+        for ps in row["sets"]:
+            assert set(row["ct"][ps]) == {"ct:encaps", "ct:decaps"}
+            failing = {k for k, v in row["ct"][ps].items() if v == [0, 1]}
+            assert all(v in ([0, 1], [1, 1]) for v in row["ct"][ps].values())
+            assert set(row["secret_divisions"][ps]) == failing, (row["library"], ps)
+            assert all(row["secret_divisions"][ps].values())
+    # the pair: the same build before and after the fix, one failing, one not
+    pre, fixed = rows
+    assert (pre["build"], pre["cc"], pre["opt"], pre["sets"]) == (
+        fixed["build"], fixed["cc"], fixed["opt"], fixed["sets"])
+    assert all(pre["ct"][ps] == {"ct:encaps": [0, 1], "ct:decaps": [0, 1]} for ps in pre["sets"])
+    assert all(fixed["ct"][ps] == {"ct:encaps": [1, 1], "ct:decaps": [1, 1]}
+               for ps in fixed["sets"])
+
+
+_DIV_ROW = {
+    "library": "L", "build": "pqcrystals-kyber", "url": "u", "commit": "0" * 40,
+    "cc": "gcc", "opt": "-Os", "sets": ["ML-KEM-768"], "memcheck_silent": True,
+    "ct": {"ML-KEM-768": {"ct:encaps": [1, 1], "ct:decaps": [0, 1]}},
+    "secret_divisions": {"ML-KEM-768": {"ct:decaps": ["f_tomsg", "f_compress"]}}}
+_DIVK = "secret operand of an integer division"
+_DIV_OPS = {"encaps": {"executed": ["f_compress+0x4"], "secret": []},
+            "decaps": {"executed": ["f_compress+0x4", "f_tomsg+0x8"],
+                       "secret": ["f_compress+0x4", "f_tomsg+0x8"]}}
+
+
+def _div_result(stages=None, leaks=None, dc=None):
+    return ({"ct:encaps": [1, 1], "ct:decaps": [0, 1]} if stages is None else stages,
+            {"encaps": [], "decaps": [f"{_DIVK} in f_compress", f"{_DIVK} in f_tomsg"]}
+            if leaks is None else leaks, {},
+            {"checked": True, "sites": 3, "ops": _DIV_OPS} if dc is None else dc)
+
+
+@pytest.mark.parametrize("result,code", [
+    (_div_result(), 0),
+    # one recorded function no longer has a secret operand
+    (_div_result(leaks={"encaps": [], "decaps": [f"{_DIVK} in f_tomsg"]}), 1),
+    # a secret operand somewhere not recorded
+    (_div_result(leaks={"encaps": [f"{_DIVK} in f_compress"],
+                        "decaps": [f"{_DIVK} in f_compress", f"{_DIVK} in f_tomsg"]},
+                 stages={"ct:encaps": [0, 1], "ct:decaps": [0, 1]}), 1),
+    # the check did not run: never a match, whatever the stages say
+    (_div_result(dc={"checked": False, "why": "gdb is not installed"}), 1),
+    (_div_result(dc={"checked": True, "sites": 3,
+                     "ops": {"encaps": dict(_DIV_OPS["encaps"], not_verified="self-test"),
+                             "decaps": _DIV_OPS["decaps"]}}), 1),
+    (_div_result(dc={"checked": True, "sites": 3, "ops": {"decaps": _DIV_OPS["decaps"]}}), 1),
+    # memcheck itself reported something on a row recorded as silent
+    (_div_result(leaks={"encaps": [], "decaps": [f"{_DIVK} in f_compress",
+                                                  f"{_DIVK} in f_tomsg",
+                                                  "branch on a secret in f_cmp"]}), 1),
+    (_div_result(stages={"ct:encaps": [1, 1], "ct:decaps": [1, 1]}), 1),
+])
+def test_ct_division_rows_are_judged_exactly(monkeypatch, tmp_path, result, code, capsys):
+    mod, _ = _vendor_audit()
+    from pq_verify import ct_audit, ct_div
+    monkeypatch.setattr(ct_audit, "available", lambda: None)
+    monkeypatch.setattr(ct_div, "available", lambda: None)
+    monkeypatch.setattr(mod, "fetch", lambda *a: None)
+    monkeypatch.setattr(mod, "build", lambda *a, **k: str(tmp_path / "x.so"))
+    monkeypatch.setattr(mod, "audit_ct", lambda *a: result)
+    assert mod.check_ct_divisions([_DIV_ROW], str(tmp_path)) == code
+    out = capsys.readouterr().out
+    assert ("  ok     " in out) == (code == 0) and ("  DIFF   " in out) == (code == 1)
+
+
+def test_ct_division_rows_cannot_run_without_gdb(monkeypatch, tmp_path, capsys):
+    mod, _ = _vendor_audit()
+    from pq_verify import ct_audit, ct_div
+    monkeypatch.setattr(ct_audit, "available", lambda: None)
+    monkeypatch.setattr(ct_div, "available", lambda: "gdb is not installed")
+    assert mod.check_ct_divisions([_DIV_ROW], str(tmp_path)) == 2
+    assert "gdb is not installed" in capsys.readouterr().out
 
 
 def test_constant_time_catches_a_discarded_secret_table_read(tmp_path):
