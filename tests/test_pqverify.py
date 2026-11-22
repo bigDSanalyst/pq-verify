@@ -3127,6 +3127,89 @@ def test_a_kem_that_stays_inside_its_buffers_passes_the_bounds_check(tmp_path):
     assert "PASS  bounds" in out.getvalue()
 
 
+def _mlkem_ref_so(tmp_path, k=3):
+    import shutil, subprocess
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    so = tmp_path / f"libmlkemref{k}.so"
+    src = pathlib.Path(__file__).resolve().parent / "data" / "mlkem_ref.c"
+    subprocess.run([cc, "-std=gnu11", "-O1", "-fPIC", "-shared", f"-DK={k}", "-o", str(so),
+                    str(src)], check=True, capture_output=True)
+    return str(so)
+
+
+def _kem_vector_dir(tmp_path, mutate):
+    """The pinned ML-KEM vectors as a --vector-dir, after `mutate(encapDecap)`."""
+    import json
+    from pq_verify.core import _load_bundle
+    out = tmp_path / "vectors"
+    for name in ("ML-KEM-keyGen-FIPS203", "ML-KEM-encapDecap-FIPS203"):
+        key = f"{name}/internalProjection.json"
+        doc = _load_bundle(key)[key]
+        doc = json.loads(doc) if isinstance(doc, str) else json.loads(json.dumps(doc))
+        if name == "ML-KEM-encapDecap-FIPS203":
+            mutate(doc)
+        (out / name).mkdir(parents=True)
+        (out / name / "internalProjection.json").write_text(json.dumps(doc))
+    return str(out)
+
+
+def _decaps_groups(doc, ps="ML-KEM-768"):
+    return [g for g in doc["testGroups"]
+            if g.get("parameterSet") == ps and g.get("function") == "decapsulation"]
+
+
+def test_kem_audit_fails_a_stage_no_vector_reached(tmp_path):
+    """A vector file with no decapsulation tests for the parameter set used
+    to give VERIFIED: the stage that never ran was simply absent from the
+    count. A correct library passes all of it and still is not verified."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    so = _mlkem_ref_so(tmp_path)
+    with contextlib.redirect_stdout(io.StringIO()):
+        full = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0)
+    assert full["verified"] is True and full["detail"]["decaps"] == (10, 10)
+
+    def drop(doc):
+        doc["testGroups"] = [g for g in doc["testGroups"] if g not in _decaps_groups(doc)]
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                               vector_dir=_kem_vector_dir(tmp_path, drop))
+    assert r["verified"] is False
+    assert r["detail"]["not_run:decaps"] == (0, 1) and "decaps" not in r["detail"]
+    assert {k for k, (p, t) in r["detail"].items() if p != t} == {"not_run:decaps"}
+    assert "FAIL  decaps   no NIST vector ran: not checked" in out.getvalue()
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    assert doc["status"] == "FINDINGS PRESENT"
+    assert doc["findings"] == ["stage decaps: no NIST vector ran, so it was not checked"]
+    from pq_verify.report import _rule_for
+    assert _rule_for(doc["findings"][0]) == "PQV000"       # could not verify, not a fault
+
+
+def test_kem_audit_counts_decaps_vectors_it_could_not_run(tmp_path):
+    """A decapsulation test without dk, c or k was skipped silently, and the
+    audit was VERIFIED on the tests that were left."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+    so = _mlkem_ref_so(tmp_path)
+
+    def strip_one(doc):
+        _decaps_groups(doc)[0]["tests"][0].pop("dk")
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        r = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                               vector_dir=_kem_vector_dir(tmp_path, strip_one))
+    assert r["verified"] is False and r["decaps_not_run"] == 1
+    assert r["detail"]["decaps"] == (9, 9) and r["detail"]["decapsSkipped"] == (0, 1)
+    assert "1 decapsulation vector(s) lack dk, c or k and were not run" in out.getvalue()
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    assert doc["decaps_not_run"] == 1
+    assert doc["findings"] == ["stage decaps: 1 vector(s) lack dk, c or k and were "
+                               "not run, so they were not checked"]
+    from pq_verify.report import _rule_for
+    assert _rule_for(doc["findings"][0]) == "PQV000"
+
+
 @pytest.mark.parametrize("variant, ek, dk", [
     (None,            (5, 5, 0), (5, 5, 0)),   # accepts everything
     ("REJECT_ALL",    (5, 0, 5), (5, 0, 5)),   # refuses everything
@@ -3202,6 +3285,172 @@ def test_ntt_scan_does_not_claim_one_parameter_set():
     # An explicit k still names that set, for callers who pass one.
     with contextlib.redirect_stdout(io.StringIO()):
         assert pqverify_kat(ntt, k=3)["name"] == "ML-KEM-768"
+
+
+# ----------------------------------------------------------------------
+# The NTT scan: the output domain, the KAT in the count, the engines' bounds
+# ----------------------------------------------------------------------
+
+def _scan_engines():
+    import pq_verify.core as core
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng = core.compile_all()
+    if eng.get("zq") is None or eng.get("zq32") is None:
+        pytest.skip("zq/zq32 engines unavailable (no C compiler)")
+    return core, eng
+
+
+def _ref_by_definition(core, q):
+    return core._mlkem_ntt_by_definition if q == 3329 else core._mldsa_ntt_by_definition
+
+
+@pytest.mark.parametrize("scheme, q, R", [("mlkem", 3329, 1 << 16),
+                                          ("mldsa", 8380417, 1 << 32)])
+def test_scan_passes_a_montgomery_domain_ntt(scheme, q, R):
+    """An NTT may leave its output in the Montgomery domain (x R mod q). The
+    Full NTT check allowed for that, but Freivalds and the KAT were given the
+    raw output, so a correct NTT of that kind got two findings."""
+    core, eng = _scan_engines()
+    ref = _ref_by_definition(core, q)
+
+    def mont(poly):
+        return [(R * v) % q for v in ref(list(poly))]
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        (r,) = core.pqverify_scan(mont, ns={"engines": eng}, scheme=scheme)
+    assert (r["passed"], r["total"], r["findings"]) == (4, 4, []), out.getvalue()
+    assert r["kat"]["verified"] is True
+    assert "[montgomery domain]" in out.getvalue()
+    # Montgomery output with the wrong factor (2^15) is still wrong.
+    with contextlib.redirect_stdout(io.StringIO()):
+        (bad,) = core.pqverify_scan(lambda p: [(R // 2 * v) % q for v in ref(list(p))],
+                                    ns={"engines": eng}, scheme=scheme)
+    assert bad["passed"] < bad["total"]
+
+
+def test_scan_counts_the_kat_for_every_function():
+    """An NTT wrong only on the all-ones input passes 100 random polynomials
+    and Freivalds; the KAT's boundary inputs are what catch it. The KAT's
+    mismatch was printed but not counted, so the scan said 3/3 VERIFIED; and
+    it ran on the first function only, its result copied onto the rest."""
+    from pq_verify.report import to_json
+    core, eng = _scan_engines()
+    ref = core._mlkem_ntt_by_definition
+
+    def good(poly):
+        return list(ref(list(poly)))
+
+    def wrong_on_all_ones(poly):
+        o = list(ref(list(poly)))
+        if all(v == 1 for v in poly):
+            o[0] = (o[0] + 1) % 3329
+        return o
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        (r,) = core.pqverify_scan(wrong_on_all_ones, ns={"engines": eng}, scheme="mlkem")
+    assert (r["passed"], r["total"]) == (3, 4), out.getvalue()
+    assert r["kat"]["verified"] is False
+    assert [f for f in r["findings"] if f.startswith("KAT: 0 random + 1 boundary")]
+    assert to_json([r])["summary"]["verified"] is False
+    from pq_verify.report import to_sarif
+    rules = [x["ruleId"] for x in to_sarif([r])["runs"][0]["results"]]
+    assert rules == ["PQV004"], rules           # the KAT's rule, never reached before
+    with contextlib.redirect_stdout(io.StringIO()):
+        a, b = core.pqverify_scan(good, wrong_on_all_ones, ns={"engines": eng},
+                                  scheme="mlkem")
+    assert (a["name"], a["passed"], a["total"], a["kat"]["verified"]) == ("good", 4, 4, True)
+    assert (b["name"], b["passed"], b["total"], b["kat"]["verified"]) == (
+        "wrong_on_all_ones", 3, 4, False)
+
+
+@pytest.mark.parametrize("name, fn, ctype, q, zeta", [
+    ("zq", "zq_freivalds_ntt", "c_uint16", 3329, 17),
+    ("zq32", "zq32_freivalds_ntt", "c_uint32", 8380417, 1753)])
+def test_freivalds_engines_refuse_other_sizes_and_follow_zeta(name, fn, ctype, q, zeta):
+    """Both engines hold the n = 256 transform's zeta table. The 16-bit one
+    had no bound on n, so n = 512 read and wrote past it; and both built the
+    table once, for the first zeta they saw, and reused it for any other."""
+    import ctypes
+    core, eng = _scan_engines()
+    ct = getattr(ctypes, ctype)
+    f = getattr(eng[name], fn)
+    f.argtypes = [ctypes.POINTER(ct)] * 2 + [ctypes.c_int, ct, ct, ctypes.c_int,
+                                             ctypes.c_uint32]
+    f.restype = ctypes.c_int
+    for n in (0, 128, 512, 1024):
+        buf = (ct * max(n, 1))()
+        assert f(buf, buf, n, q, zeta, 5, 1) == -1, n
+    x = [(7 * i + 3) % q for i in range(256)]
+    X, Y = (ct * 256)(*x), (ct * 256)(*_ref_by_definition(core, q)(list(x)))
+    other = pow(zeta, 3, q)                  # a root of the same order
+    assert f(X, Y, 256, q, zeta, 5, 1) == 1
+    assert f(X, Y, 256, q, other, 5, 1) != 1   # the table for `zeta` was reused
+    assert f(X, Y, 256, q, zeta, 5, 1) == 1
+
+
+def _butterfly_ntt(q, zeta, n, layers):
+    """A correct Cooley-Tukey NTT for any (q, zeta, n) and layer count."""
+    def br(x):
+        r = 0
+        for _ in range(layers):
+            r = (r << 1) | (x & 1); x >>= 1
+        return r
+    z = [pow(zeta, br(i), q) for i in range(1 << layers)]
+
+    def ntt(p):
+        f = [x % q for x in p]; k = 1
+        for layer in range(layers):
+            L = n // (2 << layer)
+            for s in range(0, n, 2 * L):
+                w = z[k]; k += 1
+                for j in range(s, s + L):
+                    t = w * f[j + L] % q
+                    f[j + L] = (f[j] - t) % q; f[j] = (f[j] + t) % q
+        return f
+    return ntt
+
+
+@pytest.mark.parametrize("zeta, layers, shape", [(17, 7, "complete"),        # order 256 = 2n
+                                                 (289, 6, "incomplete")])    # order 128 = n
+def test_scan_holds_another_size_to_its_own_definition(zeta, layers, shape):
+    """For n = 128 the Freivalds engines do not apply: the check is skipped
+    and says so (it used to run with the n = 256 table and fail a correct
+    NTT, or with n = 512 write past it). The KAT's definition follows zeta's
+    order, not q: a complete transform with q = 3329 was held to ML-KEM's
+    quadratic factors and failed."""
+    core, eng = _scan_engines()
+    ntt = _butterfly_ntt(3329, zeta, 128, layers)
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            (r,) = core.pqverify_scan(ntt, ns={"engines": eng, "N": 128}, q=3329, zeta=zeta)
+        assert core.DEGRADED["skipped_checks"] == ["Freivalds"]
+    text = out.getvalue()
+    assert f"{layers}-layer {shape} NTT" in text
+    assert "Freivalds: SKIPPED" in text and "Freivalds (" not in text
+    assert (r["passed"], r["total"], r["findings"]) == (3, 3, []), text
+    assert r["kat"]["verified"] is True and r["kat"]["name"] == f"q=3329 n=128 {shape}"
+    assert "FIPS 203" not in text
+
+
+def test_kat_counts_an_ntt_that_raises_on_a_boundary_input():
+    """The random trials caught an exception and counted it; the boundary
+    inputs did not, so one raise there ended the whole scan."""
+    ref = _ref_ntt_factory()
+
+    def raises_on_zero(p):
+        if not any(p):
+            raise ValueError("zero polynomial")
+        return ref(p)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_kat(raises_on_zero, k=None)
+    assert (r["verified"], r["random_fails"], r["boundary_fails"]) == (False, 0, 1)
+
+
+def test_params_reads_k_as_n_equals_256k():
+    """pqverify_params(k=3, q=3329) printed its usage line and returned None:
+    k was turned into n only after the test that needs n."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        by_k = pqverify_params(k=3, q=3329)
+        by_n = pqverify_params(n=768, q=3329)
+    assert by_k is not None and by_k == by_n
 
 
 @pytest.mark.parametrize("param_set, cited, not_cited", [
@@ -6002,6 +6251,93 @@ def test_readme_documents_every_action_input_and_audit_mode():
     assert {m for m in modes if f"`{m}`" not in rows["audit"]} == set()
     comment = re.search(r"audit: dsa\s+# (.+)", readme).group(1)
     assert set(comment.split(" | ")) == modes
+
+
+def _action_run_step():
+    """The `run` script of action.yml's `run` step, read as text: CI need not
+    have a YAML parser."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    if not (root / "action.yml").exists():
+        pytest.skip("no action.yml in this layout")
+    lines = (root / "action.yml").read_text().splitlines()
+    start = lines.index("      id: run")
+    start = next(i for i in range(start, len(lines)) if lines[i] == "      run: |") + 1
+    body = []
+    for line in lines[start:]:
+        if line.strip() and not line.startswith(" " * 8):
+            break
+        body.append(line[8:])
+    return root, "\n".join(body) + "\n"
+
+
+def _run_action(tmp_path, **inputs):
+    """Run the Action's script with the real pq-verify CLI: (exit, outputs, summary)."""
+    import os, shutil, subprocess, sys
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("no bash")
+    root, script = _action_run_step()
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    for name, cmd in (("pq-verify", f'exec "{sys.executable}" -m pq_verify.cli "$@"'),
+                      ("python", f'exec "{sys.executable}" "$@"')):
+        (bindir / name).write_text(f"#!/bin/sh\n{cmd}\n")
+        (bindir / name).chmod(0o755)
+    wd = tmp_path / "wd"
+    wd.mkdir(exist_ok=True)
+    out, summ = tmp_path / "out", tmp_path / "summary"
+    out.write_text(""); summ.write_text("")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("IN_", "GITHUB_"))}
+    env.update({"IN_AUDIT": "", "IN_LIBRARY": "", "IN_PARAM_SET": "", "IN_SYMBOL": "",
+                "IN_ACVP": "true", "IN_SLHDSA": "false", "IN_HYBRID": "", "IN_FAIL": "true",
+                "IN_SARIF": "pq-verify.sarif", "IN_JSON": "pq-verify.json"})
+    env.update({f"IN_{k.upper()}": v for k, v in inputs.items()})
+    env.update(PATH=f"{bindir}{os.pathsep}{env.get('PATH', '')}",
+               PYTHONPATH=str(root), GITHUB_OUTPUT=str(out), GITHUB_STEP_SUMMARY=str(summ))
+    rc = subprocess.run([bash, "-c", script], cwd=wd, env=env, capture_output=True,
+                        text=True, timeout=600).returncode
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines() if "=" in line)
+    return rc, outputs, summ.read_text()
+
+
+def test_action_with_nothing_to_check_is_not_verified(tmp_path):
+    """acvp false and no library or transcript: nothing ran, and the Action
+    published verified=true."""
+    for fail in ("true", "false"):
+        rc, outputs, summary = _run_action(tmp_path, acvp="false", fail=fail)
+        assert rc == 2 and outputs["verified"] == "false", (fail, outputs)
+        assert "Nothing was checked" in summary
+
+
+@pytest.mark.parametrize("fail", ["true", "false"])
+def test_action_hybrid_verdict_comes_from_the_report(tmp_path, kem_vectors, fail):
+    """Under fail-on-finding=false every exit code is 0, and the hybrid task
+    wrote no report, so a transcript that did not verify gave verified=true
+    and a summary line that said VERIFIED. A genuine transcript verifies only
+    where kyber-py can check its ML-KEM half; without it (the base install)
+    that half is not checked, and the transcript is not verified."""
+    root, _ = _action_run_step()
+    spoof = str(root / "tests" / "data" / "hybrid_spoof.json")
+    rc, outputs, summary = _run_action(tmp_path, acvp="false", hybrid=spoof, fail=fail)
+    assert outputs["verified"] == "false", outputs
+    assert (rc != 0) == (fail == "true")
+    line = next(l for l in summary.splitlines() if "Hybrid transcript" in l)
+    assert "VERIFIED" not in line.replace("CANNOT VERIFY", ""), line
+    try:
+        import kyber_py  # noqa: F401  (what checks the ML-KEM half)
+        checkable = True
+    except ImportError:
+        checkable = False
+    good = _write_transcript(tmp_path, "good.json", _transcript("X25519MLKEM768", kem_vectors))
+    rc, outputs, summary = _run_action(tmp_path, acvp="false", hybrid=good, fail=fail)
+    line = next(l for l in summary.splitlines() if "Hybrid transcript" in l)
+    if checkable:
+        assert rc == 0 and outputs["verified"] == "true", outputs
+        assert line == "- **Hybrid transcript**: VERIFIED", line
+    else:
+        assert outputs["verified"] == "false", outputs
+        assert (rc != 0) == (fail == "true")
+        assert "VERIFIED" not in line.replace("CANNOT VERIFY", ""), line
 
 
 def test_every_action_is_pinned_to_a_commit():
@@ -11274,17 +11610,17 @@ def test_engine6_certificate_states_this_runs_residues(monkeypatch):
     assert all(r4 * den == r2 * num for r2, r4 in res["quintic"].values())
     # A different genus-2 connection gives different residues, so the
     # certificate's Table 1 theorem is about the engine it came from.
-    real = core._decode
+    real = core._engine_source
 
-    def tweaked(blob):
-        text = real(blob)
-        if blob is core._SRC_GENUS2:
+    def tweaked(name):
+        text = real(name)
+        if name == core._SRC_GENUS2:
             text = text.replace("M[3] = T((3.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));",
                                 "M[3] = T((5.0/2.0)/(z*(z - 3.0)*(z - 2.0)*(z - 1.0)));", 1)
             assert "5.0/2.0" in text
         return text
     monkeypatch.setattr(core, "_E6_EXACT", [])
-    monkeypatch.setattr(core, "_decode", tweaked)
+    monkeypatch.setattr(core, "_engine_source", tweaked)
     other = core._e6_exact_residues()
     assert [(x.p, x.q) for x in other["genus2"]] != list(core._E6_G2_TABLE1)
     if _shutil.which("coqc"):

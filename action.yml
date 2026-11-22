@@ -167,6 +167,9 @@ runs:
         STATUS=0
         GATE=()
         [ "$IN_FAIL" = "false" ] && GATE=(--no-fail)
+        # Every task that runs adds the report it must write; `verified` below
+        # reads them all, and a missing one counts as not verified.
+        REPORTS=()
         summary() { echo "$*" >> "$GITHUB_STEP_SUMMARY"; }
         summary "### pq-verify"
         summary ""
@@ -180,6 +183,7 @@ runs:
           pq-verify "${ARGS[@]}"; RC=$?
           echo "::endgroup::"
           [ $RC -ne 0 ] && STATUS=$RC
+          REPORTS+=(pq-verify-acvp.json)
           ACVP_STATUS=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['status'], '%d/%d' % (d['summary']['checks_passed'], d['summary']['checks_total']))" pq-verify-acvp.json 2>/dev/null || echo "NO REPORT")
           summary "- **ACVP suites** (pq-verify's reference chain): $ACVP_STATUS"
         fi
@@ -191,10 +195,14 @@ runs:
             exit 2
           fi
           echo "::group::Hybrid composition (RFC 10024)"
-          pq-verify --verify-hybrid "$IN_HYBRID" "${GATE[@]}"; RC=$?
+          pq-verify --verify-hybrid "$IN_HYBRID" --json pq-verify-hybrid.json "${GATE[@]}"; RC=$?
           echo "::endgroup::"
           [ $RC -ne 0 ] && STATUS=$RC
-          summary "- **Hybrid transcript**: $([ $RC -eq 0 ] && echo VERIFIED || echo "did not verify (exit $RC)")"
+          REPORTS+=(pq-verify-hybrid.json)
+          # The report's status, not the exit code: under fail-on-finding=false
+          # a transcript that did not verify also exits 0.
+          HYBRID_STATUS=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('status') or ('VERIFIED' if d.get('verified') else 'did not verify'))" pq-verify-hybrid.json 2>/dev/null || echo "no report (exit $RC)")
+          summary "- **Hybrid transcript**: $HYBRID_STATUS"
         fi
 
         # --- library audit ---
@@ -225,6 +233,7 @@ runs:
           pq-verify "${ARGS[@]}"; RC=$?
           echo "::endgroup::"
           [ $RC -ne 0 ] && STATUS=$RC
+          REPORTS+=("$IN_JSON")
           if [ -f "$IN_JSON" ]; then
             FINDINGS=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['summary'].get('findings', 0))" "$IN_JSON")
             LINE=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('status') or ('VERIFIED' if d['summary'].get('verified') else 'FINDINGS PRESENT'))" "$IN_JSON")
@@ -236,7 +245,11 @@ runs:
         for f in fs[:20]:
             print('  - %s' % (f if isinstance(f, str) else f.get('description', f)))
         " "$IN_JSON" >> "$GITHUB_STEP_SUMMARY"
-            echo "sarif_file=$IN_SARIF" >> "$GITHUB_OUTPUT"
+            if [ -f "$IN_SARIF" ]; then
+              echo "sarif_file=$IN_SARIF" >> "$GITHUB_OUTPUT"
+            else
+              echo "sarif_file=" >> "$GITHUB_OUTPUT"
+            fi
           else
             summary "- **$MODE audit** of \`$IN_LIBRARY\`: no report (exit $RC)"
             echo "sarif_file=" >> "$GITHUB_OUTPUT"
@@ -245,22 +258,28 @@ runs:
           echo "sarif_file=" >> "$GITHUB_OUTPUT"
         fi
 
-        # `verified` is derived from the exit status of every task, so a step
-        # that failed can never publish verified=true.
-        if [ $STATUS -eq 0 ] && [ "$IN_FAIL" != "false" ]; then
-          echo "verified=true" >> "$GITHUB_OUTPUT"
-        else
-          # Under fail-on-finding=false the exit codes are all 0, so they say
-          # nothing; read the reports instead.
-          OK=true
-          [ $STATUS -ne 0 ] && OK=false
-          for f in pq-verify-acvp.json "$IN_JSON"; do
-            [ -f "$f" ] || continue
-            V=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('verified', d.get('summary', {}).get('verified'))).lower())" "$f")
-            [ "$V" = "true" ] || OK=false
-          done
-          echo "verified=$OK" >> "$GITHUB_OUTPUT"
+        # With acvp false and no library or transcript, nothing ran: that is
+        # not a pass, and it used to publish verified=true.
+        if [ ${#REPORTS[@]} -eq 0 ]; then
+          echo "::error::nothing to check: acvp is false and no library audit or hybrid-transcript was given"
+          summary "- **Nothing was checked**: acvp is false and no library audit or hybrid transcript was requested."
+          echo "verified=false" >> "$GITHUB_OUTPUT"
+          echo "findings=0" >> "$GITHUB_OUTPUT"
+          exit 2
         fi
+
+        # `verified` needs every task to have exited 0, so a step that failed
+        # can never publish verified=true, and every task's report to exist and
+        # say verified: under fail-on-finding=false the exit codes are all 0
+        # and say nothing, and a report that was not written is not a pass.
+        OK=true
+        [ $STATUS -ne 0 ] && OK=false
+        for f in "${REPORTS[@]}"; do
+          if [ ! -f "$f" ]; then OK=false; continue; fi
+          V=$(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(str(d.get('verified', d.get('summary', {}).get('verified'))).lower())" "$f")
+          [ "$V" = "true" ] || OK=false
+        done
+        echo "verified=$OK" >> "$GITHUB_OUTPUT"
         echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
         exit $STATUS
 

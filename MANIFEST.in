@@ -13,3 +13,4 @@ include sample_report.json
 recursive-include pq_verify/vectors *.json.gz *.json *.md
 recursive-include pq_verify/coq *.v
 recursive-include pq_verify/harness *.c *.h *.java
+recursive-include pq_verify/engines *.c *.cpp

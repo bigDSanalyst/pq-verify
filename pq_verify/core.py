@@ -254,20 +254,25 @@ return fails;}
 /* ---- Precomputed Kyber NTT zetas (FIPS 203, bit-reversed) ---- */
 static uint16_t _kyber_zetas[128];
 static int _kyber_zetas_ready=0;
+static uint16_t _kyber_zetas_q=0,_kyber_zetas_zeta=0;
 static uint16_t _pow_mod16(uint16_t base,uint32_t exp,uint16_t q){
 uint32_t r=1,b=base;while(exp>0){if(exp&1)r=(r*b)%q;b=(b*b)%q;exp>>=1;}return(uint16_t)r;}
 static uint32_t _bitrev7(uint32_t x){uint32_t r=0;for(int i=0;i<7;i++){r=(r<<1)|(x&1);x>>=1;}return r;}
+/* Cached per (q, zeta): a table built for one field must not answer for another. */
 static void _init_kyber_zetas(uint16_t q,uint16_t zeta){
-if(_kyber_zetas_ready)return;
+if(_kyber_zetas_ready&&_kyber_zetas_q==q&&_kyber_zetas_zeta==zeta)return;
 for(int i=0;i<128;i++)_kyber_zetas[i]=_pow_mod16(zeta,_bitrev7(i),q);
-_kyber_zetas_ready=1;}
+_kyber_zetas_q=q;_kyber_zetas_zeta=zeta;_kyber_zetas_ready=1;}
 /* The table the NTT and the Freivalds check use, read out for checks
    made apart from the engine. */
 void zq_zeta_table(uint16_t*out,uint16_t q,uint16_t zeta){
 _init_kyber_zetas(q,zeta);
 for(int i=0;i<128;i++)out[i]=_kyber_zetas[i];}
 /* ---- Forward NTT (FIPS 203 Cooley-Tukey, in-place) ---- */
+/* The 128-entry table serves the n = 256 transform only; any other n is
+   left untouched rather than read past the table. */
 void zq_ntt_forward(uint16_t*f,int n,uint16_t q,uint16_t zeta){
+if(n!=256)return;
 _init_kyber_zetas(q,zeta);
 int k=1;
 for(int len=n/2;len>=2;len/=2){
@@ -293,6 +298,7 @@ r[j+len]=(uint16_t)(((uint32_t)w*zq_sub(re,ro,q))%q);}}}}
 static uint32_t _xorshift(uint32_t s){s^=s<<13;s^=s>>17;s^=s<<5;return s;}
 int zq_freivalds_ntt(const uint16_t*x,const uint16_t*y,
 int n,uint16_t q,uint16_t zeta,int k_rounds,uint32_t seed){
+if(n!=256)return -1; /* n = 256 only: r[256] and the table's 7 layers */
 _init_kyber_zetas(q,zeta);
 uint32_t rng=seed?seed:42;
 for(int round=0;round<k_rounds;round++){
@@ -412,13 +418,15 @@ clock_gettime(CLOCK_MONOTONIC,&t1);r->solve_time_us=(t1.tv_sec-t0.tv_sec)*1e6+(t
    ================================================================ */
 static uint32_t _dili_zetas[256];
 static int _dili_zetas_ready=0;
+static uint32_t _dili_zetas_q=0,_dili_zetas_zeta=0;
 static uint32_t _pow_mod32(uint32_t base,uint32_t exp,uint32_t q){
 uint64_t r=1,b=base%q;while(exp>0){if(exp&1)r=(r*b)%q;b=(b*b)%q;exp>>=1;}return(uint32_t)r;}
 static uint32_t _bitrev8(uint32_t x){uint32_t r=0;for(int i=0;i<8;i++){r=(r<<1)|(x&1);x>>=1;}return r;}
+/* Cached per (q, zeta), as the 16-bit engine's table is. */
 static void _init_dili_zetas(uint32_t q,uint32_t zeta){
-if(_dili_zetas_ready)return;
+if(_dili_zetas_ready&&_dili_zetas_q==q&&_dili_zetas_zeta==zeta)return;
 for(int i=0;i<256;i++)_dili_zetas[i]=_pow_mod32(zeta,_bitrev8(i),q);
-_dili_zetas_ready=1;}
+_dili_zetas_q=q;_dili_zetas_zeta=zeta;_dili_zetas_ready=1;}
 /* The table the NTT and the Freivalds check use, read out for checks
    made apart from the engine. */
 void zq32_zeta_table(uint32_t*out,uint32_t q,uint32_t zeta){
@@ -427,6 +435,7 @@ for(int i=0;i<256;i++)out[i]=_dili_zetas[i];}
 
 /* Forward ML-DSA NTT, in place. 8 layers: len = 128,64,...,2,1. */
 void zq32_ntt_forward(uint32_t*f,int n,uint32_t q,uint32_t zeta){
+if(n!=256)return; /* the 256-entry table: n = 256 only */
 _init_dili_zetas(q,zeta);
 int k=1;
 for(int len=n/2;len>=1;len/=2){
@@ -455,11 +464,11 @@ static uint32_t _xorshift32(uint32_t s){s^=s<<13;s^=s>>17;s^=s<<5;return s;}
    k rounds give <= q^-k (q = 8380417). */
 int zq32_freivalds_ntt(const uint32_t*x,const uint32_t*y,
 int n,uint32_t q,uint32_t zeta,int k_rounds,uint32_t seed){
+if(n!=256)return -1; /* n = 256 only: r[256] and the table's 8 layers */
 _init_dili_zetas(q,zeta);
 uint32_t rng=seed?seed:42;
 for(int round=0;round<k_rounds;round++){
 uint32_t r[256];
-if(n>256)return -1;
 for(int i=0;i<n;i++){rng=_xorshift32(rng);r[i]=(uint32_t)(rng%q);}
 uint64_t lhs=0;
 for(int i=0;i<n;i++)lhs=(lhs+(uint64_t)r[i]*y[i])%q;
@@ -4617,12 +4626,12 @@ def main(quick=False):
 
 # ================================================================
 # ENGINE 6: PERIOD / GAUSS-MANIN  (Paper 7, Maino 2026, doi:10.5281/zenodo.20129361)
-# Self-contained sixth engine: four C/C++ period engines embedded
-# gzip+base64, compiled inline (gcc + g++).  Reuses the harness
+# Self-contained sixth engine: four C/C++ period engines, shipped as
+# source in pq_verify/engines/ and compiled at runtime (gcc + g++).  Reuses the harness
 # AuditResult / CFL pipeline / Coq daemon above.
 # ================================================================
 
-import os, sys, ctypes, time, gzip, base64, hashlib
+import os, sys, ctypes, time, hashlib
 
 ENGINE6_VERSION = "1.0.0"
 
@@ -4651,336 +4660,20 @@ else:
                                            if f['severity'] == 'CRITICAL')
 
 # ============================================================
-# EMBEDDED ENGINE SOURCES  (gzip + base64 — zero uploads)
+# ENGINE SOURCES  —  plain C/C++ files shipped in pq_verify/engines/
 # ============================================================
-_SRC_RANK2 = (
-    "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"
-)
-_SRC_GENUS2 = (
-    "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"
-    "ETgAAA=="
-)
-_SRC_QUINTIC = (
-    "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"
-)
-_SRC_GENUS4 = (
-    "H4sIAJ5XCGoC/6197XMeN47nd/8VT+19iOTHPdN8Z8dJrjKT2q2rOs+ek7juQ8rrUmwl0cSWtJLseDyb//2aBAig1USrs3WzGz9Q"
-    "E02Q4NsPIMh+9Oc/H95e/Hh9fnNx9ebVz/5Pr6+vDx/sYRgON2eXvw758PP55fvbwR9++cfMdP727cX13cXrw1+Px8P55c8Xl+eH"
-    "n65uDtf/OXyYs/jpH4/m/P717N3F2398fvjHf9jDl4eTj4fh8On08Pjw8eTjYE7nf2z5x5V/fPknlH9i+Sedlvf/7ez97e3w7Ozy"
-    "4vLw+ury8vz13cXV5eHZyZzL/OjZ2d2rfPJ8/uv08OHi7PBvs9yfLu5+uR2++e3q5tc/zVmUXOZKnL15czvn8O76/d35q2dzxY6H"
-    "n96/fXv4/pfzq5vzdwczV+Hu5h/Dbxe354fXv5y//vXz8ubh8G0p99cz+3efnc6VGA725Jvjd6fzP/a78uDw5ZeHg4mHFz+8ePL8"
-    "5YvPyltnb68uf769eHN+uPtl/u/m7PX5cHt38/713fsbzP32cPLvP96e33w4qxXyTw5/vbr8+zlwxMP//svh7O7w85f+tNXhL+8v"
-    "3r75/HD4edb28O/uMLw7u3n9y5eX8/sfzg/D/z2bKzPc/nJ2c/7mMPz0f/7XX9dtOVwtn91ePXr0Py4uX799P5f0i9e3d28urr6S"
-    "T96d3f2yeDDr7+35x68ePXp/e3H58+H1m1k582uff44pX7y5ev/j2/Ovnj6aG+v27vzj9c3cTHeHv81qOuTV09In/jb3hr89ffTo"
-    "7nzO4ezu/Iu7uXNdnr07P3z/1aPbu7PSwy4u35be9eHq4s3hXX717v3bk5rT4fvD46+fHIj+y5Py719PD/98NLdc7Y0nRdDFLGd8"
-    "Ov98MYs6XByPpzV9wfN34Pk78Px95sFc2v++P9zOLN+fjKdPF88ph18hh18hh19LDreH45eHr3+4ePy3uQP9+nKu6l9++LX+8feX"
-    "y1z+ikx/f1lUymm/P/r9j6jm8vznhWpQHX1VWNBFkV2kDnNBXz49/CF5t+9/fKgpdskuouex9Zc/XoJ5YP//K8Hxj5Tg+yK+Dm5R"
-    "gNZr7veWjb647CUX2DFuzuep4LJ0hd/vyYUxVgfC2cdXZz/eonh8zmVojEXin8aNcjRV/LO98qGN659K9kU1pzPLT4eTD4evDu9O"
-    "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"
-    "UBjhCPsSCMZdl1e6Hb5TjakDDB/wnQqmjYvOK8zbvsfS7XCvApp8kOkB9yrhSuwFhkGQkZ4twyAILhJutBG0FbQTdBB0FLSQZYUs"
-    "K2Q5IcsJWU7IckKW84IWcp2Q64Rc4YqDi4SRFn45IxxzcJFwo4Vc4aYzwk8HarMy/DkxSofrhBvNKB2uE260EbQVNKB0OSTMytWJ"
-    "oG8UABBwpBE40ggcaQSONAJHmhaRfUKfdQgIkOIpA0t2sAfhYA/CwR6Egz0IB3sQDvYgHOxBONiDcLAH4WAPwsEehIM9CAd7EA72"
-    "IBzsQTjYg3CwB+FgD8LBHoSDPQgHexAO9iAc7EE42INwsAfhYA/CwR6Egz0IB3sQDvYgHOxBONiDcLAH4WAPwsEehIM9NAe77ER2"
-    "1Ymi8JdH4S+Pwl8ehb88Cn95FP7yyP7yiBbr43ZVnXOWPOOQWEcgkoZJx6RnMjDJOQR+LTBDbVF0fLOI2lZIMm+MdIkukJnJiUj0"
-    "jEe6SBfIyCTnkPg19IxHuk0XSMcklyFzZgsLJDoCvRVLw+c/4DZBJDOTE5GJL26qpUfSMunkxnR1ev/+6NHt3c3713eH6/Obi6s3"
-    "r372r27Ob9+/vXt1d/hnLRLeP3138+r11bt3z5/2Hr66vvrt/Ob2h/xykfzTq4vLD2c3F2eXd7c/+GXa1Zs3r+5uzl6fr1J+u7q5"
-    "vXtV0m/O3y7F/fLOlOJdvHn17uzj05Jy+POfD//1X99W8+Tw4ocXT56/fPHZf/3XLPinQ00BWuby7avLq5t35SlkfnF5V36ufn11"
-    "98v51c35OzPr5emjR+cf785vLg//8td/OXy4ungjNHT2/s3F3Qlm9+kJFe/q7ZOeHh9fvb87XWrz2Q9/sy+fzM3dfivRrv1+d/3+"
-    "7vzVsy+A+auTWcSz03uJ14vU61XyNTwvCQvBKPnuHYp+zoLf5Vfv3r89eTa/N///LLE8OXvz5uTZdfm7vgQPL89/Ppn/mN8+XTTQ"
-    "i+eY6Qv4rZ2jJ+D5k5kX8ipPnleRz1/Ak9v3P568eF7+xhzu1eH6t7mrTS8535+ubg4npRkv5oEzPp1/vjj8zc6/x+MpcJuXP1yU"
-    "UQUFurj/3q/lgz5P558vvjzk+be8h0Wrr/86mFabJ5Dhry9boebGHb5qA2HOZ36v9uuTVvSVJHNP0iKHNpSKSJkbSyWhi+FVoXM3"
-    "J/NSe8eo7zj1Hau+E9R3nPpOku+IKUGvzai8odfFKm/oNfHKG3o94nIKu319Nv8798X2daxeD/XYQf/Z3vowp93evfn885/Ofrw9"
-    "WavxYm79w8VPh5MPh69AxClJ+vD08DvMZnM6PPziYP40Mgd9llpOs7vLWDnE2zfrsgpFzSWdZ98q+Sm9WUp2M5e8Cj4l+TfA8Ttr"
-    "fLEAzBz1bxxt83Q/zP87/Ov7t28P38N8fTCH88u7m38Mv13cnn9++HZ+5eTr43efnf5HWfvsyTfH707nf+x35cGXcqGoeS2mx2uc"
-    "uV60qXme5ixOatfrmewa5srrFzyX1b9rBqfEC5PodeUU02h5XKfRF+WNImkxvdoic35SKv38s/KprZNnn302L97PPntW/n322eli"
-    "XvwGyvk1/HyHP8tSl7n1GUzA38xZb86c35Q583H91NmOefbrwl0KWVwTRX3zn0O1UJ9fr2fcXg7fYQ71nZ2vXMO8fk8MKuTi0oAS"
-    "Li5tI9xCHaUFvi5KKkmGW+Wb+Vl97XRHIUqmtRRVYWCVf9cpy+1/UiEaeX1z9Qaob1eda36jluoJvMs9bH6/ZoI5yQSLzyDnPYX/"
-    "FooOxaMmq+W6V4PXz1+1QfHiFf2xKDKukKU3V4bFqKhP6N0lcKigbueCDry11N9CiU3Bt61MF3LyZqwHa+kMG1+VCevbe+LXHFWK"
-    "XG2X4LPMMfclfFXm0tPD/5ynOcSf9zhOD5+DKLm8MOykPO+J+qIgSwDrApMW9TDY/DCvQhdXlycFqZYl5eb87v3MOM1K+x2mzQ/2"
-    "8zJpXF/P/9LE+ej/AZYFfsm8CAEA"
-)
+# They were gzip+base64 strings in this file until 2.20.0; the text is
+# unchanged, byte for byte. As files they can be read, diffed and reviewed.
+_SRC_RANK2 = 'libpqv_period.c'
+_SRC_GENUS2 = 'libpqv_period_g2.cpp'
+_SRC_QUINTIC = 'libpqv_period_quint.cpp'
+_SRC_GENUS4 = 'libpqv_period_g4.cpp'
 
-def _decode(blob):
-    return gzip.decompress(base64.b64decode(blob)).decode()
+
+def _engine_source(name):
+    """The text of one of Engine 6's sources, from pq_verify/engines/."""
+    with open(os.path.join(_pkg_dir(), 'engines', name), encoding='utf-8') as f:
+        return f.read()
 
 # ============================================================
 # COMPILE  —  gcc for rank-2 C, g++ -O3 -march=native for C++ ranks
@@ -5002,7 +4695,7 @@ def compile_engine6():
          '-O3 -march=native -shared -fPIC -lm'),
     ]
     engines = {}
-    for name, blob, cfile, cc, flags in specs:
+    for name, src, cfile, cc, flags in specs:
         _wd = _pqv_workdir()
         c_path  = os.path.join(_wd, cfile)
         so_path = os.path.join(_wd, cfile.rsplit(".", 1)[0] + '.so')
@@ -5010,8 +4703,8 @@ def compile_engine6():
         for p in (c_path, so_path):
             if os.path.exists(p):
                 os.remove(p)
-        with open(c_path, 'w') as f:
-            f.write(_decode(blob))
+        with open(c_path, 'w', encoding='utf-8') as f:
+            f.write(_engine_source(src))
         proc = _cc(cc, flags, so_path, c_path)
         if proc.returncode != 0 or not os.path.exists(so_path):
             print(f'  {_BAD} engine6/{name} — compilation failed')
@@ -5498,7 +5191,7 @@ def _e6_exact_residues():
     f4s = sp.cancel(sp.together((cQ2@cQ2).trace()))
     quintic = {pt: (sp.Rational(sp.residue(f2s, z, pt)), sp.Rational(sp.residue(f4s, z, pt)))
                for pt in (sp.Integer(0), sp.Rational(1, 3125))}
-    src = _decode(_SRC_GENUS2)
+    src = _engine_source(_SRC_GENUS2)
     body = src[src.index('static void compute_M(T z, T *M)'):src.index('static void compute_Mp')]
     ent = {int(i): _re6.sub(r'(\d+)\.0\b', r'\1', e)
            for i, e in _re6.findall(r'M\[(\d+)\] = T\((.*)\);', body)}
@@ -6300,7 +5993,8 @@ _NIST_LEVELS = {
     ('dilithium', 8): ("ML-DSA-87", "NIST Level 5 (~AES-256)"),
 }
 
-def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=100):
+def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=100,
+                 complete=None):
     """Known Answer Test: verify an NTT against an INDEPENDENT reference.
 
     The reference is direct CRT polynomial reduction (schoolbook, O(n^2)):
@@ -6313,12 +6007,18 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
         Kyber:     k=2 -> Level 1, k=3 -> Level 3, k=4 -> Level 5
         Dilithium: k=4 -> Level 2, k=6 -> Level 3, k=8 -> Level 5
 
+    complete says which definition: n linear factors (True, ML-DSA's) or n/2
+    quadratic ones (False, ML-KEM's). None guesses it from family and q, which
+    is right for the two standards; pqverify_scan passes what zeta's order
+    says, so that another (q, n) is held to the transform it is.
+
     Usage:
         pqverify_kat(my_ntt, k=4)                      # ML-KEM-1024, Level 5
         pqverify_kat(my_ntt, q=8380417, zeta=1753, k=8, family='dilithium')
     """
     import random as _r
-    complete = (family == 'dilithium' or q > 65535)
+    if complete is None:
+        complete = (family == 'dilithium' or q > 65535)
     # Bit-reversal width: complete NTT uses log2(n) factors, incomplete uses log2(n/2)
     nfactors = n if complete else n // 2
     bits = nfactors.bit_length() - 1
@@ -6407,7 +6107,10 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
     }
     bfail = 0
     for label, v in bvecs.items():
-        got = [x % q for x in ntt_func(list(v))]
+        try:
+            got = [x % q for x in ntt_func(list(v))]
+        except Exception:           # counted as a mismatch, as for random inputs
+            got = None
         ref = ref_crt(v)
         m = got == ref
         bfail += not m
@@ -6415,7 +6118,7 @@ def pqverify_kat(ntt_func, q=3329, zeta=17, n=256, k=4, family='kyber', trials=1
 
     print(f"\n{'='*64}")
     if ok and bfail == 0:
-        _fips = "FIPS 204" if family == 'dilithium' else "FIPS 203"
+        _fips = {'dilithium': "FIPS 204", 'kyber': "FIPS 203"}.get(family, "CRT")
         print(f"  {name} NTT: VERIFIED against independent {_fips} reference")
         print(f"  Security level: {level}")
     else:
@@ -6644,13 +6347,20 @@ _VECTOR_BUNDLES = {
 }
 
 def _pkg_dir():
-    """Directory of this module. Falls back to CWD when run via exec() as a
-    standalone script, where __file__ is undefined."""
+    """Directory of this module. When it is run through exec(), where
+    __file__ is undefined, the package directory under the working
+    directory if there is one (ARCHITECTURE.md's route,
+    `exec(open('pq_verify/core.py').read())` from a checkout's root), else
+    the working directory. It used to be the working directory always, so
+    that route looked for vectors/, coq/ and engines/ in the checkout's
+    root, where none of them are."""
     import os as _o
     try:
         return _o.path.dirname(_o.path.abspath(__file__))
     except NameError:
-        return _o.getcwd()
+        cwd = _o.getcwd()
+        sub = _o.path.join(cwd, "pq_verify")
+        return sub if _o.path.isfile(_o.path.join(sub, "core.py")) else cwd
 
 def _bundle_name(key=None):
     """The archive that holds `key` ('DIR/file.json'); the main one if None."""
@@ -7546,6 +7256,10 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
 
     tally = {}
     keycheck = {}
+    # Decapsulation vectors without dk, c or k cannot be run (the bundled
+    # NIST file has all three in every test; a --vector-dir file in another
+    # layout may not). They are counted and reported, never dropped silently.
+    no_dk = 0
     def _rec(stage, ok):
         p, t = tally.get(stage, (0, 0))
         tally[stage] = (p + int(ok), t + 1)
@@ -7579,6 +7293,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 _rec('encaps', ok)
             elif fn == 'decapsulation':
                 if 'dk' not in t or 'c' not in t or 'k' not in t:
+                    no_dk += 1
                     continue
                 ss = (_ct.c_ubyte * ss_n)()
                 f_de(ss, (_ct.c_ubyte * ct_n)(*bytes.fromhex(t['c'])),
@@ -7644,6 +7359,15 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     bounds = outside_writes(f_kp, f_en, f_de)
     if bounds['outside_total']:
         tally['bounds'] = (0, 1)
+    # A stage that no NIST vector reached was not checked, and an audit
+    # that did not check decaps (or keyGen, or encaps) is not verified.
+    for stage in ('keyGen', 'encaps', 'decaps'):
+        if not tally.get(stage, (0, 0))[1]:
+            tally['not_run:' + stage] = (0, 1)
+    # A vector that could not be run is not a pass: the verdict covers the
+    # whole file the report names, not the part of it that had every field.
+    if no_dk:
+        tally['decapsSkipped'] = (0, no_dk)
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     if verbose:
@@ -7652,6 +7376,10 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 p, t = tally[stage]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {stage:8s} "
                       f"{p}/{t}  byte-exact vs NIST")
+            elif 'not_run:' + stage in tally:
+                print(f"  FAIL  {stage:8s} no NIST vector ran: not checked")
+        if no_dk:
+            print(f"        {no_dk} decapsulation vector(s) lack dk, c or k and were not run")
         for stage, what, sec in (('ekCheck', 'encapsulation', '7.2'),
                                  ('dkCheck', 'decapsulation', '7.3')):
             if stage in tally:
@@ -7711,7 +7439,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
             'keycheck': keycheck, 'edge': edge_res, 'accumulated': acc_res,
-            'constant_time': ct_res, 'bounds': bounds,
+            'constant_time': ct_res, 'bounds': bounds, 'decaps_not_run': no_dk,
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'symbols': {'keypair': kp, 'encaps': en, 'decaps': de}}
 
@@ -7880,9 +7608,10 @@ def pqverify_params(param_set=None, n=None, q=None, k=None, sigma_s=None, sigma_
         return {'param_set': param_set, 'beta': beta, 'classical': cl,
                 'quantum': qu, 'level': p['level'], 'meets_level': ok}
 
-    # Custom parameters
+    # Custom parameters. k (the module rank) stands for n = 256k when n is
+    # not given; it has to be read before the test below, which needs n.
+    if k and not n: n = k * 256
     if n and q:
-        if k and not n: n = k * 256
         n_lwe = n
         if sigma_s is None and hw is not None:
             sigma_s = _math.sqrt(hw / n_lwe) if hw else 1.0
@@ -8275,11 +8004,13 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
         print(f"  {_OK if ok else _BAD} Primitivity: zeta^{_e1}=1, zeta^{_e2}=-1"
               f"  [{bits}-layer {'complete' if bits == _log2n else 'incomplete'} NTT]")
 
-        # Domain-aware comparison. Standards libraries (pq-crystals, PQClean,
-        # liboqs) leave NTT output in the MONTGOMERY domain (each coeff x R mod q).
-        # A raw got!=ref would report a CORRECT library as 100/100 wrong. We try
-        # plain equality first, then Montgomery-normalized (x R^-1 mod q), and only
-        # flag a mismatch if neither holds. Reported domain reflects what matched.
+        # Domain-aware comparison. An NTT may leave its output in the
+        # MONTGOMERY domain (each coeff x R mod q); a raw got!=ref would report
+        # it as 100/100 wrong. (The forward NTTs of pq-crystals, PQClean,
+        # mlkem-native and mldsa-native at the pinned commits output the plain
+        # domain.) We try plain equality first, then Montgomery-normalized
+        # (x R^-1 mod q), and only flag a mismatch if neither holds. Reported
+        # domain reflects what matched.
         _R = pow(2, 16, q) if q < 65536 else pow(2, 32, q)
         _Rinv = pow(_R, q - 2, q)  # R^-1 mod q (q prime)
         nf = 0; mm = None; ntt_domain = 'plain'
@@ -8299,6 +8030,10 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             except Exception as e:
                 nf += 1; mm = mm or (trial, -1, str(e), "")
         ok = nf == 0; t += 1; p += ok
+
+        def _plain(out, _mont=(ntt_domain == 'montgomery'), _Rinv=_Rinv, q=q):
+            """NTT output in the plain domain, as every later check wants it."""
+            return [(v * _Rinv) % q if _mont else v % q for v in out]
         _dom_note = '' if ntt_domain == 'plain' else f' [{ntt_domain} domain]'
         print(f"  {_OK if ok else _BAD} Full NTT: 100 polynomials, {nf} mismatches{_dom_note}")
         if not ok and mm:
@@ -8313,7 +8048,13 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
         _narrow = q <= 65535
         lib = eng.get('zq') if _narrow else eng.get('zq32')
         _fn = 'zq_freivalds_ntt' if _narrow else 'zq32_freivalds_ntt'
-        if lib is not None and hasattr(lib, _fn):
+        if n != 256:
+            # Both engines hold the n = 256 transform only (and refuse any
+            # other n); a smaller or larger NTT is not checked this way.
+            DEGRADED['skipped_checks'].append('Freivalds')
+            print(f"  ⏭️  Freivalds: SKIPPED — the engines check the n = 256 "
+                  f"transform only (n = {n}). This check did NOT run; coverage is reduced.")
+        elif lib is not None and hasattr(lib, _fn):
             try:
                 _ct = ctypes.c_uint16 if _narrow else ctypes.c_uint32
                 _cq = ctypes.c_uint16 if _narrow else ctypes.c_uint32
@@ -8324,8 +8065,11 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                 random.seed(42); ff = 0
                 for trial in range(100):
                     poly = [random.randint(0, q - 1) for _ in range(n)]
-                    ntt_out = list(func(list(poly)))
-                    x = (_ct * n)(*poly); y = (_ct * n)(*[v % q for v in ntt_out])
+                    # The engine checks y == NTT(x) in the plain domain, so
+                    # output the Full NTT check found in the Montgomery
+                    # domain is brought back first, as that check did.
+                    ntt_out = _plain(func(list(poly)))
+                    x = (_ct * n)(*poly); y = (_ct * n)(*ntt_out)
                     if _f(x, y, n, q, zeta_root, 5, freivalds_seed(trial)) != 1: ff += 1
                 ok = ff == 0; t += 1; p += ok
                 _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
@@ -8338,6 +8082,33 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             DEGRADED['skipped_checks'].append('Freivalds')
             print(f"  \u23ed\ufe0f  Freivalds: SKIPPED \u2014 engine unavailable. "
                   f"This check did NOT run; coverage is reduced.")
+
+        # Non-circular KAT against the independent CRT definition, for every
+        # function audited. It is a check like the others: a mismatch is a
+        # finding and fails the scan, not only a printed line. The output is
+        # read in the plain domain, as the Full NTT check read it. (It used to
+        # run on the first function only, outside the count, and every
+        # result carried that one function's KAT.)
+        # The definition the KAT holds the output to is the shape zeta's
+        # order gives (complete or not), as for the Full NTT check above; it
+        # used to be guessed from q, so a complete transform with a 16-bit q
+        # was held to ML-KEM's quadratic factors. Only the two standards are
+        # labelled with their schemes.
+        _complete = bits == _log2n
+        fam = ('dilithium' if (q, n, _complete) == (DILI_Q, 256, True) else
+               'kyber' if (q, n, _complete) == (3329, 256, False) else
+               f"q={q} n={n} {'complete' if _complete else 'incomplete'}")
+        print("\n  Running Known Answer Test (independent reference)...")
+        kat = pqverify_kat(lambda poly: _plain(func(poly)), q=q, zeta=zeta_root,
+                           n=n, k=None, family=fam, complete=_complete)
+        ok = bool(kat.get('verified')); t += 1; p += ok
+        print(f"  {_OK if ok else _BAD} KAT vs the CRT definition: "
+              f"{kat.get('random_fails')} random + {kat.get('boundary_fails')} "
+              f"boundary mismatches")
+        if not ok:
+            findings.append(f"KAT: {kat.get('random_fails')} random + "
+                            f"{kat.get('boundary_fails')} boundary mismatches "
+                            f"vs the CRT definition")
 
         if cp_ap and cp_rm:
             class _L:
@@ -8388,15 +8159,8 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
         else:
             print(f"  {nm}: {p}/{t} \u2705 VERIFIED")
         print(f"  {'='*60}\n")
-        results.append({'name': nm, 'passed': p, 'total': t, 'findings': findings})
-
-    # Non-circular KAT against independent CRT reference (first function only)
-    if results:
-        fam = 'dilithium' if q > 65535 else 'kyber'
-        print("\n  Running Known Answer Test (independent reference)...")
-        kat = pqverify_kat(to_audit[0][1], q=q, zeta=zeta_root, n=n, k=None,
-                           family=fam)
-        for r in results: r['kat'] = kat
+        results.append({'name': nm, 'passed': p, 'total': t, 'findings': findings,
+                        'kat': kat})
 
     # Run leakage analysis if any NTT was audited
     if results:

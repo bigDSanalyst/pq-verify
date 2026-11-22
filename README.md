@@ -334,8 +334,9 @@ reference chain:
 | `sarif-file`, `json-file` | `pq-verify.sarif`, `pq-verify.json` | where the library audit's SARIF 2.1.0 and JSON reports go |
 | `version` | the Action's own release | the pq-verify to install. By default the release the Action belongs to, so a workflow pinned to a release keeps that release's pq-verify (from v2.17.0; v2.16.0 and earlier install the newest). `latest` installs the newest release on PyPI at every run, so the code that audits your library can change without your workflow changing; a version such as `2.20.0` installs that release; and `git:<ref>` installs a ref from source |
 
-Outputs: `verified` (true only if every task that ran verified), `findings`,
-`sarif-file`. Every input reaches the shell through the environment, never by
+Outputs: `verified` (true only if every task that ran verified; with
+`acvp: false` and no library or transcript nothing runs, and the step fails
+with `verified` false), `findings`, `sarif-file`. Every input reaches the shell through the environment, never by
 template substitution, and every action the Action uses is pinned to a commit.
 So is every action in this repository's own workflows, and a zizmor job fails
 CI on any workflow finding. CI also runs the Action itself, as a workflow

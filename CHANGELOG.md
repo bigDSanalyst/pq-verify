@@ -5,8 +5,68 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **NTT scan (`pqverify_scan`, `--audit-so`): a correct Montgomery-domain
+  NTT got two findings.** For an NTT whose output is multiplied by R = 2^16
+  (2^32 for ML-DSA), the Full NTT check allowed for the factor, but
+  Freivalds and the KAT were given the raw output, so it failed both. Each
+  check now reads the output in the domain the Full NTT check found. A
+  Montgomery output with the wrong factor still fails all three. The
+  forward NTTs of PQClean, mlkem-native, mldsa-native and pq-crystals output
+  the plain domain and were not affected; AUDITS.md said that standards
+  libraries commonly leave it in Montgomery form, and now says they do not.
+- **NTT scan: the KAT was not in the verdict.** Its mismatches were printed
+  but not counted, so an NTT that is wrong only on the all-ones input
+  (100 random polynomials and Freivalds pass) was reported 3/3 VERIFIED. The
+  KAT is now a counted check with a finding (`PQV004` in SARIF, a rule the
+  scan could not reach before). A correct NTT now scores 4/4, not 3/3:
+  re-run at the pinned commits, PQClean's ML-KEM-1024 and ML-DSA-65 NTTs,
+  mlkem-native's, mldsa-native's and pq-crystals' Dilithium3 are 4/4 each
+  (AUDITS.md). The KAT also ran on the first function only and its result
+  was copied onto the others; every function now gets its own.
+- **NTT scan: the KAT's definition is the shape zeta's order gives.** It
+  was guessed from q, so a complete transform with a 16-bit q was held to
+  ML-KEM's quadratic factors and failed. Only the two standards carry a
+  scheme's name in the result. An NTT that raises on a boundary input is
+  counted as a mismatch; it used to end the scan.
+- **Freivalds engines: out-of-bounds access for n ≠ 256, and a stale zeta
+  table.** Both C engines hold the n = 256 transform's table. The 16-bit
+  engine had no bound on n, so n = 512 read and wrote past it; both now
+  refuse any other n, and the scan reports Freivalds as skipped (not
+  passed) for it. Both also built the table once, for the first zeta they
+  saw, and reused it for any other zeta; the table is rebuilt when q or
+  zeta changes.
+- **KEM audit (`--audit-kem`): a stage no vector reached could be
+  VERIFIED.** A vector file with no decapsulation tests for the parameter
+  set left the stage out of the count. Each of keyGen, encaps and decaps
+  must now run at least one NIST vector, or the audit fails with "no NIST
+  vector ran, so it was not checked". Decapsulation tests without dk, c or k
+  were skipped silently; they are now counted (`decaps_not_run`) and fail
+  the audit. Both findings use `PQV000`, could not verify. The bundled
+  vectors have every field, so no audit with them changes.
+- **`pqverify_params(k=3, q=3329)` printed its usage line.** k was turned
+  into n = 256k only after the test that needs n.
+- **The Action: `verified` could be `true` for a hybrid transcript that did
+  not verify.** Under `fail-on-finding: false` every exit code is 0, and the
+  hybrid task wrote no report to read, so `verified` was `true` and the step
+  summary said VERIFIED. It now writes `pq-verify-hybrid.json`, and the
+  summary and `verified` come from it. Every task's report must exist for
+  `verified` to be `true`, and `sarif-file` is set only when the SARIF was
+  written.
+- **The Action: nothing to check was `verified=true`.** With `acvp: false`
+  and no library or transcript, nothing ran and the step passed. It now
+  fails with `verified` false.
+- **`exec(open('pq_verify/core.py').read())`, ARCHITECTURE.md's route,
+  looked for `vectors/`, `coq/` and `engines/` in the checkout's root.** It
+  now finds the package directory under the working directory.
+
 ### Changed
 
+- **Engine 6's four C/C++ sources are plain files** in `pq_verify/engines/`,
+  shipped in the wheel and the sdist. They were gzip+base64 strings in
+  `core.py`. The text is unchanged byte for byte, and the compiled engines
+  are identical.
 - **v2.20.0 has its own Zenodo deposit**,
   [10.5281/zenodo.24433273](https://doi.org/10.5281/zenodo.24433273).
   CITATION.cff, the README's DOI badge, its citation and its BibTeX entry

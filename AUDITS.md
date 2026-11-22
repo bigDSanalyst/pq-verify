@@ -104,8 +104,9 @@ byte-for-byte**.
 
 ## What each audit checks
 
-Three checks per target, all against pq-verify's own FIPS 203/204 reference —
-not against the implementation itself:
+Four checks per target, all against pq-verify's own FIPS 203/204 reference —
+not against the implementation itself (three until the release after 2.20.0;
+see the note after the list):
 
 1. **Primitivity** — that ζ has the multiplicative order the scheme requires.
    ML-KEM: ζ²⁵⁶ ≡ 1, ζ¹²⁸ ≡ −1 (order n → incomplete transform, 7 layers).
@@ -114,11 +115,25 @@ not against the implementation itself:
    independently computed reference. Byte-exact or it fails.
 3. **Freivalds** — probabilistic verification of the linear map via
    `r·y == (NTTᵀ r)·x`, 100 polynomials × 5 rounds. Separate 16-bit and 32-bit
-   engines; they are not interchangeable.
+   engines; they are not interchangeable. They hold the n = 256 transform
+   only; for another n the check is reported as skipped, not passed.
+4. **KAT** — 100 random polynomials and four boundary inputs (all zero, all
+   one, the unit vector, all q − 1) against the CRT definition of the
+   transform, computed by direct polynomial reduction rather than by
+   butterflies.
 
-Montgomery-domain output is normalised before comparison. Standards libraries
-commonly leave NTT output in Montgomery form, and a naive comparison would
-report every one of them as broken.
+The KAT ran in earlier releases too, but its result was printed and not
+counted, so the symbol results recorded in the tables above are 3/3. An NTT
+wrong only on the all-ones input passed those three checks. Re-run on
+2026-11-22 with all four counted, at the commits `tools/vendor_audits.json`
+pins: PQClean ML-KEM-1024 and ML-DSA-65 (`0586a82`), mlkem-native ML-KEM-768
+(`fc269bc`), mldsa-native ML-DSA-65 (`159509d`) and pq-crystals
+Dilithium3 (`d35ba3f`) are 4/4 VERIFIED each.
+
+An NTT whose output carries the Montgomery factor (each coefficient × R
+mod q) is accepted too: every check reads the output in the domain the Full
+NTT check matched. None of the libraries above does this; their NTT output
+is in the plain domain.
 
 ---
 
