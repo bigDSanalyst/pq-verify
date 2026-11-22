@@ -3,7 +3,19 @@
 All notable changes to pq-verify. This project follows [semantic
 versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.20.0] — 2026-11-22
+
+A feature release. The FN-DSA sampler stage (`--audit-fndsa`) now tests the
+distribution of the signatures' coefficients, not only their first two
+moments: a sixth test, `shape`, holds the histograms of |s1| and |s2| to the
+discrete Gaussian of their own variance by a binned chi-square, held to 6
+like the other tests. A signer that redraws whenever a coefficient of s2
+passes 3.6σ keeps the first two moments and passes the five earlier tests;
+PQClean's Falcon-512 with that bound planted fails the new test at 7.5 to
+9.1, and is a new CI mutant. A sampler defect that the signing basis
+averages away still passes, as LIMITS.md says. The README now leads with
+what pq-verify has found in pinned upstream code, and LIMITS.md says that
+fault injection and masked implementations are not checked.
 
 ### Added
 
