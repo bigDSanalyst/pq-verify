@@ -652,6 +652,25 @@ def load_cases(mode, param_set, vector_dir=None, live=False):
             yield g, t, want[g["tgId"]][t["tcId"]]
 
 
+def _expected_stages(v):
+    """The stages the pinned bundle has vectors for, for v.set, that v has an
+    entry point for: those every vector source must reach
+    (pq_verify.coverage). A library without the parameter set has none."""
+    from .coverage import pinned, groups
+    from .core import _SLHDSA_DIRS
+    if getattr(v, "prm", True) is None:
+        return set()
+    via = v.via_map()
+    stages = set()
+    if any(groups(pinned(_SLHDSA_DIRS["keyGen"], "prompt.json"), v.set)):
+        stages |= {s for s in ("keyGen", "keyGenRBG") if via.get(s)}
+    for mode in ("sigGen", "sigVer"):
+        for g in groups(pinned(_SLHDSA_DIRS[mode], "prompt.json"), v.set):
+            if via.get(mode + _interface(g)):
+                stages.add(mode + _interface(g))
+    return stages
+
+
 def _keygen_rbg(T, case, n, want, keypair):
     """keyGenRBG: NIST's seeds served as one stream must give NIST's key,
     drawn as exactly 3n bytes, however the requests are split."""
@@ -917,13 +936,19 @@ def pqverify_audit_slhdsa(so_path, param_set="SLH-DSA-SHA2-128f", symbols=None, 
     bounds = outside_writes(*v.fn.values())
     if bounds["outside_total"]:
         T.detail["bounds"] = (0, 1)
+    # A stage the source's vectors did not reach was not checked (pq_verify.coverage).
+    from . import coverage
+    coverage.require(T.detail, _expected_stages(v), T.na)
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
     verified = p_all == t_all and t_all > 0
+    status = coverage.status(verified, T.detail)
     via = v.via_map()
     if verbose:
         for s in STAGES + EDGE_STAGES:
+            if coverage.NOT_RUN + s in T.detail:
+                print(f"  FAIL  {s:15s} no NIST vector ran: not checked")
             if s in T.detail:
                 p, t = T.detail[s]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {s:15s} {p}/{t}   via {via.get(s)}")
@@ -934,12 +959,11 @@ def pqverify_audit_slhdsa(so_path, param_set="SLH-DSA-SHA2-128f", symbols=None, 
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
         print_bounds(bounds)
         print("=" * 68)
-        status = "VERIFIED" if verified else ("FINDINGS PRESENT" if t_all else "CANNOT VERIFY")
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable to this API)" if na_all else ""))
         print("  Byte-exact against NIST ACVP. Not a side-channel review.")
         print("=" * 68)
-    return {"verified": verified, "passed": p_all, "total": t_all,
+    return {"verified": verified, "status": status, "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "failures": T.failures, "library": v.path, "vectors": source,

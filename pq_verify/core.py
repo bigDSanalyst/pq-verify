@@ -6542,6 +6542,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
 
     ep = load_internal("ML-KEM-encapDecap-FIPS203")
     _unknown_fns = set()
+    _skipped = 0
     for g in ep['testGroups']:
         ps = g['parameterSet']; impl = PS[ps]; fn = g.get('function','')
         for t in g['tests']:
@@ -6560,7 +6561,7 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
                 elif 'dk' in t:
                     dk = bytes.fromhex(t['dk'])
                 else:
-                    _unknown_fns.add('decapsulation:no-key-field'); continue
+                    _unknown_fns.add('decapsulation:no-key-field'); _skipped += 1; continue
                 K = impl._decaps_internal(dk, bytes.fromhex(t['c']))
                 ok = K.hex().upper()==t['k'].upper()
                 tally('decaps', ps, ok)
@@ -6573,11 +6574,28 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
                 ok = (ours == t['testPassed'])
                 tally('decapKeyCheck', ps, ok)
             else:
-                _unknown_fns.add(fn); continue
+                _unknown_fns.add(fn); _skipped += 1; continue
             g_ok += ok; g_total += 1
     if _unknown_fns and verbose:
         print(f"  \u26a0 NIST vectors contain unhandled function types: {sorted(_unknown_fns)}")
         print(f"    (upstream schema may have changed; these tests were skipped, not failed)")
+    # What the source held, against the pinned bundle (pq_verify.coverage): a
+    # group it lacked, or a test the suite could not run, is listed, and the
+    # run is degraded rather than verified in full.
+    from . import coverage as _cov
+    _fn_cat = {'encapsulation': 'encaps', 'decapsulation': 'decaps',
+               'encapsulationKeyCheck': 'encapKeyCheck',
+               'decapsulationKeyCheck': 'decapKeyCheck'}
+    _expected = {f"keyGen/{g['parameterSet']}" for g in
+                 _cov.groups(_cov.pinned("ML-KEM-keyGen-FIPS203", "prompt.json"))}
+    _expected |= {f"{_fn_cat[g['function']]}/{g['parameterSet']}" for g in
+                  _cov.groups(_cov.pinned("ML-KEM-encapDecap-FIPS203", "internalProjection.json"))
+                  if g.get('function') in _fn_cat}
+    gone = _cov.missing("ML-KEM ACVP", {f"{c}/{ps}" for (c, ps), (_, n) in cat.items() if n},
+                        _expected)
+    if _skipped:
+        DEGRADED['skipped_checks'].append(
+            f"ML-KEM ACVP ({_skipped} test(s) the suite could not run)")
 
     if verbose:
         order = ['keyGen','encaps','decaps','encapKeyCheck','decapKeyCheck']
@@ -6594,13 +6612,17 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
                 print(f"    {'PASS' if o==n else 'FAIL'} {ps:14s} {o}/{n}   [{_ACVP_KEM_LEVELS[ps]}]")
         print(f"\n{'='*64}")
         print(f"  ACVP RESULT: {g_ok}/{g_total} NIST vectors verified")
-        if g_ok == g_total:
+        if g_ok == g_total and g_total and not gone and not _skipped:
             print("  ML-KEM VERIFIED end-to-end vs NIST ACVP-Server — all groups")
             print("  keyGen + encaps + decaps (byte-exact) + KeyCheck (bool-exact)")
             print("  Levels 1, 3, 5")
+        _cov.print_missing(gone)
+        if _skipped:
+            print(f"  NOT RUN: {_skipped} test(s) the suite could not run")
         print("=" * 64)
 
     return {'verified': g_ok == g_total and g_total > 0, 'passed': g_ok, 'total': g_total,
+            'missing': gone, 'skipped': _skipped,
             'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()},
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
             'reference': _reference('kyber-py')}
@@ -6728,14 +6750,30 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
         return g("prompt.json"), g("expectedResults.json")
 
     detail = {}
+    from . import coverage as _cov
+    seen, expected = set(), set()
 
     def tally(lab, ok):
         r = detail.setdefault(lab, [0, 0])
         r[1] += 1
         r[0] += int(ok)
 
+    def group_key(mode, g):
+        """A group's interface and set: the unit the coverage is counted in
+        (the detail labels name the set for keyGen only)."""
+        if mode == 'keyGen':
+            return f"keyGen/{g['parameterSet']}"
+        emu, ph = g.get('externalMu'), g.get('preHash')
+        lab = f"{mode}/{g.get('signatureInterface')}/{'externalMu' if emu else (ph or '')}"
+        return f"{lab.rstrip('/')} {g['parameterSet']}"
+
+    for _m in ('keyGen', 'sigGen', 'sigVer'):
+        expected |= {group_key(_m, g) for g in _cov.groups(
+            _cov.pinned(_MLDSA_DIRS[_m], "prompt.json"))}
+
     # keyGen
     P, E = load('keyGen')
+    seen |= {group_key('keyGen', g) for g in _cov.groups(P)}
     exp = {t['tcId']: t for g in E['testGroups'] for t in g['tests']}
     for g in P['testGroups']:
         O = PS[g['parameterSet']]
@@ -6746,6 +6784,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
                   pk.hex().upper() == e['pk'].upper() and sk.hex().upper() == e['sk'].upper())
     # sigGen
     P, E = load('sigGen')
+    seen |= {group_key('sigGen', g) for g in _cov.groups(P)}
     exp = {t['tcId']: t for g in E['testGroups'] for t in g['tests']}
     for g in P['testGroups']:
         O = PS[g['parameterSet']]
@@ -6765,6 +6804,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
             tally(lab, sig.hex().upper() == exp[t['tcId']]['signature'].upper())
     # sigVer
     P, E = load('sigVer')
+    seen |= {group_key('sigVer', g) for g in _cov.groups(P)}
     exp = {t['tcId']: t for g in E['testGroups'] for t in g['tests']}
     for g in P['testGroups']:
         O = PS[g['parameterSet']]
@@ -6785,6 +6825,7 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
 
     g_ok = sum(v[0] for v in detail.values())
     g_total = sum(v[1] for v in detail.values())
+    gone = _cov.missing("ML-DSA ACVP", seen, expected)
     if verbose:
         print("=" * 64)
         print("  NIST ACVP END-TO-END ML-DSA VERIFICATION (FIPS 204)")
@@ -6795,9 +6836,12 @@ def pqverify_mldsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=No
             print(f"  {'PASS' if ok == tot else '**FAIL**':9s} {lab:30s} {ok:3d}/{tot}")
         print("=" * 64)
         print(f"  ACVP RESULT: {g_ok}/{g_total} NIST ML-DSA vectors verified")
-        print("  keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5")
+        if not gone and g_total:
+            print("  keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5")
+        _cov.print_missing(gone)
         print("=" * 64)
     return {'verified': g_ok == g_total and g_total > 0, 'passed': g_ok, 'total': g_total,
+            'missing': gone,
             'detail': {k: tuple(v) for k, v in detail.items()},
             'vectors': _vector_label(_local, *_MLDSA_DIRS.values()),
             'reference': _reference('dilithium-py')}
@@ -7017,7 +7061,7 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
         print("  NIST ACVP END-TO-END SLH-DSA VERIFICATION (FIPS 205)")
         print(f"  Source: {'pinned/local' if _local else 'LIVE NIST ACVP-Server'}")
         if keygen:
-            print("  keyGen: byte-exact pk and sk, all 12 parameter sets")
+            print("  keyGen: byte-exact pk and sk")
         if sigver:
             print("  sigVer: verdict = NIST testPassed (internal, pure, pre-hash)")
         if siggen:
@@ -7067,17 +7111,29 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             print(f"  {'PASS' if mp == mt else 'FAIL'}      {mode + ' (all groups)':40s} {mp}/{mt}")
 
     verified = (ok_all == tot_all and tot_all > 0)
+    # What the source held, against the pinned bundle (pq_verify.coverage),
+    # for the modes and sets this run was asked for.
+    from . import coverage as _cov
+    expected = {_label(m, g) for m in modes for g in _cov.groups(
+                _cov.pinned(_SLHDSA_DIRS[m], "prompt.json"))
+                if not param_sets or g['parameterSet'] in param_sets}
+    seen = {k for k, (_, n) in detail.items() if n}
+    gone = _cov.missing("SLH-DSA ACVP", seen, expected)
+    sets_run = {k.split('/')[1] for k in seen}
     if verbose:
         print("=" * 64)
         print(f"  ACVP RESULT: {ok_all}/{tot_all} NIST SLH-DSA vectors verified")
-        print("  scope: " + ", ".join(modes) + ", all 12 FIPS 205 parameter sets")
+        print("  scope: " + ", ".join(modes) + (
+            ", all 12 FIPS 205 parameter sets" if len(sets_run) == 12 and not gone else
+            f", {len(sets_run)} of the 12 FIPS 205 parameter sets"))
+        _cov.print_missing(gone)
         if not siggen:
             print("  sigGen (624 byte-exact signatures, ~30 min) is opt-in:")
             print("         pq-verify --slhdsa-siggen")
         for f in failures[:10]:
             print(f"  failed: {f}")
         print("=" * 64)
-    return {'verified': verified, 'passed': ok_all, 'total': tot_all,
+    return {'verified': verified, 'passed': ok_all, 'total': tot_all, 'missing': gone,
             'detail': detail, 'modes': modes, 'failures': failures,
             'vectors': _vector_label(_local, *dirs),
             'reference': _reference('slh-dsa')}
@@ -7133,6 +7189,22 @@ def _resolve_kem_symbols(exported, param_set, explicit=None, prefix=None):
         if len(cands) > 1:
             ambiguous[role] = sorted(cands)
     return found, ambiguous
+
+
+_KEM_STAGE_OF = {'encapsulation': 'encaps', 'decapsulation': 'decaps',
+                  'encapsulationKeyCheck': 'ekCheck', 'decapsulationKeyCheck': 'dkCheck'}
+
+
+def _kem_stages(param_set):
+    """The --audit-kem stages the pinned bundle has vectors for, for
+    param_set: those every source must reach (pq_verify.coverage)."""
+    from .coverage import pinned, groups
+    stages = {'keyGen'} if any(groups(pinned('ML-KEM-keyGen-FIPS203',
+                                             'internalProjection.json'), param_set)) else set()
+    for g in groups(pinned('ML-KEM-encapDecap-FIPS203', 'internalProjection.json'), param_set):
+        if g.get('function') in _KEM_STAGE_OF:
+            stages.add(_KEM_STAGE_OF[g['function']])
+    return stages
 
 
 def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=None,
@@ -7353,28 +7425,37 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
     if bounds['outside_total']:
         tally['bounds'] = (0, 1)
     # A stage that no NIST vector reached was not checked, and an audit
-    # that did not check decaps (or keyGen, or encaps) is not verified.
-    for stage in ('keyGen', 'encaps', 'decaps'):
-        if not tally.get(stage, (0, 0))[1]:
-            tally['not_run:' + stage] = (0, 1)
+    # that did not check it is not verified: every stage the pinned bundle
+    # has groups for (pq_verify.coverage), the key checks included.
+    from . import coverage as _cov
+    _cov.require(tally, _kem_stages(param_set))
     # A vector that could not be run is not a pass: the verdict covers the
     # whole file the report names, not the part of it that had every field.
     if no_dk:
         tally['decapsSkipped'] = (0, no_dk)
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
+    verified = p_all == t_all and t_all > 0
+    # Failures that are checks which could not run, not findings: vectors
+    # that could not be run, constant time unavailable, an operation whose
+    # run under memcheck failed (ct_res['failed']).
+    _cannot = {'decapsSkipped', 'ct:unavailable'} | {
+        'ct:' + op for op in ((ct_res or {}).get('failed') or {})}
+    status = _cov.status(verified, tally, _cannot)
     if verbose:
         for stage in ('keyGen', 'encaps', 'decaps'):
             if stage in tally:
                 p, t = tally[stage]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {stage:8s} "
                       f"{p}/{t}  byte-exact vs NIST")
-            elif 'not_run:' + stage in tally:
+            elif _cov.NOT_RUN + stage in tally:
                 print(f"  FAIL  {stage:8s} no NIST vector ran: not checked")
         if no_dk:
             print(f"        {no_dk} decapsulation vector(s) lack dk, c or k and were not run")
         for stage, what, sec in (('ekCheck', 'encapsulation', '7.2'),
                                  ('dkCheck', 'decapsulation', '7.3')):
+            if _cov.NOT_RUN + stage in tally:
+                print(f"  FAIL  {stage:8s} no NIST vector ran: not checked")
             if stage in tally:
                 p, t = tally[stage]
                 m = keycheck[stage]
@@ -7435,8 +7516,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
                 print(f"        {_rn}")
         print_bounds(bounds)
         print("=" * 68)
-        print(f"  RESULT: {p_all}/{t_all} \u2014 "
-              f"{'VERIFIED' if p_all == t_all and t_all else 'FINDINGS PRESENT'}")
+        print(f"  RESULT: {p_all}/{t_all} \u2014 {status}")
         print(f"  This audits the vendor's OWN keygen/encaps/decaps against")
         print(f"  NIST's published vectors, including the invalid keys it")
         _divs_checked = ((ct_res or {}).get("division_check") or {}).get("checked")
@@ -7446,7 +7526,7 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
              "Constant-time: branches and addresses only, not timing or power.")
             if constant_time else "It is not a side-channel review."))
         print("=" * 68)
-    return {'verified': p_all == t_all and t_all > 0, 'passed': p_all,
+    return {'verified': verified, 'status': status, 'passed': p_all,
             'total': t_all, 'detail': tally, 'library': so_path,
             'keycheck': keycheck, 'edge': edge_res, 'accumulated': acc_res,
             'constant_time': ct_res, 'bounds': bounds, 'decaps_not_run': no_dk,

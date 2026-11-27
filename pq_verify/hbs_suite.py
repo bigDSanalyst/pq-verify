@@ -89,6 +89,11 @@ def pqverify_lms_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None
                                                   timeout=60).read())
 
     T = _Tally()
+    from . import coverage as _cov
+    key = lambda d, g: f"{d}/{g['lmsMode']}/{g['lmOtsMode']}"   # noqa: E731
+    expected = {key(d, g) for d in NIST_DIRS
+                for g in _cov.groups(_cov.pinned(d, "prompt.json"))}
+    seen = set()
     if verbose:
         print("=" * 64)
         print("  NIST ACVP LMS (SP 800-208)")
@@ -98,6 +103,7 @@ def pqverify_lms_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None
     for d in NIST_DIRS:
         mode = d.split('-')[1]
         p, e = load(d, "prompt.json"), load(d, "expectedResults.json")
+        seen |= {key(d, g) for g in _cov.groups(p)}
         exp = {str(t['tcId']): t for g in e['testGroups'] for t in g['tests']}
         egrp = {str(g['tgId']): g for g in e['testGroups']}
         for g in p['testGroups']:
@@ -116,6 +122,7 @@ def pqverify_lms_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None
                     pk = _h(egrp[str(g['tgId'])]['publicKey'])
                     T.rec(stage, H.lms_verify(pk, _h(t['message']), _h(ref['signature'])), tc)
     p_all, t_all, _ = T.totals()
+    gone = _cov.missing("LMS ACVP", seen, expected)
     if verbose:
         for s, (p, t) in sorted(T.detail.items()):
             print(f"  {'PASS' if p == t else 'FAIL'}      {s:52s} {p}/{t}")
@@ -123,9 +130,10 @@ def pqverify_lms_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None
         print(f"  ACVP RESULT: {p_all}/{t_all} NIST LMS vectors verified")
         print("  sigGen: NIST publishes no private key, so each signature is")
         print("          verified under its key rather than regenerated")
+        _cov.print_missing(gone)
         print("=" * 64)
     return {'verified': p_all == t_all and t_all > 0, 'passed': p_all, 'total': t_all,
-            'detail': T.detail, 'failures': T.failures,
+            'missing': gone, 'detail': T.detail, 'failures': T.failures,
             'vectors': _vector_label(_local, *NIST_DIRS),
             'reference': 'pq_verify.hbs'}
 

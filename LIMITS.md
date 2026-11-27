@@ -205,6 +205,22 @@ about the library is claimed.
   run is reported as not run, never as passed, and `scope.complete` is
   false. A `VERIFIED` with an incomplete scope means every check that ran
   passed.
+- **Vectors from another source** (`--vector-dir`, `--live`). The pinned
+  bundle is the measure of what NIST publishes. In `--audit-kem`,
+  `--audit-dsa` and `--audit-slhdsa`, a stage the bundle has vectors for,
+  which the library has an entry point for, and which the vectors read do
+  not reach, fails as not run (`PQV000`); a run whose only failures are of
+  that kind is CANNOT VERIFY. `--verify-response` is INCOMPLETE when its
+  prompt lacked a group the bundle has for the set. The ACVP suites list
+  each group of the bundle that did not run from the source and mark the
+  run degraded, so `--require-full-coverage` fails it. The rule counts
+  stages and groups, not cases: a source with one case of a group the
+  bundle has 25 of reaches that group. Such a source's answers are taken as
+  given: pq-verify checks a library or a response against them, not them
+  against NIST, so a directory with a wrong answer can fail a correct
+  implementation or pass a wrong one. Every other task, fresh questions
+  (`--fresh-key`) among them, reads only pq-verify's pinned data, or no
+  vectors at all, and refuses both flags.
 
 ## Side channels
 

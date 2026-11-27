@@ -214,8 +214,17 @@ def _child(conn, module, func, args, kwargs, parent_pid=None):
         conn.send(("ok", result, {k: list(v) for k, v in DEGRADED.items()},
                    loaded_since(before)))
     except BaseException as exc:                      # noqa: BLE001 -- relayed
+        # An OSError keeps its errno and its class: the dynamic linker's
+        # refusal is a plain OSError with no errno (ctypes raises it with
+        # dlerror()'s text alone); a full disk, a missing file or an
+        # unreachable network is not, and the parent tells them apart.
+        os_err = None
+        if isinstance(exc, OSError) and exc.errno is not None:
+            fname = exc.filename
+            os_err = (exc.errno, exc.strerror,
+                      fname if isinstance(fname, (str, bytes, type(None))) else str(fname))
         conn.send(("raised", type(exc).__name__,
-                   [c.__name__ for c in type(exc).__mro__], str(exc)))
+                   [c.__name__ for c in type(exc).__mro__], str(exc), os_err))
     finally:
         conn.close()
 
@@ -474,9 +483,19 @@ def run(module, func, args=(), kwargs=None, timeout=DEFAULT_TIMEOUT):
         for k, v in degraded.items():
             DEGRADED.setdefault(k, []).extend(x for x in v if x not in DEGRADED.get(k, []))
         return result, loaded
-    _, name, mro, text = msg
+    _, name, mro, text, os_err = msg
     if "OSError" in mro:
-        raise OSError(text)
+        # Raised again as the class the audit process raised where that is a
+        # built-in one, and named in raised_as whatever it was (URLError is
+        # an OSError too), so the caller can tell the dynamic linker's
+        # refusal from any other.
+        import builtins
+        cls = getattr(builtins, name, None)
+        if not (isinstance(cls, type) and issubclass(cls, OSError)):
+            cls = OSError
+        exc = cls(*os_err) if os_err else cls(text)
+        exc.raised_as = name
+        raise exc
     if name == "AdapterError":
         from .hbs_audit import AdapterError
         raise AdapterError(text)

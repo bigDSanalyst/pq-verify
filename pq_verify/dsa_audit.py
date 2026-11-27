@@ -690,6 +690,30 @@ def _one(v, mode, op, g, t, ref, PREHASH):
         f"{'valid' if want else 'invalid'}")
 
 
+def _expected_stages(v):
+    """The stages the pinned bundle has vectors for, for v.param_set, that v
+    has an entry point for: those every vector source must reach
+    (pq_verify.coverage). preHashVerify signs with NIST's first key pair, so
+    it is one of them wherever the library has its own HashML-DSA signer and
+    verifier and the bundle has a keyGen vector for the set."""
+    from .coverage import pinned, groups
+    stages = set()
+    has_key = any(groups(pinned('ML-DSA-keyGen-FIPS204', 'prompt.json'), v.param_set))
+    if has_key and v.via('keygen'):
+        stages.add('keyGen')
+    for mode in ('sigGen', 'sigVer'):
+        for g in groups(pinned(f'ML-DSA-{mode}-FIPS204', 'prompt.json'), v.param_set):
+            stage, op = _route(mode, g)
+            if v.via(op):
+                stages.add(stage)
+    if has_key and v.via('verify_prehash') == 'verify_prehash' and v.via('sign_prehash'):
+        stages.add('preHashVerify')
+    return stages
+
+
+_NO_KEY_PAIR = "no NIST key pair for this parameter set"
+
+
 def nist_keypair(load, param_set):
     """(pk, sk) of NIST's first keyGen case for the set, or None."""
     p, e = load('ML-DSA-keyGen-FIPS204')
@@ -728,7 +752,7 @@ def round_trip_prehashes(v, keypair, tally, na, failures):
     from .core import _SLHDSA_PREHASH as PREHASH
     stage, n = 'preHashVerify', len(PREHASH)
     if keypair is None:
-        na[stage] = (n, "no NIST key pair for this parameter set")
+        na[stage] = (n, _NO_KEY_PAIR)
         return
     pk, sk = keypair
     m, ctx, rnd = b"pq-verify", b"pq-verify pre-hash round trip", bytes(32)
@@ -936,24 +960,37 @@ def _audit_dsa(v, param_set, prompt_dir, vector_dir, live, verbose, edge, accumu
     bounds = outside_writes(*v._fn.values())
     if bounds['outside_total']:
         tally['bounds'] = (0, 1)
+    # A stage the source's vectors did not reach was not checked
+    # (pq_verify.coverage). The round trips' key pair comes from the source's
+    # keyGen vectors: without one they did not run, which is not the same as
+    # not applying.
+    from . import coverage
+    expected = _expected_stages(v)
+    if 'preHashVerify' in expected and na.get('preHashVerify', (0, None))[1] == _NO_KEY_PAIR:
+        del na['preHashVerify']               # not run, which require() now says
+    coverage.require(tally, expected, na)
     p_all = sum(p for p, _ in tally.values())
     t_all = sum(t for _, t in tally.values())
     na_all = sum(c for c, _ in na.values()) + (edge_res or {}).get('not_applicable', 0)
     verified = p_all == t_all and t_all > 0 and not v.rng_findings
-    # An unhooked library is CANNOT VERIFY for constant time; when nothing
-    # else fails, that is the result, not FINDINGS PRESENT.
-    others_fail = v.rng_findings or any(p < t for s, (p, t) in tally.items()
-                                        if s != 'ct:cannot-verify')
-    status = ('VERIFIED' if verified else
-              'CANNOT VERIFY' if not t_all or not others_fail else 'FINDINGS PRESENT')
+    # An unhooked library is CANNOT VERIFY for constant time, as is a run
+    # whose constant time could not start or whose vectors left a stage
+    # unreached; when nothing else fails, that is the result, not FINDINGS
+    # PRESENT.
+    status = coverage.status(verified, tally, {'ct:cannot-verify', 'ct:unavailable'},
+                             findings=bool(v.rng_findings))
     if verbose:
         for s in STAGES:
+            if coverage.NOT_RUN + s in tally:
+                print(f"  FAIL  {s:15s} no NIST vector ran: not checked")
             if s in tally:
                 p, t = tally[s]
                 print(f"  {'PASS' if p == t else 'FAIL'}  {s:15s} {p}/{t}   via {via[s]}")
             if s in na:
                 c, why = na[s]
                 print(f"  n/a   {s:15s} {c} vector(s): {why}")
+        if coverage.NOT_RUN + 'preHashVerify' in tally:
+            print("  FAIL  preHashVerify   no NIST key pair to sign with: not checked")
         if 'preHashVerify' in tally:
             p, t = tally['preHashVerify']
             print(f"  {'PASS' if p == t else 'FAIL'}  preHashVerify   {p}/{t}   via "
