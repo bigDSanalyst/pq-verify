@@ -104,6 +104,8 @@ that gives you, and what it does not:
   look one up. That is why a contained audit also asks fresh questions, from
   a seed drawn for the run and kept in pq-verify's memory until the worker is
   gone: a library with nothing but a table of published answers fails them.
+  They need kyber-py; without it none is asked, and the run says so
+  (LIMITS.md).
   A seed you supply with `--fresh-seed` is on the command line, where the
   worker can read it, so that run reproduces a result and asks nothing new.
   The worker can also use CPU and memory until it is stopped, and make any
