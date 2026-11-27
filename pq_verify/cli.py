@@ -108,6 +108,78 @@ def _isolated(args, module, func, *a, **kw):
         return None, None, str(exc)
 
 
+def _unloaded(exc):
+    """Why an audit stopped on an OSError. The dynamic linker's refusal is a
+    plain OSError with no errno: ctypes raises it with dlerror()'s text
+    alone. Any other -- a full disk, a file that is gone, NIST's server
+    unreachable under --live (URLError) -- is the operating system's, and
+    blaming the linker for it sends the reader the wrong way. raised_as is
+    the class the audit process raised (pq_verify.isolate)."""
+    if (getattr(exc, "raised_as", type(exc).__name__) == "OSError"
+            and getattr(exc, "errno", None) is None):
+        return f"the dynamic linker could not load it ({exc})"
+    return ("the audit stopped on an operating-system error, not a finding about "
+            f"the library ({exc})")
+
+
+# What each route that reads NIST's ACVP vectors reads from a --vector-dir,
+# as (suite directory, file); a file may also be there gzipped. A directory
+# without one of them is an input error, said before anything runs.
+_MLDSA_FILES = tuple((f"ML-DSA-{m}-FIPS204", f) for m in ("keyGen", "sigGen", "sigVer")
+                     for f in ("prompt.json", "expectedResults.json"))
+_SLHDSA_FILES = {m: tuple((f"SLH-DSA-{m}-FIPS205", f)
+                          for f in ("prompt.json", "expectedResults.json"))
+                 for m in ("keyGen", "sigGen", "sigVer")}
+_LMS_FILES = tuple((d, f) for d in ("LMS-keyGen-1.0", "LMS-sigGen-1.0", "LMS-sigGen-SP800-208",
+                                    "LMS-sigVer-1.0", "LMS-sigVer-SP800-208")
+                   for f in ("prompt.json", "expectedResults.json"))
+_KEM_SUITE_FILES = (("ML-KEM-keyGen-FIPS203", "prompt.json"),
+                    ("ML-KEM-keyGen-FIPS203", "expectedResults.json"),
+                    ("ML-KEM-encapDecap-FIPS203", "internalProjection.json"))
+_KEM_AUDIT_FILES = (("ML-KEM-keyGen-FIPS203", "internalProjection.json"),
+                    ("ML-KEM-encapDecap-FIPS203", "internalProjection.json"))
+
+
+def _vector_dir_problem(args):
+    """Why --vector-dir cannot serve the routes this run asked for, or None."""
+    import os
+    vd = args.vector_dir
+    if not os.path.isdir(vd):
+        return f"--vector-dir {vd}: no such directory"
+    siggen = getattr(args, "slhdsa_siggen", False)
+    slh_suite = (_SLHDSA_FILES["keyGen"] + _SLHDSA_FILES["sigVer"]
+                 + (_SLHDSA_FILES["sigGen"] if siggen else ()))
+    needs = []
+    if args.acvp or args.acvp_all:
+        needs.append(("--acvp", _KEM_SUITE_FILES))
+    if args.mldsa_acvp or args.acvp_all:
+        needs.append(("--mldsa-acvp", _MLDSA_FILES))
+    if args.slhdsa_acvp or siggen or args.acvp_all:
+        needs.append(("--slhdsa-acvp", slh_suite))
+    if args.lms_acvp or args.acvp_all:
+        needs.append(("--lms-acvp", _LMS_FILES))
+    if args.audit_kem:
+        needs.append(("--audit-kem", _KEM_AUDIT_FILES))
+    if args.audit_dsa:
+        needs.append(("--audit-dsa", _MLDSA_FILES))
+    if args.audit_slhdsa:
+        needs.append(("--audit-slhdsa", sum(_SLHDSA_FILES.values(), ())))
+    _ps = args.emit_prompt
+    if _ps and _ps.lower() not in ("list", "?") and not args.fresh_key:
+        # the suites of the set's scheme, as pq_verify.response reads them
+        from .response import _SUITES
+        needs.append(("--emit-prompt", tuple(
+            (suite, f) for suite, alg, _m, _r in _SUITES
+            if _ps.startswith((alg + "-", alg + "_"))
+            for f in ("prompt.json", "expectedResults.json"))))
+    for route, files in needs:
+        for suite, name in files:
+            path = os.path.join(vd, suite, name)
+            if not (os.path.isfile(path) or os.path.isfile(path + ".gz")):
+                return f"--vector-dir {vd} has no {suite}/{name} (or .gz), which {route} reads"
+    return None
+
+
 def _bind_loaded(artifact, loaded):
     """Add what the audit actually mapped to the artifact binding. Returns a
     reason string if the audited file is not the file that was hashed.
@@ -193,10 +265,18 @@ def build_parser():
                    help="check the shipped Coq proofs (pq_verify/coq): reductions "
                         "and the NTT, proved for every input; needs coqc, ~2 min")
     p.add_argument("--live", action="store_true",
-                   help="fetch NIST's CURRENT vectors instead of the pinned "
-                        "bundle (needs network; results may change between runs)")
+                   help="with an ACVP suite, --emit-prompt or --verify-response "
+                        "(without --fresh-key, whose questions are derived, not read), "
+                        "--audit-kem, --audit-dsa or --audit-slhdsa: fetch NIST's CURRENT "
+                        "vectors instead of the pinned bundle (needs network; results may "
+                        "change between runs). An audit stage they do not reach fails")
     p.add_argument("--vector-dir", metavar="DIR",
-                   help="verify against your own local ACVP vector directory")
+                   help="with the same tasks: read ACVP vectors from DIR, in NIST's "
+                        "layout (SUITE/prompt.json, expectedResults.json, "
+                        "internalProjection.json), instead of the pinned bundle. An audit "
+                        "stage DIR does not reach fails; a response to a prompt missing a "
+                        "group of the pinned bundle is INCOMPLETE; an ACVP suite lists "
+                        "what DIR lacks")
     p.add_argument("--params", metavar="SET",
                    help="parameter security check (e.g. ML-KEM-512/768/1024)")
     p.add_argument("--kem", metavar="K", type=int, choices=(2, 3, 4),
@@ -437,12 +517,25 @@ def main(argv=None):
         return _main(argv)
 
 
+_VECTOR_ROUTES = ("--acvp, --mldsa-acvp, --slhdsa-acvp, --slhdsa-siggen, --lms-acvp, "
+                  "--acvp-all, --emit-prompt or --verify-response without --fresh-key, "
+                  "--audit-kem, --audit-dsa or --audit-slhdsa")
+
+
 def _main(argv=None):
     args = build_parser().parse_args(argv)
 
     # A modifier without the task it modifies used to be ignored, so a typo'd
     # pipeline ran something other than what it asked for and said nothing.
+    # Fresh questions (--fresh-key) are derived from a seed, not read.
+    _reads_vectors = (args.acvp or args.mldsa_acvp or args.slhdsa_acvp
+                      or args.slhdsa_siggen or args.acvp_all or args.lms_acvp
+                      or ((args.emit_prompt or args.verify_response)
+                          and not args.fresh_key)
+                      or args.audit_kem or args.audit_dsa or args.audit_slhdsa)
     for _flag, _set, _needs in (
+            ("--vector-dir", args.vector_dir, _reads_vectors),
+            ("--live", args.live, _reads_vectors),
             ("--audit-hbs-full", args.audit_hbs_full, args.audit_hbs),
             ("--dsa-abi", args.dsa_abi, args.audit_dsa),
             ("--symbol-prefix", args.symbol_prefix,
@@ -497,11 +590,21 @@ def _main(argv=None):
                        "--kem-keypair": "--audit-kem or --audit-contained",
                        "--kem-encaps": "--audit-kem or --audit-contained",
                        "--kem-decaps": "--audit-kem or --audit-contained",
+                       "--vector-dir": _VECTOR_ROUTES,
+                       "--live": _VECTOR_ROUTES,
                        "--source-include": "--audit-source",
                        "--source-symbol": "--audit-source",
                        "--audit-timeout": "an --audit-* task"}.get(
                 _flag, "--audit-dsa" if _flag.startswith("--dsa") else "--audit-kem")
             print(f"  {_flag} does nothing without {_parent}")
+            return 2
+    if args.live and args.vector_dir:
+        print("  --live and --vector-dir name two vector sources; give one")
+        return 2
+    if args.vector_dir:
+        _why = _vector_dir_problem(args)
+        if _why:
+            print(f"  {_why}")
             return 2
     # --accumulated N must be a count CCTV publishes a digest for, for every
     # parameter set this run audits: an unpublished count checks nothing.
@@ -643,7 +746,9 @@ def _main(argv=None):
         ran_task = True
         if args.emit_prompt.lower() in ("list", "?"):
             sets = available_parameter_sets(**_vsrc)
-            print("  parameter sets available from the pinned bundle:")
+            print("  parameter sets available from "
+                  + ("the vectors read:" if args.vector_dir or args.live
+                     else "the pinned bundle:"))
             for s_ in sets:
                 print(f"    {s_}")
             return 0
@@ -712,7 +817,7 @@ def _main(argv=None):
                 args, "pq_verify.core", "pqverify_audit_kem", _p, _ps,
                 keypair=args.kem_keypair, encaps=args.kem_encaps,
                 decaps=args.kem_decaps, accumulated=_acc_n(_ps),
-                constant_time=args.constant_time, prefix=args.symbol_prefix)
+                constant_time=args.constant_time, prefix=args.symbol_prefix, **_vsrc)
             _bound = _bind_loaded(kem_artifact, _loaded)
             kem_reason = kem_reason or _bound
             if kem_reason:
@@ -721,7 +826,7 @@ def _main(argv=None):
         except OSError as exc:
             # Not loadable by the dynamic linker: cannot verify, not a failure.
             kem_result = None
-            kem_reason = f"the dynamic linker could not load it ({exc})"
+            kem_reason = _unloaded(exc)
             print(f"  cannot audit: {kem_reason}")
     dsa_result = dsa_ran = dsa_reason = dsa_artifact = None
     if getattr(args, "audit_dsa", None):
@@ -758,7 +863,7 @@ def _main(argv=None):
                 dsa_result = None
                 print(f"  cannot verify: {dsa_reason}")
         except OSError as exc:
-            dsa_reason = f"the dynamic linker could not load it ({exc})"
+            dsa_reason = _unloaded(exc)
             print(f"  cannot audit: {dsa_reason}")
     fna_result = fna_ran = fna_reason = fna_artifact = None
     if getattr(args, "audit_fndsa", None):
@@ -810,7 +915,7 @@ def _main(argv=None):
                 fna_result = None
                 print(f"  cannot verify: {fna_reason}")
         except OSError as exc:
-            fna_reason = f"the dynamic linker could not load it ({exc})"
+            fna_reason = _unloaded(exc)
             print(f"  cannot audit: {fna_reason}")
     sla_result = sla_ran = sla_reason = sla_artifact = None
     if getattr(args, "audit_slhdsa", None):
@@ -846,7 +951,7 @@ def _main(argv=None):
                 sla_result = None
                 print(f"  cannot verify: {sla_reason}")
         except OSError as exc:
-            sla_reason = f"the dynamic linker could not load it ({exc})"
+            sla_reason = _unloaded(exc)
             print(f"  cannot audit: {sla_reason}")
     mca_result = mca_ran = mca_reason = mca_artifact = None
     if getattr(args, "audit_mceliece", None):
@@ -884,7 +989,7 @@ def _main(argv=None):
                 mca_result = None
                 print(f"  cannot verify: {mca_reason}")
         except OSError as exc:
-            mca_reason = f"the dynamic linker could not load it ({exc})"
+            mca_reason = _unloaded(exc)
             print(f"  cannot audit: {mca_reason}")
     hqa_result = hqa_ran = hqa_reason = hqa_artifact = None
     if getattr(args, "audit_hqc", None):
@@ -923,7 +1028,7 @@ def _main(argv=None):
                 hqa_result = None
                 print(f"  cannot verify: {hqa_reason}")
         except OSError as exc:
-            hqa_reason = f"the dynamic linker could not load it ({exc})"
+            hqa_reason = _unloaded(exc)
             print(f"  cannot audit: {hqa_reason}")
     har_result = har_artifact = None
     if getattr(args, "audit_harness", None):

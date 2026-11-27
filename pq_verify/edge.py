@@ -475,8 +475,9 @@ def pqverify_edge(param_sets=None, verbose=True):
         return None
     passed = sum(v[0] for r in results.values() for v in r["stages"].values())
     total = sum(v[1] for r in results.values() for v in r["stages"].values())
-    status = "VERIFIED" if passed == total else "FINDINGS PRESENT"
-    out = {"status": status, "verified": passed == total, "passed": passed,
+    verified = passed == total and total > 0          # nothing run is not a pass
+    status = ("VERIFIED" if verified else "FINDINGS PRESENT" if total else "CANNOT VERIFY")
+    out = {"status": status, "verified": verified, "passed": passed,
            "total": total, "sets": results, "vectors": sources(),
            "missing": sorted(set(missing))}
     if verbose:

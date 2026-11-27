@@ -20,6 +20,8 @@ import json
 import os
 import re
 
+from . import coverage as _coverage
+
 SARIF_VERSION = "2.1.0"
 SARIF_SCHEMA = ("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
                 "master/Schemata/sarif-schema-2.1.0.json")
@@ -185,12 +187,12 @@ _FINDING_MAP = (
     # Scheme prefixes first: a finding's own text may contain a later needle
     # ("LMS malformed" holds "malformed", which means CannotVerify below).
     ("secret-dependent division", "PQV013"),
+    ("no NIST vector ran", "PQV000"),        # a stage no vector reached, any audit
     ("ML-DSA:",     "PQV008"),
     ("LMS/XMSS:",   "PQV009"),
     ("source:",     "PQV010"),
     ("stage containment", "PQV011"),
     ("cannot verify", "PQV000"),
-    ("no NIST vector ran", "PQV000"),        # a KEM stage that never ran
     ("lack dk, c or k", "PQV000"),           # KEM vectors that could not be run
     ("malformed",   "PQV000"),
     ("response:",   "PQV006"),
@@ -353,6 +355,9 @@ def to_json_response(result):
             "answered": result.get("answered", 0),
             "unanswered": result.get("unanswered", 0),
             "unknown": result.get("unknown", []),
+            # groups the pinned bundle has that the vectors read lacked, so
+            # the prompt never asked them (pq_verify.coverage)
+            "not_asked": result.get("not_asked", []),
         },
         "summary": {
             "checks_passed": result.get("passed", 0),
@@ -367,7 +372,14 @@ def to_json_response(result):
     return doc
 
 
-def _scope(checked, not_applicable=0, not_run=0, na_why=None):
+def _not_run_stages(result):
+    """_scope's not_run arguments for the stages no vector reached."""
+    n = sum(1 for k in (result.get("detail") or {}) if k.startswith(_coverage.NOT_RUN))
+    return {"not_run": n, "not_run_why": "stage(s) no vector reached"} if n else {}
+
+
+def _scope(checked, not_applicable=0, not_run=0, na_why=None,
+           not_run_why="sampled or over budget"):
     """What a verdict covers, as data.
 
     VERIFIED says every check that ran passed. It does not say how many did
@@ -382,7 +394,7 @@ def _scope(checked, not_applicable=0, not_run=0, na_why=None):
         bits.append(f"{not_applicable} not applicable"
                     + (f" ({na_why})" if na_why else ""))
     if not_run:
-        bits.append(f"{not_run} not run (sampled or over budget)")
+        bits.append(f"{not_run} not run ({not_run_why})")
     return {"complete": complete, "checked": checked,
             "not_applicable": not_applicable, "not_run": not_run,
             "statement": ("full: every case pq-verify has for this target ran"
@@ -427,8 +439,10 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                      "through it")]
         return doc
     p, t = result.get("passed", 0), result.get("total", 0)
-    doc["status"] = "VERIFIED" if result.get("verified") else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    # The audit's own status: CANNOT VERIFY when every failure is a check that
+    # could not run (pq_verify.coverage.status), not FINDINGS PRESENT.
+    doc["status"] = result.get("status") or ("VERIFIED" if result.get("verified") else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY"))
     doc["verified"] = bool(result.get("verified"))
     doc["symbols"] = result.get("symbols", {})
     doc["summary"] = {"checks_passed": p, "checks_total": t,
@@ -600,6 +614,9 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
             from .bounds import finding as _bounds_finding
             findings.append("ML-DSA: " + _bounds_finding(result["bounds"]))
             continue
+        if k.startswith(_coverage.NOT_RUN):
+            findings.append("ML-DSA: " + _coverage.finding(k[len(_coverage.NOT_RUN):]))
+            continue
         if k.startswith("ct:") and v[0] != v[1]:
             ct = ct or {}
             if "cannot_verify" in ct:
@@ -645,7 +662,8 @@ def to_json_dsa(result, artifact=None, param_set=None, library=None, reason=None
                       "not_applicable": result.get("not_applicable_total", 0),
                       "findings": len(findings)}
     doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
-                          na_why="the library exports no entry point for them")
+                          na_why="the library exports no entry point for them",
+                          **_not_run_stages(result))
     return doc
 
 
@@ -792,8 +810,8 @@ def to_json_slhdsa_audit(result, artifact=None, param_set=None, library=None, re
         return doc
     p, t = result.get("passed", 0), result.get("total", 0)
     doc["verified"] = bool(result.get("verified"))
-    doc["status"] = "VERIFIED" if doc["verified"] else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
+    doc["status"] = result.get("status") or ("VERIFIED" if doc["verified"] else (
+        "FINDINGS PRESENT" if t else "CANNOT VERIFY"))
     doc["calling_convention"] = result.get("abi")
     doc["symbols"] = result.get("symbols", {})
     doc["vectors"] = result.get("vectors")
@@ -811,6 +829,9 @@ def to_json_slhdsa_audit(result, artifact=None, param_set=None, library=None, re
             from .bounds import finding as _bounds_finding
             findings.append("SLH-DSA: " + _bounds_finding(result["bounds"]))
             continue
+        if k.startswith(_coverage.NOT_RUN):
+            findings.append("SLH-DSA: " + _coverage.finding(k[len(_coverage.NOT_RUN):]))
+            continue
         if v[0] != v[1]:
             first = next((f for f in fails if f["stage"] == k), None)
             where = f"; first: {first['case']}: {first['detail']}" if first else ""
@@ -821,7 +842,7 @@ def to_json_slhdsa_audit(result, artifact=None, param_set=None, library=None, re
                       "not_applicable": result.get("not_applicable_total", 0),
                       "findings": len(findings)}
     doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
-                          na_why="the API cannot express them")
+                          na_why="the API cannot express them", **_not_run_stages(result))
     return doc
 
 
@@ -1158,7 +1179,7 @@ def to_json_acvp(suites, artifact=None):
     """
     doc = _envelope("pq-verify/acvp-result", artifact,
                     reason="reference-chain conformance, no vendor binary loaded")
-    p = t = 0
+    p = t = gone = 0
     doc["suites"] = {}
     doc["groups"] = {}
     for label, r in suites.items():
@@ -1173,7 +1194,11 @@ def to_json_acvp(suites, artifact=None):
                                 "checks_total": r.get("total", 0),
                                 "verified": bool(r.get("verified")),
                                 "vectors": r.get("vectors"),
-                                "reference": r.get("reference")}
+                                "reference": r.get("reference"),
+                                # groups the pinned bundle has that the vectors
+                                # read lacked (pq_verify.coverage)
+                                "missing": list(r.get("missing") or [])}
+        gone += len(r.get("missing") or []) + int(r.get("skipped") or 0)
         for g, v in (r.get("detail") or {}).items():
             doc["groups"][f"{label}/{g}"] = {"passed": v[0], "total": v[1]}
     doc["summary"] = {"checks_passed": p, "checks_total": t,
@@ -1185,6 +1210,8 @@ def to_json_acvp(suites, artifact=None):
     doc["verified"] = bool(t) and p == t and not missing
     doc["status"] = ("VERIFIED" if doc["verified"] else
                      "FINDINGS PRESENT" if p < t else "CANNOT VERIFY")
+    doc["scope"] = _scope(t, not_run=gone, not_run_why=(
+        "vector groups of the pinned bundle, or tests, the vectors read did not let run"))
     return doc
 
 

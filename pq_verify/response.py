@@ -46,8 +46,11 @@ DEGRADED names what did not run.
 
 Two properties are enforced rather than assumed:
 
-  * A question is only asked if the pinned bundle has an answer for it, so a
-    response can never be scored against a blank.
+  * A question is only asked if its source -- the pinned bundle, or the
+    --vector-dir or NIST's live files a run names instead -- has an answer
+    for it, so a response can never be scored against a blank. A group the
+    pinned bundle has for the set and another source lacks was never asked,
+    and the result says so: INCOMPLETE, never VERIFIED (pq_verify.coverage).
   * Unanswered questions are counted and reported. A response covering three
     of 205 questions reports 3/205 answered and INCOMPLETE -- never "3/3 PASS".
     A skip that looks like a pass is the failure mode this tool exists to stop.
@@ -276,6 +279,34 @@ def _questions(param_set, local):
     return out
 
 
+def _pinned_dir():
+    return os.path.join(_pkg_dir(), "vectors")
+
+
+def _is_pinned(local):
+    return bool(local) and os.path.abspath(local) == os.path.abspath(_pinned_dir())
+
+
+def _where(local):
+    """How a message names the source the questions came from."""
+    return "the pinned bundle" if _is_pinned(local) else "the vectors read"
+
+
+def _not_asked(param_set, local, questions):
+    """The question groups, by label, that the pinned bundle has for
+    param_set and `questions` -- read from another source, a --vector-dir or
+    NIST's live files -- lack (pq_verify.coverage: the pinned bundle is the
+    measure). A prompt without them never asked them, so a response to it
+    covers less than the bundle does for the set. Sorted; empty for the
+    pinned bundle itself."""
+    if _is_pinned(local):
+        return []
+    want = {_group_label(s["suite"], g) for s in _questions(param_set, _pinned_dir())
+            for g in s["testGroups"]}
+    have = {_group_label(s["suite"], g) for s in questions for g in s["testGroups"]}
+    return sorted(want - have)
+
+
 def _prompt_id(questions):
     """sha256 over the canonical question set.
 
@@ -346,7 +377,7 @@ def build_prompt(param_set, prompt_dir=None, vector_dir=None, live=False,
     if not questions:
         known = available_parameter_sets(prompt_dir, vector_dir, live)
         raise ValueError(
-            f"no pinned questions for parameter set {param_set!r}. "
+            f"no questions for parameter set {param_set!r} in {_where(local)}. "
             f"Known: {', '.join(known) if known else '(no vectors available)'}")
     pid = _prompt_id(questions)
     doc = {
@@ -435,6 +466,15 @@ def emit_prompt(param_set, out_path=None, prompt_dir=None, vector_dir=None,
                   f"({len(s['testGroups'])} group(s))")
         print(f"  wrote      : {out_path}  "
               f"({os.path.getsize(out_path) / 1048576.0:.1f} MiB)")
+        if fresh is None:
+            gone = _not_asked(param_set, _source(prompt_dir, vector_dir, live), doc["suites"])
+            if gone:
+                print(f"  NOT ASKED  : {len(gone)} group(s) the pinned bundle has for "
+                      f"{param_set}; the vectors read lack them, or their answers:")
+                for g in gone[:_MAX_LISTED]:
+                    print(f"               - {g}")
+                print("               a response to this prompt is INCOMPLETE, "
+                      "not VERIFIED")
         if fresh is not None:
             print(f"  fresh key  : {fresh_key}  (KEEP PRIVATE; do not send it "
                   f"with the prompt)")
@@ -445,7 +485,9 @@ def emit_prompt(param_set, out_path=None, prompt_dir=None, vector_dir=None,
             print(f"      pq-verify --verify-response <response.json> "
                   f"--fresh-key {fresh_key}")
         else:
-            print(f"      pq-verify --verify-response <response.json>")
+            src = (f" --vector-dir {prompt_dir or vector_dir}" if (prompt_dir or vector_dir)
+                   else " --live" if live else "")
+            print(f"      pq-verify --verify-response <response.json>{src}")
             print("  These are NIST's PUBLISHED questions: their answers are")
             print("  public, so a match proves nothing about an implementation.")
             print("  For an audit, add --fresh-key FILE.")
@@ -619,10 +661,15 @@ def _artifact_field(meta):
 
 def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
                     param_set=None, verbose=True, fresh_key=None):
-    """Check a response file against the pinned expected answers, byte-exact.
+    """Check a response file, byte-exact, against the expected answers of the
+    vectors read: the pinned bundle, unless vector_dir, prompt_dir or live
+    names another source.
 
     Returns a result dict; `verified` is True only when every question in the
-    prompt was answered and every answer matched.
+    prompt was answered and every answer matched, and the prompt asked every
+    group the pinned bundle has for the set: with vector_dir or live, a group
+    that source lacks was never asked, and the result is INCOMPLETE
+    ('not_asked' lists them).
     """
     local = _source(prompt_dir, vector_dir, live)
     res = {
@@ -634,7 +681,7 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         "prompt_id": None, "response_prompt_id": None,
         "prompt_binding": "absent",
         "vector_source": _source_label(local),
-        "questions": 0, "answered": 0, "unanswered": 0,
+        "questions": 0, "answered": 0, "unanswered": 0, "not_asked": [],
         "passed": 0, "total": 0, "malformed": 0, "duplicates": [],
         "unknown": [], "detail": {}, "findings": [],
         "implementation": None,
@@ -700,7 +747,7 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
             param_set = guess[0]
         elif not guess:
             return _stop("cannot tell which parameter set this answers; none "
-                         "of its tcIds appear in the pinned prompts")
+                         f"of its tcIds appear in the prompts of {_where(local)}")
         else:
             return _stop("answers span several parameter sets "
                          f"({', '.join(guess)}); emit and answer one prompt "
@@ -725,9 +772,11 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
         except (FileNotFoundError, OSError) as exc:
             return _stop(f"vectors unavailable ({exc})")
     if not questions:
-        return _stop(f"no pinned questions for parameter set {param_set!r}")
+        return _stop(f"no questions for parameter set {param_set!r} in {_where(local)}")
     res["prompt_id"] = _prompt_id(questions)
     res["questions"] = _count(questions)
+    if key is None:
+        res["not_asked"] = _not_asked(param_set, local, questions)
 
     if claimed_id:
         if claimed_id == res["prompt_id"]:
@@ -822,6 +871,16 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
             f"questions unanswered — this response covers less than the prompt")
         DEGRADED["skipped_checks"].append(
             f"response coverage ({param_set}: {res['unanswered']} unanswered)")
+    gone = res["not_asked"]
+    if gone:
+        listed = gone[:_MAX_LISTED]
+        res["findings"].append(
+            f"cannot verify: {len(gone)} question group(s) the pinned bundle has for "
+            f"{param_set} were never asked: the vectors read lack them, or their "
+            f"answers ({', '.join(listed)}{', …' if len(gone) > len(listed) else ''})")
+        DEGRADED["skipped_checks"].append(
+            f"response coverage ({param_set}: {len(gone)} group(s) of the pinned "
+            f"bundle never asked)")
     if res["unknown"]:
         listed = res["unknown"][:_MAX_LISTED]
         res["findings"].append(
@@ -840,7 +899,7 @@ def verify_response(response_path, prompt_dir=None, vector_dir=None, live=False,
     failed = res["answered"] - res["passed"]
     if failed or res["duplicates"]:
         res["status"] = "FINDINGS PRESENT"
-    elif res["unanswered"] or res["unknown"]:
+    elif res["unanswered"] or res["unknown"] or gone:
         res["status"] = "INCOMPLETE"
     elif res["total"]:
         res["status"] = "VERIFIED"
@@ -884,10 +943,15 @@ def _print(res):
     print("-" * 68)
     print(f"  answered  : {res['answered']} of {res['questions']} asked"
           + (f"   ({res['unanswered']} unanswered)" if res["unanswered"] else ""))
+    if res.get("not_asked"):
+        print(f"  not asked : {len(res['not_asked'])} group(s) the pinned bundle has, "
+              f"which the vectors read do not pose")
     print(f"  matched   : {res['passed']} of {res['answered']} answered "
           f"byte-exact vs "
           + ("answers computed now from the fresh key" if res.get("fresh")
-             else "pinned NIST values")
+             else "pinned NIST values"
+             if str(res.get("vector_source", "")).startswith("pinned bundle")
+             else "the expected values in the vectors read")
           + (f"   ({res['passed']} of {res['questions']} asked)"
              if res["unanswered"] else ""))
     if res["malformed"]:

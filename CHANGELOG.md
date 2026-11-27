@@ -50,6 +50,100 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--audit-dsa` and `--audit-slhdsa` verified libraries on stages no
+  vector reached.** A stage existed only if the vectors held cases for it,
+  so with `--vector-dir` or `--live` a source missing a group simply dropped
+  the stage. PQClean's ML-DSA-65 (`0586a82`) given vectors without ML-DSA-65's
+  sigVer groups was `347/347 — VERIFIED` and exited 0. slhdsa-c (`4745143`),
+  SLH-DSA-SHA2-128f without sigVer, was `103/103 — VERIFIED` with "SCOPE:
+  full: every case pq-verify has for this target ran". #117 closed this for
+  ML-KEM's keyGen, encaps and decaps only. The rule now lives in one place
+  (`pq_verify/coverage.py`) and every audit that reads user vectors applies
+  it.
+  - **The measure is the pinned bundle.** Each stage it has vectors for, for
+    the parameter set, that the library has an entry point for, must be
+    reached by the source the run read. One that is not fails as
+    `not_run:<stage>`: "no NIST vector ran, so it was not checked", rule
+    `PQV000` in every audit. A stage the library cannot be asked needs no
+    vectors. With the pinned bundle as the source, every stage is reached,
+    so no recorded result changes.
+  - **ML-KEM's key checks are held to it too.** Vectors without the
+    encapsulation and decapsulation key-check groups verified a library that
+    was never asked to refuse an invalid key.
+  - **ML-DSA's pre-hash round trips** sign with NIST's key pair. Without one
+    from the source they did not run, and are not run, not "not applicable".
+- **A run whose only failures are checks that could not run is CANNOT
+  VERIFY, not FINDINGS PRESENT.** Constant time requested and unavailable,
+  everything else passing, read FINDINGS PRESENT in `--audit-kem` and
+  `--audit-dsa`, though nothing had been found; so did a stage no vector
+  reached. `--audit-dsa` already did this for an unhooked build. The rule is
+  now the same in all three audits (`pq_verify.coverage.status`). Exit codes
+  do not change.
+- **The ACVP suites say what their vectors lacked.** With `--vector-dir`,
+  `--acvp`, `--mldsa-acvp`, `--slhdsa-acvp` and `--lms-acvp` verified
+  whatever groups the directory held.
+  - **What printed.** A directory without ML-DSA-65's sigVer groups printed
+    "keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5". The
+    SLH-DSA suite printed "all 12 FIPS 205 parameter sets" before it ran.
+  - **What happens now.** Each suite lists the groups of the pinned bundle
+    that did not run from the source, and marks the run degraded, so the
+    integrity report says so and `--require-full-coverage` fails it. The JSON
+    report carries them under `suites.<suite>.missing` and `scope`. No line
+    claims every group, set or level ran unless every one did. The ML-KEM
+    suite also counts the tests it skips (an unhandled function type, a
+    decapsulation test without a key).
+  - **With no vectors at all**, the ML-KEM suite printed "ML-KEM VERIFIED
+    end-to-end … all groups" (0 == 0) while returning `verified: false`.
+  - **The edge-case check** (`pqverify_edge`) is likewise not verified when
+    nothing ran.
+- **`--verify-response` verified answers to a prompt that never asked some
+  of NIST's questions.** `--emit-prompt` and `--verify-response` read the
+  `--vector-dir` they are given.
+  - **What happened.** A directory without ML-KEM-512's decapsulation
+    key-check groups gave a prompt without them. A response answering the
+    other 70 questions was `VERIFIED`, exit 0, "byte-exact vs pinned NIST
+    values". The values were the directory's, and no decapsulation key was
+    ever checked.
+  - **What happens now.** A group the pinned bundle has for the set and the
+    source lacks is listed. `--emit-prompt` says the prompt does not ask it.
+    `--verify-response` is `INCOMPLETE` (exit 1): it names the group in its
+    findings and in `coverage.not_asked` in the JSON report, and marks the
+    run degraded.
+  - **The comparison line** says "pinned NIST values" only of the pinned
+    bundle.
+- **`--vector-dir` and `--live` were ignored by every task that does not
+  read ACVP vectors, `--audit-kem` among them.**
+  - **No warning.** `--audit-kem LIB SET --vector-dir mine/` audited against
+    the pinned bundle and said nothing. Every task that ignored the flags did
+    the same.
+  - **Now refused.** Either flag without a task that reads them is an input
+    error (exit 2), like every other modifier without its task, and so are
+    both together. `--emit-prompt` and `--verify-response` with `--fresh-key`
+    read none: fresh questions come from a seed, and the flags did nothing
+    beside them. `--audit-kem` now reads them, as `--audit-dsa` and
+    `--audit-slhdsa` did; it is held to the rule above.
+  - **Missing files.** A `--vector-dir` without a file a requested task
+    reads is an input error, named before anything runs. For `--emit-prompt`
+    that means the files of the set's scheme. `--verify-response` learns its
+    set from the response, so it reports the groups it could not ask
+    instead.
+    - **Before:** a mistyped directory reached the audit, which stopped on
+      the missing file. The CLI said "the dynamic linker could not load it"
+      and exited 1. For `--acvp` it was a Python traceback, and
+      `--emit-prompt` wrote a prompt of the suites the directory held, exit
+      0.
+- **The CLI blamed the dynamic linker for any operating-system error in an
+  audit.** A full disk during `--audit-kem --constant-time` read "the dynamic
+  linker could not load it ([Errno 28] No space left on device)". So did
+  NIST's server unreachable under `--live` (`URLError`). The audit process
+  now sends an `OSError`'s class and errno back with it. Only what a refused
+  `dlopen` raises, a plain `OSError` with no errno, is reported as the
+  linker's. Any other says the audit stopped on an operating-system error,
+  not a finding about the library. Either is still CANNOT VERIFY.
+- **The README's first lines said every library audit uses every NIST ACVP
+  vector.** `--audit-so` checks one NTT symbol directly. `--audit-hbs`
+  checks LMS and XMSS against pinned vectors and samples the larger trees
+  unless `--audit-hbs-full`. The sentence now says so.
 - **NTT scan (`pqverify_scan`, `--audit-so`): a correct Montgomery-domain
   NTT got two findings.** For an NTT whose output is multiplied by R = 2^16
   (2^32 for ML-DSA), the Full NTT check allowed for the factor, but

@@ -460,6 +460,7 @@ pq_verify/
   dsa_audit.py             ML-DSA library audit
   ct_audit.py              Constant time under Valgrind memcheck (ML-KEM, Classic McEliece)
   ct_div.py                Secret operands of ML-KEM's divisions, through vgdb (PQV013)
+  coverage.py              A verdict covers only what ran: stages no vector reached, by the pinned bundle
   ct_dsa.py                ML-DSA constant time, judged by the library's declassifications
   ct_fndsa.py              FN-DSA constant time, the signer's own branches matched by line
   reach.py                 Call-graph reachability: which listed divisions a secret-input entry reaches

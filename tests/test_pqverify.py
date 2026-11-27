@@ -821,7 +821,7 @@ def test_response_report_records_the_binding(tmp_path, response512):
     assert doc["schema"] == "pq-verify/response-result"
     assert doc["artifact"]["bound"] is False
     assert doc["coverage"] == {"questions": 80, "answered": 80,
-                               "unanswered": 0, "unknown": []}
+                               "unanswered": 0, "unknown": [], "not_asked": []}
 
 
 def test_cannot_verify_and_mismatch_map_to_different_rules():
@@ -3428,7 +3428,8 @@ def test_kem_audit_fails_a_stage_no_vector_reached(tmp_path):
     assert {k for k, (p, t) in r["detail"].items() if p != t} == {"not_run:decaps"}
     assert "FAIL  decaps   no NIST vector ran: not checked" in out.getvalue()
     doc = to_json_kem(r, param_set="ML-KEM-768")
-    assert doc["status"] == "FINDINGS PRESENT"
+    # It said FINDINGS PRESENT; nothing was found, a stage was not checked.
+    assert doc["status"] == "CANNOT VERIFY" and r["status"] == "CANNOT VERIFY"
     assert doc["findings"] == ["stage decaps: no NIST vector ran, so it was not checked"]
     from pq_verify.report import _rule_for
     assert _rule_for(doc["findings"][0]) == "PQV000"       # could not verify, not a fault
@@ -13328,3 +13329,488 @@ def test_what_cannot_run_a_contained_audit_says_so(monkeypatch, tmp_path):
     doc = to_json_contained_audit(r)
     assert doc["findings"] == ["cannot verify: the contained worker needs Linux"]
     assert doc["artifact"]["bound"] is False and doc["verified"] is False
+
+
+# ----------------------------------------------------------------------
+# Coverage: a verdict covers only what ran.
+#
+# A stage no vector reached was not checked. The ML-KEM audit has failed such
+# a stage since #117 (keyGen, encaps and decaps); every route that reads
+# NIST's vectors from a source the run chooses (--vector-dir, --live) is held
+# to the same rule here, with the pinned bundle as the measure of what NIST
+# publishes for a parameter set. Each directory below is the pinned bundle's
+# own files with some test groups left out of the questions.
+# ----------------------------------------------------------------------
+
+_KEM_AUDIT_FILES = {"ML-KEM-keyGen-FIPS203": ("internalProjection.json",),
+                    "ML-KEM-encapDecap-FIPS203": ("internalProjection.json",)}
+_KEM_SUITE_FILES = {"ML-KEM-keyGen-FIPS203": ("prompt.json", "expectedResults.json"),
+                    "ML-KEM-encapDecap-FIPS203": ("internalProjection.json",)}
+_DSA_FILES = {f"ML-DSA-{m}-FIPS204": ("prompt.json", "expectedResults.json")
+              for m in ("keyGen", "sigGen", "sigVer")}
+_SLHDSA_FILES = {f"SLH-DSA-{m}-FIPS205": ("prompt.json", "expectedResults.json")
+                 for m in ("keyGen", "sigGen", "sigVer")}
+_LMS_FILES = {d: ("prompt.json", "expectedResults.json")
+              for d in ("LMS-keyGen-1.0", "LMS-sigGen-1.0", "LMS-sigGen-SP800-208",
+                        "LMS-sigVer-1.0", "LMS-sigVer-SP800-208")}
+
+
+def _vector_dir(tmp_path, files, drop=None, name="vectors"):
+    """A --vector-dir holding the pinned bundle's `files` ({suite: names}),
+    with every test group for which drop(suite, group) is true left out of
+    the files that pose the questions; expectedResults.json keeps every
+    answer, so only the questions are missing."""
+    import copy, json, os
+    from pq_verify.core import _load_vector_json, _pkg_dir
+    root = tmp_path / name
+    for suite, names in files.items():
+        (root / suite).mkdir(parents=True, exist_ok=True)
+        for f in names:
+            doc = copy.deepcopy(_load_vector_json(
+                os.path.join(_pkg_dir(), "vectors", suite, f), f"{suite}/{f}"))
+            if drop and f != "expectedResults.json":
+                doc["testGroups"] = [g for g in doc["testGroups"] if not drop(suite, g)]
+            (root / suite / f).write_text(json.dumps(doc))
+    return str(root)
+
+
+def _not_run(detail):
+    return {k[len("not_run:"):] for k in detail if k.startswith("not_run:")}
+
+
+def _kem_768_key_checks(suite, g):
+    return (g.get("parameterSet") == "ML-KEM-768"
+            and g.get("function", "").endswith("KeyCheck"))
+
+
+def test_kem_audit_fails_a_key_check_no_vector_reached(tmp_path):
+    """#117 failed a keyGen, encaps or decaps stage that no vector reached,
+    and left out the key checks: vectors without them verified a library
+    that was never asked to refuse an invalid key."""
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem, _rule_for
+    so = _mlkem_ref_so(tmp_path)
+    vd = _vector_dir(tmp_path, _KEM_AUDIT_FILES, drop=_kem_768_key_checks)
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = pqverify_audit_kem(so, "ML-KEM-768", vector_dir=vd, edge=False, accumulated=0)
+    assert _not_run(r["detail"]) == {"ekCheck", "dkCheck"}
+    assert r["verified"] is False and r["status"] == "CANNOT VERIFY"
+    doc = to_json_kem(r, param_set="ML-KEM-768")
+    assert doc["status"] == "CANNOT VERIFY" and doc["verified"] is False
+    gone = [f for f in doc["findings"] if "no NIST vector ran" in f]
+    assert gone == ["stage dkCheck: no NIST vector ran, so it was not checked",
+                    "stage ekCheck: no NIST vector ran, so it was not checked"]
+    assert {_rule_for(f) for f in gone} == {"PQV000"}
+    with contextlib.redirect_stdout(io.StringIO()):          # the control
+        full = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                                  vector_dir=_vector_dir(tmp_path, _KEM_AUDIT_FILES, name="all"))
+    assert full["verified"] is True and not _not_run(full["detail"])
+
+
+def test_dsa_audit_fails_a_stage_no_vector_reached(tmp_path):
+    """Vectors without ML-DSA-65's sigVer groups: every sigVer stage vanished
+    and the audit said VERIFIED (PQClean's ML-DSA-65 was 347/347 that way)."""
+    from pq_verify.report import to_json_dsa, _rule_for
+    path, keep = _dsa_shim(tmp_path)
+    vd = _vector_dir(tmp_path, _DSA_FILES,
+                     drop=lambda s, g: "sigVer" in s and g.get("parameterSet") == "ML-DSA-65")
+    r = _audit_shim(path, edge=False, vector_dir=vd)
+    assert _not_run(r["detail"]) == {"sigVerInternal", "sigVerPure", "sigVerPreHash"}
+    assert r["verified"] is False and r["status"] == "CANNOT VERIFY"
+    doc = to_json_dsa(r, param_set="ML-DSA-65")
+    assert doc["status"] == "CANNOT VERIFY"
+    want = "ML-DSA: stage sigVerPure: no NIST vector ran, so it was not checked"
+    assert want in doc["findings"] and _rule_for(want) == "PQV000"
+    assert doc["scope"]["complete"] is False
+    full = _audit_shim(path, edge=False,                     # the control
+                       vector_dir=_vector_dir(tmp_path, _DSA_FILES, name="all"))
+    assert full["verified"] is True and not _not_run(full["detail"])
+
+
+def test_slhdsa_audit_fails_a_stage_no_vector_reached(tmp_path):
+    """slhdsa-c's SLH-DSA-SHA2-128f without its sigVer groups was 103/103
+    VERIFIED with "SCOPE: full: every case pq-verify has for this target ran"."""
+    from pq_verify.report import to_json_slhdsa_audit, _rule_for
+    so = _slhdsa_oracle(tmp_path)
+    vd = _vector_dir(tmp_path, _SLHDSA_FILES,
+                     drop=lambda s, g: "sigVer" in s
+                     and g.get("parameterSet") == "SLH-DSA-SHA2-128f")
+    r = _slhdsa_audit(so, vector_dir=vd)
+    assert _not_run(r["detail"]) == {"sigVerInternal", "sigVerPure", "sigVerPreHash"}
+    assert r["verified"] is False and r["status"] == "CANNOT VERIFY"
+    doc = to_json_slhdsa_audit(r, param_set="SLH-DSA-SHA2-128f")
+    assert doc["status"] == "CANNOT VERIFY"
+    assert not doc["scope"]["complete"] and "not run" in doc["scope"]["statement"]
+    want = "SLH-DSA: stage sigVerPure: no NIST vector ran, so it was not checked"
+    assert want in doc["findings"] and _rule_for(want) == "PQV000"
+    full = _slhdsa_audit(so, vector_dir=_vector_dir(tmp_path, _SLHDSA_FILES, name="all"))
+    assert full["verified"] is True and not _not_run(full["detail"])
+
+
+def test_a_stage_the_library_cannot_be_asked_needs_no_vectors(tmp_path):
+    """The rule holds a stage to vectors only where the library has the
+    entry point for it: a build without pre-hash entry points, given vectors
+    without pre-hash groups, has nothing missing."""
+    so = _slhdsa_oracle(tmp_path, flags=("-DPQVTEST_NO_PREHASH",))
+    vd = _vector_dir(tmp_path, _SLHDSA_FILES, drop=lambda s, g: g.get("preHash") == "preHash")
+    r = _slhdsa_audit(so, vector_dir=vd)
+    assert not _not_run(r["detail"]), r["detail"]
+    full = _slhdsa_oracle(tmp_path)                           # it has them: required
+    assert _not_run(_slhdsa_audit(full, vector_dir=vd)["detail"]) == {
+        "sigGenPreHash", "sigVerPreHash"}
+
+
+def test_a_run_whose_only_failures_could_not_be_checked_is_cannot_verify(tmp_path,
+                                                                        monkeypatch):
+    """Constant time asked for and unavailable, every other stage passing:
+    the run said FINDINGS PRESENT, though nothing had been found. A finding
+    on evidence still says FINDINGS PRESENT."""
+    from pq_verify import ct_audit
+    from pq_verify.core import pqverify_audit_kem
+    from pq_verify.report import to_json_kem
+
+    def unavailable(*a, **k):
+        raise ct_audit.Unavailable("valgrind is not installed")
+    monkeypatch.setattr(ct_audit, "run_kem", unavailable)
+    with contextlib.redirect_stdout(io.StringIO()):
+        good = pqverify_audit_kem(_mlkem_ref_so(tmp_path), "ML-KEM-768", edge=False,
+                                  accumulated=0, constant_time=True)
+        bad = pqverify_audit_kem(_mlkem_ref_so(tmp_path, defines=("MUT_COMPRESS",)),
+                                 "ML-KEM-768", edge=False, accumulated=0,
+                                 constant_time=True)
+    assert good["detail"]["ct:unavailable"] == (0, 1)
+    assert good["status"] == "CANNOT VERIFY" and good["verified"] is False
+    assert to_json_kem(good, param_set="ML-KEM-768")["status"] == "CANNOT VERIFY"
+    assert bad["status"] == "FINDINGS PRESENT"
+    assert to_json_kem(bad, param_set="ML-KEM-768")["status"] == "FINDINGS PRESENT"
+
+
+def test_an_ml_dsa_run_whose_constant_time_could_not_run_is_cannot_verify(tmp_path,
+                                                                         monkeypatch):
+    """ML-DSA treated an unhooked build (ct:cannot-verify) this way and not a
+    constant-time run that could not start (ct:unavailable)."""
+    from pq_verify import dsa_audit
+    monkeypatch.setattr(dsa_audit, "_constant_time", lambda v, ps: (
+        {"unavailable": (0, 1)}, {"unavailable": "valgrind is not installed"}))
+    path, keep = _dsa_shim(tmp_path)
+    r = _audit_shim(path, edge=False, constant_time=True)
+    assert r["detail"]["ct:unavailable"] == (0, 1)
+    assert r["status"] == "CANNOT VERIFY" and r["verified"] is False
+
+
+def test_acvp_suites_name_the_groups_their_vectors_lack(tmp_path):
+    """The ACVP suites check pq-verify's references against whatever vectors
+    they read. A directory without ML-DSA-65's sigVer groups still printed
+    "keyGen + sigGen (byte-exact) + sigVer (bool-exact), Levels 2/3/5"; the
+    SLH-DSA suite printed "all 12 FIPS 205 parameter sets" whatever ran. Now
+    each lists what the pinned bundle has and the source lacked, and marks
+    the run degraded (--require-full-coverage fails it)."""
+    from pq_verify import core
+    from pq_verify.hbs_suite import pqverify_lms_acvp
+    sha2_128f = ("SLH-DSA-SHA2-128f",)
+    cases = [
+        ("ML-KEM ACVP", lambda **k: core.pqverify_acvp(**k), _KEM_SUITE_FILES,
+         _kem_768_key_checks, "kyber_py", ("all groups", "Levels 1, 3, 5")),
+        ("ML-DSA ACVP", lambda **k: core.pqverify_mldsa_acvp(**k), _DSA_FILES,
+         lambda s, g: "sigVer" in s and g.get("parameterSet") == "ML-DSA-65",
+         "dilithium_py", ("Levels 2/3/5",)),
+        ("SLH-DSA ACVP", lambda **k: core.pqverify_slhdsa_acvp(param_sets=sha2_128f, **k),
+         _SLHDSA_FILES,
+         lambda s, g: "sigVer" in s and g.get("parameterSet") == sha2_128f[0],
+         "slhdsa", ("all 12",)),
+        ("LMS ACVP", lambda **k: pqverify_lms_acvp(**k), _LMS_FILES,
+         lambda s, g: s == "LMS-sigVer-1.0", None, ()),
+    ]
+    before = {k: list(v) for k, v in core.DEGRADED.items()}
+    try:
+        for label, run, files, drop, dep, claims in cases:
+            if dep:
+                pytest.importorskip(dep)
+            for k in core.DEGRADED:
+                core.DEGRADED[k][:] = []
+            vd = _vector_dir(tmp_path, files, drop=drop, name=label.replace(" ", "-"))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                r = run(vector_dir=vd)
+            assert r["missing"], label
+            assert any(s.startswith(label) for s in core.DEGRADED["skipped_checks"]), (
+                label, core.DEGRADED["skipped_checks"])
+            for claim in claims:
+                assert claim not in out.getvalue(), (label, claim)
+            for k in core.DEGRADED:                           # the control
+                core.DEGRADED[k][:] = []
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = run(vector_dir=_vector_dir(tmp_path, files, name=label + "-all"))
+            assert r["missing"] == [] and not core.DEGRADED["skipped_checks"], label
+    finally:
+        for k, v in before.items():
+            core.DEGRADED[k][:] = v
+
+
+def test_the_kem_acvp_suite_says_verified_only_when_something_was(tmp_path):
+    """With no vector to run it printed "ML-KEM VERIFIED end-to-end ... all
+    groups" (0 == 0) while returning verified=False."""
+    from pq_verify import core
+    pytest.importorskip("kyber_py")
+    before = {k: list(v) for k, v in core.DEGRADED.items()}
+    try:
+        vd = _vector_dir(tmp_path, _KEM_SUITE_FILES, drop=lambda s, g: True)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            r = core.pqverify_acvp(vector_dir=vd)
+    finally:
+        for k, v in before.items():
+            core.DEGRADED[k][:] = v
+    assert r["verified"] is False and r["total"] == 0
+    assert "VERIFIED" not in out.getvalue()
+
+
+def test_the_edge_check_with_nothing_to_run_is_not_verified(monkeypatch):
+    from pq_verify import edge
+    empty = lambda *a, **k: {"stages": {}, "failures": [], "not_applicable": 0}
+    monkeypatch.setattr(edge, "run_kem", empty)
+    monkeypatch.setattr(edge, "run_dsa", empty)
+    monkeypatch.setattr(edge, "ReferenceKEM", lambda ps: None)
+    monkeypatch.setattr(edge, "ReferenceDSA", lambda ps: None)
+    r = edge.pqverify_edge(verbose=False)
+    assert r["total"] == 0 and r["verified"] is False and r["status"] != "VERIFIED"
+
+
+def test_vector_source_flags_need_a_route_that_reads_vectors(tmp_path):
+    """--vector-dir and --live were ignored, without a word, by every route
+    that does not read ACVP vectors -- --audit-kem among them, which audited
+    against the pinned bundle while the user named another. A modifier
+    without its task is an input error (exit 2), as for every other one."""
+    vd = str(tmp_path)
+    lib = tmp_path / "lib.so"
+    lib.write_bytes(b"\x7fELF")
+    for argv in (["--vector-dir", vd], ["--live"],
+                 ["--audit-hbs", str(lib), "--vector-dir", vd],
+                 ["--audit-fndsa", str(lib), "FN-DSA-512", "--live"],
+                 ["--audit-contained", str(lib), "ML-KEM-768", "--vector-dir", vd],
+                 ["--acvp", "--live", "--vector-dir", vd]):
+        code, out = _cli(*argv)
+        assert code == 2, (argv, out[-300:])
+
+
+def test_audit_kem_reads_the_vector_directory_it_is_given(tmp_path):
+    import json as _json
+    so = _mlkem_ref_so(tmp_path)
+    vd = _vector_dir(tmp_path, _KEM_AUDIT_FILES, drop=_kem_768_key_checks)
+    rpt = tmp_path / "kem.json"
+    code, out = _cli("--audit-kem", so, "ML-KEM-768", "--vector-dir", vd,
+                     "--accumulated", "0", "--json", str(rpt))
+    doc = _json.loads(rpt.read_text())
+    assert "vectors : local:" in out, out[-600:]
+    assert doc["status"] == "CANNOT VERIFY" and code == 1
+    assert "stage ekCheck: no NIST vector ran, so it was not checked" in doc["findings"]
+
+
+def test_a_vector_directory_that_lacks_a_file_is_an_input_error(tmp_path):
+    """A mistyped --vector-dir reached the audit, which stopped on the
+    missing file, and the CLI said "the dynamic linker could not load it"
+    and exited 1, the code CI reads as a faulty library."""
+    lib = tmp_path / "lib.so"
+    lib.write_bytes(b"\x7fELF")
+    absent = str(tmp_path / "absent")
+    keygen_only = _vector_dir(tmp_path, {"ML-KEM-keyGen-FIPS203": ("internalProjection.json",)},
+                              name="keygen-only")
+    keygen_suite = _vector_dir(tmp_path, {"ML-KEM-keyGen-FIPS203": ("prompt.json",
+                                                                    "expectedResults.json")},
+                               name="keygen-suite")
+    for argv, named in (
+            (["--audit-dsa", str(lib), "ML-DSA-65", "--vector-dir", absent], absent),
+            (["--acvp", "--vector-dir", absent], absent),
+            (["--audit-kem", str(lib), "ML-KEM-768", "--vector-dir", keygen_only],
+             "ML-KEM-encapDecap-FIPS203/internalProjection.json"),
+            # on main: a prompt of keyGen questions alone, exit 0
+            (["--emit-prompt", "ML-KEM-512", "--prompt-out", str(tmp_path / "p.json"),
+              "--vector-dir", keygen_suite], "ML-KEM-encapDecap-FIPS203/prompt.json")):
+        code, out = _cli(*argv)
+        assert code == 2, (argv, out[-400:])
+        assert named in out and "dynamic linker" not in out, (argv, out[-400:])
+
+
+_RESPONSE_KEM_FILES = {d: ("prompt.json", "expectedResults.json")
+                       for d in ("ML-KEM-keyGen-FIPS203", "ML-KEM-encapDecap-FIPS203")}
+
+
+def _answer_from(local, prompt):
+    """A response giving every question of `prompt` the answer `local` holds
+    for it: a perfect responder to the prompt it was sent."""
+    from pq_verify.response import _load
+    out = {"schema": "pq-verify/acvp-response", "schema_version": "1.0",
+           "promptId": prompt["promptId"], "parameterSet": prompt["parameterSet"],
+           "suites": []}
+    for s in prompt["suites"]:
+        E = _load(local, s["suite"], "expectedResults.json")
+        exp = {t["tcId"]: t for g in E["testGroups"] for t in g["tests"]}
+        out["suites"].append({"suite": s["suite"], "testGroups": [
+            {"tgId": g["tgId"], "tests": [
+                {"tcId": t["tcId"], **{f: exp[t["tcId"]][f] for f in g["answerFields"]
+                                       if f in exp[t["tcId"]]}}
+                for t in g["tests"]]} for g in s["testGroups"]]})
+    return out
+
+
+def test_a_response_to_a_prompt_missing_a_group_is_incomplete(tmp_path, capsys):
+    """--emit-prompt and --verify-response read the --vector-dir they are
+    given. One without ML-KEM-512's decapsulation key checks posed none, and
+    a response answering every question it did pose was VERIFIED, "byte-exact
+    vs pinned NIST values": a verdict on an implementation never asked to
+    check a decapsulation key, against values that were not the pinned
+    bundle's. The pinned bundle is the measure here as in the audits."""
+    import os
+    from pq_verify.core import DEGRADED, _pkg_dir
+    vd = _vector_dir(tmp_path, _RESPONSE_KEM_FILES,
+                     drop=lambda s, g: g.get("parameterSet") == "ML-KEM-512"
+                     and g.get("function") == "decapsulationKeyCheck")
+    prompt = build_prompt("ML-KEM-512", vector_dir=vd)
+    before = len(DEGRADED["skipped_checks"])
+    r = verify_response(_write(tmp_path, _answer_from(vd, prompt)), vector_dir=vd,
+                        verbose=True)
+    out = capsys.readouterr().out
+    assert r["status"] == "INCOMPLETE" and not r["verified"], r["status"]
+    assert r["answered"] == r["questions"] == r["passed"] > 0   # what it asked was right
+    assert r["not_asked"] == ["ML-KEM-encapDecap-FIPS203/decapsulationKeyCheck"]
+    assert any("never asked" in f for f in r["findings"])
+    assert any("never asked" in d for d in DEGRADED["skipped_checks"][before:])
+    assert "the expected values in the vectors read" in out
+    assert "pinned NIST values" not in out
+    # a source with every group: nothing unasked, VERIFIED
+    whole = _vector_dir(tmp_path, _RESPONSE_KEM_FILES, name="whole")
+    prompt = build_prompt("ML-KEM-512", vector_dir=whole)
+    r = verify_response(_write(tmp_path, _answer_from(whole, prompt), "whole.json"),
+                        vector_dir=whole, verbose=False)
+    assert r["status"] == "VERIFIED" and r["not_asked"] == []
+    # and the pinned bundle itself
+    pinned = os.path.join(_pkg_dir(), "vectors")
+    prompt = build_prompt("ML-KEM-512")
+    r = verify_response(_write(tmp_path, _answer_from(pinned, prompt), "pinned.json"),
+                        verbose=True)
+    assert r["status"] == "VERIFIED" and r["not_asked"] == []
+    assert "pinned NIST values" in capsys.readouterr().out
+
+
+def test_fresh_questions_read_no_vector_source(tmp_path):
+    """--fresh-key questions are derived from a seed, not read, so
+    --vector-dir and --live beside them did nothing: the prompt was written
+    and the run exited 0. They are input errors, as with no task that reads
+    vectors."""
+    import os
+    vd = _vector_dir(tmp_path, _RESPONSE_KEM_FILES)
+    for i, src in enumerate((["--vector-dir", vd], ["--live"])):
+        key = str(tmp_path / f"fresh{i}.key")
+        code, out = _cli("--emit-prompt", "ML-KEM-512", "--fresh-key", key,
+                         "--prompt-out", str(tmp_path / f"p{i}.json"), *src)
+        assert code == 2 and "does nothing without" in out, (src, out[-300:])
+        assert not os.path.exists(key)
+
+
+def test_an_os_error_in_the_audit_process_keeps_its_errno(tmp_path, monkeypatch):
+    """The child sent an OSError back as its text alone, so the parent could
+    not tell a full disk from a library the dynamic linker refused."""
+    import errno
+    from pq_verify.isolate import run
+    monkeypatch.syspath_prepend(str(_ISOLATE_TARGETS))
+    with pytest.raises(OSError) as full:
+        run("isolate_targets", "fail_with_errno", (errno.ENOSPC,), timeout=120)
+    assert full.value.errno == errno.ENOSPC
+    # no errno, and still not the linker's: the class the child raised comes back
+    with pytest.raises(FileNotFoundError) as gone:
+        run("isolate_targets", "fail_without_errno", ("file",), timeout=120)
+    assert gone.value.raised_as == "FileNotFoundError"
+    with pytest.raises(OSError) as offline:
+        run("isolate_targets", "fail_without_errno", ("url",), timeout=120)
+    assert offline.value.raised_as == "URLError" and offline.value.errno is None
+    bad = tmp_path / "not-a-library.so"
+    bad.write_text("not a library\n")
+    with pytest.raises(OSError) as refused:
+        run("isolate_targets", "load", (str(bad),), timeout=120)
+    assert refused.value.errno is None and refused.value.raised_as == "OSError"
+
+
+def _library_missing_a_dependency(tmp_path):
+    """A shared object that needs one that is gone: what the dynamic linker
+    refuses."""
+    import shutil, subprocess
+    if not shutil.which("gcc"):
+        pytest.skip("gcc not available")
+    (tmp_path / "dep.c").write_text("int pqvdep(void) { return 1; }\n")
+    (tmp_path / "top.c").write_text("int pqvdep(void); int pqvtop(void) { return pqvdep(); }\n")
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(tmp_path / "libpqvdep.so"),
+                    str(tmp_path / "dep.c")], check=True, capture_output=True)
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(tmp_path / "libpqvtop.so"),
+                    str(tmp_path / "top.c"), "-L", str(tmp_path), "-lpqvdep"],
+                   check=True, capture_output=True)
+    (tmp_path / "libpqvdep.so").unlink()
+    return str(tmp_path / "libpqvtop.so")
+
+
+def test_the_cli_blames_the_linker_only_for_what_the_linker_refused(tmp_path):
+    code, out = _cli("--audit-kem", _library_missing_a_dependency(tmp_path), "ML-KEM-768",
+                     "--accumulated", "0")
+    assert code == 1 and "the dynamic linker could not load it" in out
+    assert "libpqvdep.so" in out
+
+
+def test_an_operating_system_error_in_an_audit_is_not_blamed_on_the_linker(tmp_path,
+                                                                          monkeypatch):
+    """A full disk during the audit read "the dynamic linker could not load it
+    ([Errno 28] No space left on device)", and so did NIST's server
+    unreachable under --live, and a vector file that was gone."""
+    import errno, os, urllib.error
+    from pq_verify import core
+    so = _mlkem_ref_so(tmp_path)
+    monkeypatch.setenv("PQV_IN_PROCESS", "1")
+    for exc, says in ((OSError(errno.ENOSPC, os.strerror(errno.ENOSPC)),
+                       "No space left on device"),
+                      (urllib.error.URLError("NIST's server is unreachable"),
+                       "unreachable"),
+                      (FileNotFoundError("the vector file the audit reads"),
+                       "the vector file")):
+        def stop(*a, _exc=exc, **k):
+            raise _exc
+        monkeypatch.setattr(core, "pqverify_audit_kem", stop)
+        code, out = _cli("--audit-kem", so, "ML-KEM-768", "--accumulated", "0")
+        assert code == 1 and says in out, (exc, out[-400:])
+        assert "dynamic linker" not in out, (exc, out[-400:])
+        assert "operating-system error" in out, (exc, out[-400:])
+
+
+def test_every_route_that_reads_nist_vectors_is_held_to_its_coverage():
+    """Each public function that takes a vector_dir is one the tests above
+    hold to the rule, or is a step of one. A new one fails here until it is
+    added, with a test that a source lacking a group cannot pass it."""
+    import importlib, inspect, pkgutil
+    held = {
+        # vendor audits: a stage no vector reached fails (tests above)
+        "pq_verify.core.pqverify_audit_kem",
+        "pq_verify.dsa_audit.pqverify_audit_dsa",
+        "pq_verify.slhdsa_audit.pqverify_audit_slhdsa",
+        "pq_verify.slhdsa_audit.load_cases",          # its reader
+        "pq_verify.slhdsa_audit.run",                 # its stages
+        # ACVP suites: what the source lacked is listed and degrades the run
+        "pq_verify.core.pqverify_acvp",
+        "pq_verify.core.pqverify_mldsa_acvp",
+        "pq_verify.core.pqverify_slhdsa_acvp",
+        "pq_verify.hbs_suite.pqverify_lms_acvp",
+        "pq_verify.core.pqverify_acvp_all",           # the four suites above
+        # prompt/response: a group the pinned bundle has that the source
+        # lacks was never asked, and the response is INCOMPLETE (tests
+        # above); an unanswered question is INCOMPLETE too
+        "pq_verify.response.verify_response",
+        "pq_verify.response.emit_prompt",             # says what it did not ask
+        "pq_verify.response.build_prompt",            # emit_prompt's document
+        "pq_verify.response.available_parameter_sets",  # lists sets, no verdict
+    }
+    found = set()
+    for m in pkgutil.iter_modules(pq_verify.__path__):
+        try:
+            mod = importlib.import_module(f"pq_verify.{m.name}")
+        except ImportError:
+            continue
+        for name, fn in vars(mod).items():
+            if (inspect.isfunction(fn) and fn.__module__ == mod.__name__
+                    and not name.startswith("_")
+                    and "vector_dir" in inspect.signature(fn).parameters):
+                found.add(f"{mod.__name__}.{name}")
+    assert found == held, (sorted(found - held), sorted(held - found))

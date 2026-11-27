@@ -58,3 +58,20 @@ def load(path):
     """Load a library, as an audit does."""
     ctypes.CDLL(path)
     return path
+
+
+def fail_with_errno(code):
+    """Stop on an operating-system error, as an audit does when the disk is
+    full or a file it reads is missing: an OSError with an errno, which a
+    library the dynamic linker refuses never carries."""
+    raise OSError(code, os.strerror(code), "the file the audit was writing")
+
+
+def fail_without_errno(kind):
+    """Stop on an OSError that has no errno and is not the dynamic linker's:
+    NIST's server unreachable under --live (URLError), or a vector file that
+    is gone (FileNotFoundError, as pq_verify.core raises it)."""
+    if kind == "url":
+        import urllib.error
+        raise urllib.error.URLError("NIST's server is unreachable")
+    raise FileNotFoundError("the vector file the audit reads")
