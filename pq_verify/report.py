@@ -466,9 +466,11 @@ def to_json_kem(result, artifact=None, param_set=None, library=None,
                            "binary, by Valgrind memcheck taint; not instruction "
                            "timing (division), power, EM or microarchitecture, "
                            "and not key generation")),
-                # Unknown, not false, when a run did not finish: a stage that
-                # failed for that reason is not a leak.
-                "leak_free": (None if ct.get("failed") else
+                # False when an operation leaked, whatever else could not be
+                # checked. Unknown, not false, when none leaked and a run did
+                # not finish: a stage that failed for that reason is not a leak.
+                "leak_free": (False if any((ct.get("leaks") or {}).values()) else
+                              None if ct.get("failed") else
                               all(p == t for p, t in ct["stages"].values()))}
     doc["stages"] = {k: {"passed": v[0], "total": v[1]}
                      for k, v in (result.get("detail") or {}).items()}

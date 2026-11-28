@@ -50,6 +50,39 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A secret-division check that failed in itself lost the audit's results.**
+  The check's own instrumentation could fail once the check began:
+  - its driver did not build, or could not be disassembled;
+  - its self-test's division was not in the driver's code;
+  - gdb or vgdb went away;
+  - the system refused it a file or a process.
+
+  The first two replaced every result memcheck had produced, a leak among
+  them, with "constant time: could not run". The others raised an exception
+  the audit did not catch: `ct_div`'s own `Unavailable`, or an `OSError`.
+  That lost the whole audit, NIST results and all. The CLI then said only
+  "cannot verify: Unavailable: the driver's self-test division was not found
+  in its code".
+  - **What changed.** On pq-verify's reference ML-KEM, whose decaps branches
+    on a secret (`memcmp`), a driver without its self-test division lost
+    memcheck's finding and the 1,435 passing NIST and edge-case checks
+    (ML-KEM-768, `--accumulated 0`). That driver is planted: it stands in
+    for a compiler that folds the division. Neither gcc 13 nor clang 18
+    does, at any level from `-O0` to `-Ofast`.
+  - **Now** each operation the check could not cover is not verified, saying
+    why, and memcheck's and NIST's results stand. That run is FINDINGS
+    PRESENT for Decaps, with Encaps not verified and every NIST stage
+    passing.
+- **The ML-KEM audit lost everything when its constant-time run stopped for
+  any other reason.** It caught only `Unavailable`. The ML-DSA and Classic
+  McEliece audits also catch `RuntimeError`, `OSError` and a timeout, and
+  record a failing stage. A full disk, or a memcheck report missing or cut
+  short, lost the whole ML-KEM audit and its passing checks.
+  - **Now** the audit records such a stop as the others do, and the NIST
+    results stand.
+  - **An unreadable report** fails its own operation only.
+  - **`leak_free`** in the JSON report is false when an operation leaked,
+    whatever else could not be checked. It read unknown.
 - **A contained audit that could not ask its fresh questions said it had.**
   Without kyber-py, pq-verify's ML-KEM reference, `--audit-contained` cannot
   build them, and they were not applicable, as they still are. NIST's

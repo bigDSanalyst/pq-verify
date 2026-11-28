@@ -342,8 +342,11 @@ def _disassemble(lib):
                                f"of this architecture (ELF machine {machine})")
     if not shutil.which("objdump"):
         return None, machine, "objdump not found"
-    p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
-                       capture_output=True, text=True)
+    try:
+        p = subprocess.run(["objdump", "-d", "--no-show-raw-insn", lib],
+                           capture_output=True, text=True)
+    except OSError as exc:
+        return None, machine, f"objdump could not run: {exc}"
     if p.returncode != 0 or "Disassembly of section" not in p.stdout:
         why = (p.stderr.strip().splitlines() or ["no code"])[-1]
         return None, machine, f"objdump could not disassemble it: {why}"
@@ -443,11 +446,12 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
     'divisions_not_listed': why or None, 'division_reachability': {...}
     (pq_verify.reach), 'selftest': bool} -- or raises Unavailable.
 
-    An operation whose run under memcheck crashed, failed or did not finish
-    fails its own stage and says why in 'failed'; the others keep their
-    results. It used to raise, which lost the whole audit, NIST results and
-    all. Unavailable stays what it says: the tools, or memcheck's self-test,
-    are not there."""
+    An operation whose run under memcheck crashed, failed or did not finish,
+    or whose report memcheck left unreadable, fails its own stage and says
+    why in 'failed'; the others keep their results. It used to raise, which
+    lost the whole audit, NIST results and all. So does an operation the
+    secret-division check could not cover (_division_check). Unavailable
+    stays what it says: the tools, or memcheck's self-test, are not there."""
     why = available()
     if why:
         raise Unavailable(why)
@@ -460,7 +464,7 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
                 str(_RANK[param_set]), str(iterations)]
         try:
             st = _run(exe, ["selftest", *base], work, "selftest", timeout)
-        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        except (RuntimeError, OSError, ET.ParseError, subprocess.TimeoutExpired) as exc:
             raise Unavailable(f"memcheck's self-test did not run: {exc}") from exc
         if not SELFTEST_KINDS <= {kind for kind, _ in st}:
             raise Unavailable(SELFTEST_MISSED)
@@ -475,6 +479,10 @@ def run_kem(lib, param_set, kp, enc, dec, iterations=4, timeout=600):
             except RuntimeError as exc:
                 stages[op], leaks[op] = (0, 1), []
                 failed[op] = f"the run under memcheck failed: {exc}"
+                continue
+            except (OSError, ET.ParseError) as exc:      # missing, or cut short
+                stages[op], leaks[op] = (0, 1), []
+                failed[op] = f"the run under memcheck failed: its report could not be read ({exc})"
                 continue
             stages[op] = (int(not found), 1)
             leaks[op] = [{"kind": KINDS[k], "function": f, "count": n}
@@ -516,16 +524,41 @@ def _division_check(lib, work, base, stages, leaks, failed, timeout):
     why = ct_div.available()
     if why:
         return {"checked": False, "sites": len(lib_sites), "why": why}
-    exe = _driver(work, div=True)
+
+    def not_verified(why):
+        # Its own instrumentation failed after the check began: no operation
+        # it was to cover is verified, but what memcheck found stands. It used
+        # to raise, and every memcheck result, a finding among them, was lost
+        # to "constant time: could not run".
+        for op in OPS:
+            if op in failed:
+                continue
+            stages[op] = (0, 1)
+            if not leaks[op]:
+                failed[op] = f"the secret-division check could not run: {why}"
+        return {"checked": False, "sites": len(lib_sites), "why": why}
+
+    try:
+        exe = _driver(work, div=True)
+    except (Unavailable, OSError) as exc:
+        return not_verified(f"its driver could not be built: {exc}")
     exe_text, _, why = _disassemble(exe)
     if exe_text is None:
-        raise Unavailable(f"the driver could not be disassembled: {why}")
-    selftest = ct_div.selftest_site(exe_text)
+        return not_verified(f"its driver could not be disassembled: {why}")
+    try:
+        selftest = ct_div.selftest_site(exe_text)
+    except ct_div.Unavailable as exc:
+        return not_verified(str(exc))
     ops = {}
     for op in OPS:
         if op in failed:                    # memcheck's run of it already failed
             continue
-        res = ct_div.run(exe, [op, *base], lib_sites, selftest, timeout=timeout)
+        try:
+            res = ct_div.run(exe, [op, *base], lib_sites, selftest, timeout=timeout)
+        except (ct_div.Unavailable, OSError) as exc:
+            # The tools gone, or the system refusing a file or a process: this
+            # operation is not verified (judge says so), the others go on.
+            res = {"errors": [str(exc)], "selftest": [], "sites": {}}
         secret, why_not = ct_div.judge(res)
         recs = res.get("sites", {})
         ops[op] = {"executed": sorted(k for k, r in recs.items() if r.get("checked")),

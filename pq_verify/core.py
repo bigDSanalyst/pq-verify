@@ -7416,7 +7416,14 @@ def pqverify_audit_kem(so_path, param_set='ML-KEM-768', keypair=None, encaps=Non
             ct_res = _ct.run_kem(so_path, param_set, kp, en, de)
             for op, v in ct_res['stages'].items():
                 tally['ct:' + op] = v
-        except _ct.Unavailable as exc:
+        except subprocess.TimeoutExpired as exc:
+            # As --audit-dsa and --audit-mceliece do: a run that stopped fails
+            # the stage, saying why, and the NIST results stand. Only
+            # Unavailable was caught, and any other stop lost the audit.
+            ct_res = {'unavailable': f"the run under memcheck did not finish within "
+                                     f"{exc.timeout:g} s"}
+            tally['ct:unavailable'] = (0, 1)
+        except (_ct.Unavailable, RuntimeError, OSError) as exc:
             # Asked for and not run is not a pass: a stage that fails, saying why.
             ct_res = {'unavailable': str(exc)}
             tally['ct:unavailable'] = (0, 1)
