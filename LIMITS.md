@@ -320,6 +320,17 @@ exact on the inputs it ran, and says nothing about inputs it did not run;
 the one approximate figure, the parameter estimate above, is not a verdict. Random and
 accumulated vectors widen the inputs; they do not turn a test into a bound.
 
+The verdict is moving to one rule (`pq_verify/verdict.py`). Each stage an
+audit requires is a pass, a fail, could not be checked, not run, or not
+applicable; `VERIFIED` needs a pass and nothing but passes and stages that do
+not apply; any fail is `FINDINGS PRESENT`; anything else is `CANNOT VERIFY`.
+A report whose own counts or findings disagree with its stages' outcomes is
+`CANNOT VERIFY`, saying so. The tests check the rule on every combination of
+outcomes over up to five stages. That validates the rule; it does not prove
+that an audit reports each stage's outcome correctly. `--audit-mceliece` is
+the first report to go through it. The rest are listed in the test suite as
+not yet migrated, and each moves when its own fault tests are written.
+
 ## Proofs and tests
 
 Two files carry proofs that hold for every input, checked by Coq with

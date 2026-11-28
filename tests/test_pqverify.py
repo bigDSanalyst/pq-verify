@@ -10570,14 +10570,138 @@ def test_mceliece_constant_time_classifies_only_with_symbols():
 
 
 def test_mceliece_constant_time_unavailable_is_a_finding():
+    """Asked for and not run is listed, and is not a pass. Nor is it a fault
+    found: everything else passing, the audit could not verify. It read
+    FINDINGS PRESENT."""
     from pq_verify.report import to_json_mceliece_audit
     doc = to_json_mceliece_audit({"verified": False, "passed": 40, "total": 41,
                                   "detail": {"keyGen": (10, 10), "encaps": (6, 6),
                                              "decaps": (24, 24), "ct:unavailable": (0, 1)},
+                                  "outcomes": {"keyGen": "pass", "encaps": "pass",
+                                               "decaps": "pass",
+                                               "ct:unavailable": "cannot_check"},
                                   "constant_time": {"unavailable": "valgrind is not installed"}},
                                  param_set="mceliece348864")
-    assert any("could not run" in f for f in doc["findings"])
+    assert doc["findings"] == ["constant time: requested but could not run "
+                               "(valgrind is not installed)"]
+    assert (doc["status"], doc["verified"]) == ("CANNOT VERIFY", False)
+    assert doc["outcomes"]["ct:unavailable"] == "cannot_check"
     assert "constant_time_checked" not in doc.get("side_channel", {})
+
+
+# ----------------------------------------------------------------------
+# --audit-mceliece through pq_verify.verdict: each fault injected into the
+# route, and the status and exit code it must give. The documented contract
+# (README, "Exit status"): 0 verified, 1 a task found problems or could not
+# verify, 2 bad input.
+# ----------------------------------------------------------------------
+
+def _mce_cli(tmp_path, so, *more):
+    """--audit-mceliece on the shim through the CLI, in this process (its
+    entry points are Python callbacks): (exit code, output, JSON report)."""
+    import json
+    out = tmp_path / "mce.json"
+    _IN_PROCESS_SHIMS.add(so)
+    with _isolated_degraded():
+        code, text = _cli("--audit-mceliece", so, "mceliece348864", "--json", str(out), *more)
+    return code, text, json.loads(out.read_text())
+
+
+def _no_valgrind(v):
+    from pq_verify import ct_audit
+    raise ct_audit.Unavailable("valgrind is not installed")
+
+
+def test_mceliece_audit_that_could_not_check_constant_time_cannot_verify(tmp_path, monkeypatch):
+    """Everything else passing, and constant time asked for and not run: it
+    read FINDINGS PRESENT, though nothing was found. CANNOT VERIFY, exit 1,
+    the reason kept."""
+    from pq_verify import mceliece_audit
+    monkeypatch.setattr(mceliece_audit, "constant_time", _no_valgrind)
+    code, text, doc = _mce_cli(tmp_path, _mceliece_shim(tmp_path, "mceliece348864"),
+                               "--constant-time")
+    assert code == 1, text
+    assert (doc["status"], doc["verified"]) == ("CANNOT VERIFY", False)
+    assert doc["findings"] == ["constant time: requested but could not run "
+                               "(valgrind is not installed)"]
+    assert doc["outcomes"] == {"ct:unavailable": "cannot_check", "decaps": "pass",
+                               "encaps": "pass", "keyGen": "pass"}
+    assert "RESULT: 40/41 — CANNOT VERIFY" in text
+
+
+def test_mceliece_audit_with_a_required_stage_that_never_ran_is_not_verified(tmp_path,
+                                                                              monkeypatch):
+    """No path in the audit drops a stage today; this injects one. Counted on
+    what ran, the audit verified without Encaps. It names the stages it
+    requires, so one that never ran is not run: CANNOT VERIFY, exit 1."""
+    from pq_verify import mceliece_audit
+    real = mceliece_audit.run
+
+    def without_encaps(v):
+        T = real(v)
+        T.detail.pop("encaps")
+        return T
+    monkeypatch.setattr(mceliece_audit, "run", without_encaps)
+    so = _mceliece_shim(tmp_path, "mceliece348864")
+    r = _mce_audit(so, "mceliece348864")
+    assert r["verified"] is False and r["status"] == "CANNOT VERIFY", r["detail"]
+    code, text, doc = _mce_cli(tmp_path, so)
+    assert code == 1 and doc["status"] == "CANNOT VERIFY", text
+    assert doc["outcomes"]["encaps"] == "not_run"
+    assert doc["findings"] == ["cannot verify: Classic McEliece: stage encaps was not "
+                               "run, so it was not checked"]
+    assert "FAIL  encaps   not run" in text
+
+
+def test_mceliece_audit_keeps_a_finding_beside_a_check_it_could_not_make(tmp_path,
+                                                                         monkeypatch):
+    """A fault found stands when a check beside it could not run: FINDINGS
+    PRESENT, both listed."""
+    from pq_verify import mceliece_audit
+    monkeypatch.setattr(mceliece_audit, "constant_time", _no_valgrind)
+    code, text, doc = _mce_cli(tmp_path, _mceliece_shim(tmp_path, "mceliece348864",
+                                                        "repeat-e"), "--constant-time")
+    assert code == 1 and doc["status"] == "FINDINGS PRESENT", text
+    assert doc["outcomes"]["encaps"] == "fail"
+    assert doc["outcomes"]["ct:unavailable"] == "cannot_check"
+    assert [f for f in doc["findings"] if f.startswith("Classic McEliece: stage encaps:")]
+    assert [f for f in doc["findings"] if "requested but could not run" in f]
+
+
+def test_mceliece_audit_that_stopped_cannot_verify(tmp_path, monkeypatch):
+    """An audit that raised, crashed or timed out in its child counts nothing
+    it did not finish: CANNOT VERIFY, exit 1, the reason kept."""
+    from pq_verify import cli
+    monkeypatch.setattr(cli, "_isolated", lambda *a, **k: (
+        None, None, "the audit raised ValueError: injected"))
+    code, text, doc = _mce_cli(tmp_path, _mceliece_shim(tmp_path, "mceliece348864"))
+    assert code == 1 and (doc["status"], doc["verified"]) == ("CANNOT VERIFY", False), text
+    assert doc["findings"] == ["cannot verify: the audit raised ValueError: injected"]
+    assert doc["outcomes"] == {} and doc["stages"] == {}
+
+
+@pytest.mark.parametrize("break_it, why", [
+    (lambda r: r.pop("outcomes"), "the audit's result carries no stage outcomes"),
+    (lambda r: r["outcomes"].update(encaps="passed"), "not an outcome, for stage(s) encaps"),
+    (lambda r: r["detail"].update(decaps=(23, 24)), "stage decaps is a pass at 23/24"),
+    (lambda r: r["outcomes"].pop("keyGen"), "stage keyGen has no outcome"),
+], ids=["no outcomes", "not an outcome", "counts disagree", "stage without outcome"])
+def test_a_mceliece_report_that_disagrees_with_its_checks_cannot_verify(break_it, why):
+    """A result without its outcomes, or one whose outcomes and counts
+    disagree, is a pq-verify defect: never VERIFIED, and the report says
+    why. The report trusted the result's own `verified`."""
+    import copy
+    from pq_verify.report import to_json_mceliece_audit
+    r = {"verified": True, "passed": 40, "total": 40,
+         "detail": {"keyGen": (10, 10), "encaps": (6, 6), "decaps": (24, 24)},
+         "outcomes": {"keyGen": "pass", "encaps": "pass", "decaps": "pass"}}
+    control = to_json_mceliece_audit(copy.deepcopy(r), param_set="mceliece348864")
+    assert (control["status"], control["findings"]) == ("VERIFIED", [])
+    break_it(r)
+    doc = to_json_mceliece_audit(r, param_set="mceliece348864")
+    assert (doc["status"], doc["verified"]) == ("CANNOT VERIFY", False)
+    assert [f for f in doc["findings"] if why in f], doc["findings"]
+    assert doc["summary"]["findings"] == len(doc["findings"])
 
 
 def test_constant_time_flag_names_every_audit_it_runs_with():
@@ -13631,6 +13755,173 @@ def test_what_cannot_run_a_contained_audit_says_so(monkeypatch, tmp_path):
     doc = to_json_contained_audit(r)
     assert doc["findings"] == ["cannot verify: the contained worker needs Linux"]
     assert doc["artifact"]["bound"] is False and doc["verified"] is False
+
+
+# ----------------------------------------------------------------------
+# pq_verify.verdict: the verdict from each stage's outcome. The rule is
+# validated on every combination of outcomes it models; the reports that go
+# through it are listed, and so are those not migrated yet.
+# ----------------------------------------------------------------------
+
+_RANK = {"pass": 3, "not_applicable": 2, "cannot_check": 1, "not_run": 1, "fail": 0}
+_VERDICT_RANK = {"VERIFIED": 2, "CANNOT VERIFY": 1, "FINDINGS PRESENT": 0}
+
+
+def test_the_verdict_rule_holds_on_every_combination_of_outcomes():
+    """Every assignment of the five outcomes to up to five stages, with and
+    without a finding outside the stages (7,812 cases), against the
+    invariants a verdict must keep. Exhaustive validation of the rule on its
+    modelled domain, not a proof of the audits that report the outcomes."""
+    import itertools
+    from pq_verify import verdict as V
+    seen = 0
+    for k in range(6):
+        for combo in itertools.product(V.OUTCOMES, repeat=k):
+            outcomes = {f"s{i}": o for i, o in enumerate(combo)}
+            for findings in (False, True):
+                seen += 1
+                status, verified = V.verdict(outcomes, findings)
+                assert verified == (status == "VERIFIED")
+                if verified:                       # no vacuous pass, no pass with a gap
+                    assert "pass" in combo and not findings
+                    assert not set(combo) & {"fail", "cannot_check", "not_run"}
+                # a failure or a finding, and only they, make FINDINGS PRESENT
+                assert (status == "FINDINGS PRESENT") == (findings or "fail" in combo)
+                if (not findings and "pass" in combo
+                        and set(combo) <= {"pass", "not_applicable"}):
+                    assert verified                # nothing is held back from a pass
+                canonical = dict(zip(outcomes, sorted(combo)))
+                assert V.verdict(canonical, findings) == (status, verified)   # order
+                for i, o in enumerate(combo):      # a worse outcome never helps
+                    for worse in V.OUTCOMES:
+                        if _RANK[worse] < _RANK[o]:
+                            w = V.verdict(dict(outcomes, **{f"s{i}": worse}), findings)
+                            assert _VERDICT_RANK[w[0]] <= _VERDICT_RANK[status], (combo, i, worse)
+                assert _VERDICT_RANK[V.verdict(outcomes, True)[0]] <= _VERDICT_RANK[status]
+    assert seen == 2 * sum(5 ** k for k in range(6)) == 7812
+
+
+def test_stage_outcomes_follow_each_audit_s_policy():
+    """What an audit says about a stage, as an outcome: its counts, the
+    stages it requires, those that could not be checked and those that do
+    not apply. Counts that are not counts are refused, never read as a
+    pass."""
+    from pq_verify import verdict as V
+    got = V.stage_outcomes(
+        {"a": (3, 3), "b": (2, 3), "ct:unavailable": (0, 1), "not_run:c": (0, 1),
+         "d": (0, 0), "e": (1, 1)},
+        required=["a", "f"], cannot={"ct:unavailable", "e"},
+        not_applicable={"g": (1, "no such case"), "a": (1, "one case of a")})
+    assert got == {"a": "pass", "b": "fail", "ct:unavailable": "cannot_check",
+                   "not_run:c": "not_run", "d": "not_run", "e": "pass",
+                   "g": "not_applicable", "f": "not_run"}
+    for bad in [(2, 1), (True, 1), (1,), "11", (1.0, 1), (-1, 1), None]:
+        with pytest.raises(ValueError):
+            V.stage_outcomes({"a": bad})
+    with pytest.raises(ValueError):
+        V.verdict({"a": "passed"})
+    assert V.verdict({}) == ("CANNOT VERIFY", False)
+    assert V.verdict({"a": "not_applicable"}) == ("CANNOT VERIFY", False)
+
+
+def test_the_verdict_rule_agrees_with_coverage_status():
+    """coverage.status, which the ML-KEM, ML-DSA and SLH-DSA audits still
+    use, takes its caller's `verified`. Wherever that flag is the tally's,
+    the two rules must agree, until those audits move to pq_verify.verdict."""
+    import itertools
+    from pq_verify import coverage, verdict as V
+    names, counts = ("a", "b", "ct:unavailable", "not_run:c"), ((1, 1), (0, 1), (1, 2))
+    checked = 0
+    for k in range(len(names) + 1):
+        for stages in itertools.combinations(names, k):
+            for cs in itertools.product(counts, repeat=k):
+                tally = dict(zip(stages, cs))
+                if tally.get("not_run:c", (0, 1)) != (0, 1):
+                    continue
+                p, t = sum(c[0] for c in cs), sum(c[1] for c in cs)
+                for cannot in (set(), {"ct:unavailable"}):
+                    for findings in (False, True):
+                        old = coverage.status(p == t and t > 0 and not findings, tally,
+                                              cannot, findings)
+                        new = V.verdict(V.stage_outcomes(tally, cannot=cannot), findings)[0]
+                        assert old == new, (tally, cannot, findings)
+                        checked += 1
+    assert checked > 300
+
+
+def test_finalize_refuses_a_report_that_disagrees_with_its_outcomes():
+    """A report whose own fields disagree with its outcomes is a pq-verify
+    defect: CANNOT VERIFY, with a finding that names the disagreement."""
+    from pq_verify import verdict as V
+
+    def report(stages, findings=(), summary=None):
+        p = sum(c[0] for c in stages.values())
+        t = sum(c[1] for c in stages.values())
+        return {"stages": {s: {"passed": c[0], "total": c[1]} for s, c in stages.items()},
+                "findings": list(findings),
+                "summary": summary or {"checks_passed": p, "checks_total": t,
+                                       "findings": len(findings)}}
+    ok = V.finalize(report({"a": (2, 2)}), {"a": "pass"})
+    assert (ok["status"], ok["verified"], ok["findings"]) == ("VERIFIED", True, [])
+    for doc, outcomes, why in [
+            (report({"a": (1, 2)}), {"a": "pass"}, "stage a is a pass at 1/2"),
+            (report({"a": (2, 2)}), {"a": "fail"}, "stage a is fail at 2/2"),
+            (report({"a": (2, 2)}), {}, "stage a has no outcome"),
+            (report({"a": (2, 2)}, summary={"checks_passed": 3, "checks_total": 3,
+                                            "findings": 0}),
+             {"a": "pass"}, "the summary counts 3/3, the stages 2/2"),
+            (report({"a": (2, 2)}, findings=["x"]), {"a": "pass"},
+             "verified with 1 finding(s) listed"),
+            (report({"a": (1, 2)}), {"a": "fail"},
+             "FINDINGS PRESENT with no finding listed to say why"),
+            (report({"a": (2, 2)}), {"a": "pass", "b": "fail"},
+             "stage b is fail and not among the stages reported")]:
+        out = V.finalize(doc, outcomes)
+        assert (out["status"], out["verified"]) == ("CANNOT VERIFY", False), why
+        assert why in out["findings"][-1], (why, out["findings"])
+        assert out["findings"][-1].startswith("cannot verify: ")       # PQV000
+        assert out["summary"]["findings"] == len(out["findings"])
+
+
+# Report builders whose verdict goes through pq_verify.verdict.finalize, each
+# with the tests that inject faults into its route; and those not migrated
+# yet. Every to_json* builder in report.py is in exactly one of the two, so a
+# new builder cannot bypass both.
+_FINALIZED = {
+    "to_json_mceliece_audit": (
+        "test_mceliece_audit_that_could_not_check_constant_time_cannot_verify",
+        "test_mceliece_audit_with_a_required_stage_that_never_ran_is_not_verified",
+        "test_mceliece_audit_keeps_a_finding_beside_a_check_it_could_not_make",
+        "test_mceliece_audit_that_stopped_cannot_verify",
+        "test_a_mceliece_report_that_disagrees_with_its_checks_cannot_verify"),
+}
+_NOT_YET_FINALIZED = {
+    "to_json", "to_json_response", "to_json_kem", "to_json_dsa", "to_json_hbs",
+    "to_json_fndsa", "to_json_fndsa_audit", "to_json_slhdsa_audit", "to_json_mceliece",
+    "to_json_hqc", "to_json_hqc_audit", "to_json_harness_audit",
+    "to_json_contained_audit", "to_json_hbs_audit", "to_json_source_audit",
+    "to_json_acvp", "to_json_hybrid"}
+
+
+def test_every_report_builder_is_finalized_or_listed_as_not_yet():
+    """Generated from report.py's source, not kept by hand: each builder
+    either calls finalize() and has route tests, or is listed as not yet
+    migrated. Migrating one moves it between the lists."""
+    import ast
+    src = (pathlib.Path(__file__).resolve().parent.parent / "pq_verify"
+           / "report.py").read_text()
+    builders, finalized = set(), set()
+    for fn in ast.parse(src).body:
+        if isinstance(fn, ast.FunctionDef) and fn.name.startswith("to_json"):
+            builders.add(fn.name)
+            if any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "finalize"
+                   for n in ast.walk(fn)):
+                finalized.add(fn.name)
+    assert finalized == set(_FINALIZED), finalized ^ set(_FINALIZED)
+    assert builders - finalized == _NOT_YET_FINALIZED, (builders - finalized) ^ _NOT_YET_FINALIZED
+    for name, tests in _FINALIZED.items():
+        missing = [t for t in tests if not callable(globals().get(t))]
+        assert not missing, (name, missing)
 
 
 # ----------------------------------------------------------------------

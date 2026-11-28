@@ -7,6 +7,28 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **One rule from each stage's outcome to the verdict** (`pq_verify/verdict.py`).
+  - **The outcomes.** Each stage an audit requires is a pass, a fail, could not
+    be checked, not run, or not applicable.
+  - **The rule.** `VERIFIED` needs a pass and nothing but passes and stages
+    that do not apply. A fail, or a finding outside the stages, is FINDINGS
+    PRESENT. Anything else is CANNOT VERIFY.
+  - **The report.** `finalize()` sets a report's status and `verified` from
+    the rule, after checking the report's own counts and findings agree with
+    the outcomes. A report that disagrees is CANNOT VERIFY, naming each
+    disagreement as a pq-verify defect.
+  - **The tests.** They check the rule on all 7,812 combinations of outcomes
+    over up to five stages, with and without a finding outside them, against
+    the invariants it must keep. No pass with nothing checked or with a gap;
+    findings, and only they, make FINDINGS PRESENT; order does not matter; a
+    worse outcome never improves the verdict. That validates the rule; it
+    does not prove that an audit reports each stage's outcome correctly.
+  - **Migration.** `--audit-mceliece` is the first report through it. A test
+    generated from `report.py` lists every report builder as finalized or not
+    yet migrated, so a new one cannot bypass both. The other 17 move in small
+    batches, each with fault tests on its own route. Until the ML-KEM, ML-DSA
+    and SLH-DSA audits move, a test holds `coverage.status`, which they use,
+    to the same answers.
 - **`--audit-kem --constant-time` checks the operands of the divisions the
   library executes on secrets (`PQV013`).** memcheck reports a branch or an
   address that depends on a secret, but not a division that takes one, which
@@ -50,6 +72,20 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--audit-mceliece`: constant time asked for and not run read FINDINGS
+  PRESENT.** With everything else passing, nothing had been found. The
+  report's status was `FINDINGS PRESENT` whenever anything had been counted.
+  It is now CANNOT VERIFY; the exit code is 1 either way. #120 fixed this in
+  `--audit-kem` and `--audit-dsa`. Six other reports derive their status the
+  same way, and move to the rule in the next batches.
+- **`--audit-mceliece` names the stages it requires**: keyGen, Encaps and
+  Decaps always, padding where the set has padding bits, and constant time's
+  operations when they were asked for and ran. A stage that never ran is not
+  run, and the audit cannot verify. Counted on what ran, a missing stage was
+  simply absent. No path in the audit drops a stage today; a test injects
+  one. The report used to copy the audit's own `verified`. It now takes the
+  stages' outcomes, `outcomes` in the JSON report, and checks its counts and
+  findings against them.
 - **NTT scan: a check that failed without a finding still verified.** The
   primitivity check, and the two CP round-trip checks the scan runs when
   the namespace defines `cp_apply` and `cp_remove`, counted a failure and
