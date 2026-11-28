@@ -305,7 +305,10 @@ def to_json(results, extra=None, artifact=None):
             "checks_passed": passed,
             "checks_total": total,
             "findings": findings,
-            "verified": findings == 0 and total > 0,
+            # Every counted check passed, not only "no finding was written":
+            # a scan whose failing check named nothing used to verify here,
+            # and --audit-so's exit code reads this.
+            "verified": findings == 0 and total > 0 and passed == total,
         },
         "targets": [
             {
@@ -1202,17 +1205,23 @@ def to_json_acvp(suites, artifact=None):
                                 "reference": r.get("reference"),
                                 # groups the pinned bundle has that the vectors
                                 # read lacked (pq_verify.coverage)
-                                "missing": list(r.get("missing") or [])}
+                                "missing": list(r.get("missing") or []),
+                                # tests the vectors held that the suite could
+                                # not run; the suite is not verified with any
+                                "skipped": int(r.get("skipped") or 0)}
         gone += len(r.get("missing") or []) + int(r.get("skipped") or 0)
         for g, v in (r.get("detail") or {}).items():
             doc["groups"][f"{label}/{g}"] = {"passed": v[0], "total": v[1]}
     doc["summary"] = {"checks_passed": p, "checks_total": t,
                       "findings": 0 if p == t else t - p}
     # A requested suite that could not run leaves its claim unchecked, so the
-    # run is not verified however well the others did.
+    # run is not verified however well the others did. Nor is it while any
+    # suite is not verified by its own account: one that ran no vector, or
+    # left a test unrun, read VERIFIED here beside one that passed.
     missing = sorted(k for k, v in doc["suites"].items() if not v["ran"])
     doc["summary"]["not_run"] = missing
-    doc["verified"] = bool(t) and p == t and not missing
+    doc["verified"] = (bool(t) and p == t and not missing
+                       and all(v["verified"] for v in doc["suites"].values()))
     doc["status"] = ("VERIFIED" if doc["verified"] else
                      "FINDINGS PRESENT" if p < t else "CANNOT VERIFY")
     doc["scope"] = _scope(t, not_run=gone, not_run_why=(

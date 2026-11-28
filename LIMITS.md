@@ -217,7 +217,10 @@ about the library is claimed.
   that kind is CANNOT VERIFY. `--verify-response` is INCOMPLETE when its
   prompt lacked a group the bundle has for the set. The ACVP suites list
   each group of the bundle that did not run from the source and mark the
-  run degraded, so `--require-full-coverage` fails it. The rule counts
+  run degraded, so `--require-full-coverage` fails it. A test the source
+  holds and a suite cannot run (an ML-KEM decapsulation test without a key,
+  a function or an SLH-DSA parameter set it has no reference for) leaves
+  that suite not verified, CANNOT VERIFY if nothing failed. The rule counts
   stages and groups, not cases: a source with one case of a group the
   bundle has 25 of reaches that group. Such a source's answers are taken as
   given: pq-verify checks a library or a response against them, not them
