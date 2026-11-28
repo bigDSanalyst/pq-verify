@@ -50,6 +50,22 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A contained audit that could not ask its fresh questions said it had.**
+  Without kyber-py, pq-verify's ML-KEM reference, `--audit-contained` cannot
+  build them, and they were not applicable, as they still are. NIST's
+  vectors and the edge cases ran, so the verdict stands. But the run printed
+  the seed it had "drawn for this run" and "nothing this run needed was
+  missing". Given `--fresh-seed`, it also said the run "reproduces an
+  earlier result".
+  - **Now the run is degraded.** The integrity report lists kyber-py as
+    missing and the set's fresh questions as skipped.
+  - **The seed line** says none was asked, and the report carries
+    `fresh.asked` with the reason.
+  - **The scope** gives each count that was not applicable with its own
+    reason, as the run prints it. It used to give one for all of them, "a C
+    entry point with buffers of fixed sizes cannot be handed them, or the
+    reference for the fresh questions is not installed", even with kyber-py
+    installed.
 - **`--audit-dsa` and `--audit-slhdsa` verified libraries on stages no
   vector reached.** A stage existed only if the vectors held cases for it,
   so with `--vector-dir` or `--live` a source missing a group simply dropped

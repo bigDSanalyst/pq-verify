@@ -84,7 +84,10 @@ DEFAULT_COUNT = {"ML-KEM": 8, "ML-DSA": 4, "SLH-DSA": 1, "LMS": 2}
 
 
 class FreshError(ValueError):
-    """A fresh prompt cannot be built or a key cannot be used."""
+    """A fresh prompt cannot be built or a key cannot be used. `missing` names
+    the distribution to install when that is why (pq-verify's reference for
+    the parameter set), else None."""
+    missing = None
 
 
 # ----------------------------------------------------------------------
@@ -125,8 +128,10 @@ def _require(module, dist):
     try:
         return __import__(module, fromlist=["_"])
     except ImportError as exc:
-        raise FreshError(f"{dist} is required to build or check fresh questions "
-                         f"for this parameter set: pip install \"pq-verify[full]\"") from exc
+        err = FreshError(f"{dist} is required to build or check fresh questions "
+                         f"for this parameter set: pip install \"pq-verify[full]\"")
+        err.missing = dist
+        raise err from exc
 
 
 # ----------------------------------------------------------------------

@@ -83,8 +83,12 @@ do:
   run. The seed is on the command line and in the earlier report, where the
   worker can read it.
 - **The fresh answers come from pq-verify's reference.** They need kyber-py
-  (`pip install "pq-verify[full]"`). Without it the fresh questions are not
-  applicable, the report says so, and the scope is partial.
+  (`pip install "pq-verify[full]"`). Without it no fresh question is asked.
+  The verdict covers NIST's vectors and the edge cases, which still ran; the
+  scope names the fresh questions as not asked, and the run is degraded: the
+  integrity report names kyber-py and the questions it skipped. Every
+  question such a run asks is published, NIST's vectors and the edge cases
+  alike, so a library that looks all of them up can pass it.
 - **It is not a sandbox.** The filter is a list of system calls pq-verify
   knows to be dangerous. A call that is not on it is allowed, and nothing
   shows the list is complete. There is no limit on memory or CPU, and no

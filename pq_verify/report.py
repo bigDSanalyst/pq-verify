@@ -1067,10 +1067,13 @@ def to_json_contained_audit(result):
     doc["symbols"] = result.get("symbols")
     doc["containment"] = result.get("containment")
     doc["fresh"] = result.get("fresh")
+    # Each count with its own reason, as the run printed it: fresh questions
+    # not asked (pq-verify's reference missing) are not inputs the worker's
+    # C entry points cannot be handed.
+    why = "; ".join(f"{c} fresh questions not asked: {r}" if k == "fresh" else f"{c} {k}: {r}"
+                    for k, (c, r) in (result.get("not_applicable") or {}).items())
     doc["scope"] = _scope(result.get("total", 0), result.get("not_applicable_total", 0),
-                          na_why="a C entry point with buffers of fixed sizes cannot be "
-                                 "handed them, or the reference for the fresh questions "
-                                 "is not installed")
+                          na_why=why or None)
     return doc
 
 

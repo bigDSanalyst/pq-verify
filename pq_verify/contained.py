@@ -806,7 +806,7 @@ def _finish(result, h, pinned, built, use_filter):
                       "mapped: the filter does not suit this system's C library, and no "
                       "contained audit can run here")
     fr = result.get("fresh")
-    if fr and fr.get("seed_source") != "drawn for this run":
+    if fr and fr.get("asked", True) and fr.get("seed_source") != "drawn for this run":
         notes.append("the fresh questions were derived from a seed supplied to this run. "
                      "A supplied seed is on the command line, where the worker can read "
                      "it: this reproduces an earlier result, it does not ask anything new")

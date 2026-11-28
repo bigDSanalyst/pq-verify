@@ -400,7 +400,14 @@ def run_kem(h, param_set, load, edge=True, accumulated=0, fresh=None):
             vectors(*fresh_kem_sets(param_set, seed, count), pre="fresh:",
                     ref="pq-verify's reference on a fresh input")
         except FreshError as exc:
+            # Not asked is not checked. The verdict stands on what did run,
+            # but the run is degraded: the integrity report names what was
+            # skipped and why, and --require-full-coverage fails it.
+            from .core import DEGRADED
             na["fresh"] = (5 * count, str(exc))
+            DEGRADED["skipped_checks"].append(f"{param_set} fresh questions")
+            if exc.missing:
+                DEGRADED["deps"].append(exc.missing)
 
     edge_res = None
     if edge:
@@ -742,6 +749,12 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
             h.close()
     if seed is not None:
         base["fresh"]["seed"] = seed.hex()     # told only now: the harness is gone
+        # Whether any was asked, by what was scored: a seed drawn for
+        # questions that never ran is not a fresh audit.
+        base["fresh"]["asked"] = any(k.startswith("fresh:") for k in tally)
+        if not base["fresh"]["asked"]:
+            base["fresh"]["not_asked"] = (na.get("fresh") or (0, died or
+                                          "no fresh question was posed"))[1]
     if died is not None:
         result = dict(base, verified=False, status="CANNOT VERIFY", reason=died,
                       passed=0, total=0, detail={}, not_applicable={},
@@ -793,7 +806,8 @@ def _print_result(r, closing=None, brief=False):
         print(f"  note: {shown(n, 400)}")
     fr = r.get("fresh")
     if fr and fr.get("seed"):
-        print(f"  fresh : seed {fr['seed']} ({fr['seed_source']})")
+        print(f"  fresh : seed {fr['seed']} ({fr['seed_source']})" if fr.get("asked", True)
+              else "  fresh : none asked, so no seed was used")
     na_all = r.get("not_applicable_total", 0)
     print("=" * 68)
     print(f"  RESULT: {r['passed']}/{r['total']} — {r['status']}"

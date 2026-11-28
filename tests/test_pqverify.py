@@ -12909,6 +12909,38 @@ def test_the_fresh_seed_is_new_each_run_reported_and_replayable(tmp_path):
     assert not any("reproduces" in n for n in a["harness_notes"])
 
 
+def test_a_contained_audit_that_asked_no_fresh_question_says_so(tmp_path, monkeypatch):
+    """Without kyber-py the fresh questions cannot be built. They were not
+    applicable, as they still are: the audit's other checks ran and passed,
+    so its verdict stands. But the run printed the seed it had "drawn for
+    this run", said "nothing this run needed was missing", and, given a
+    seed, that it "reproduces an earlier result". It is degraded now, and
+    says which questions were not asked, and why."""
+    import json as _json, sys
+    from pq_verify import core
+    so = _contained_lib(tmp_path)
+    for k in ("engines", "deps", "skipped_checks"):
+        monkeypatch.setitem(core.DEGRADED, k, [])
+    for m in [m for m in sys.modules if m.split(".")[0] == "kyber_py"] + ["kyber_py"]:
+        monkeypatch.setitem(sys.modules, m, None)          # as on a base install
+    r = _contained(so, fresh=2, fresh_seed=bytes(range(32)))
+    assert r["status"] == "VERIFIED" and r["not_applicable"]["fresh"][0] == 10
+    assert core.DEGRADED["deps"] == ["kyber-py"]
+    assert core.DEGRADED["skipped_checks"] == ["ML-KEM-512 fresh questions"]
+    assert not any("reproduces" in n for n in r["harness_notes"])
+    assert r["fresh"]["asked"] is False and "kyber-py" in r["fresh"]["not_asked"]
+    for k in ("deps", "skipped_checks"):
+        core.DEGRADED[k].clear()
+    rpt = tmp_path / "r.json"
+    code, out = _cli("--audit-contained", so, "ML-KEM-512", "--accumulated", "0",
+                     "--fresh-count", "2", "--json", str(rpt))
+    doc = _json.loads(rpt.read_text())
+    assert code == 0 and doc["status"] == "VERIFIED" and doc["fresh"]["asked"] is False
+    assert "10 fresh questions not asked: kyber-py" in doc["scope"]["statement"]
+    assert "none asked, so no seed was used" in out and "(drawn for this run)" not in out
+    assert "DEGRADED RUN" in out and "ML-KEM-512 fresh questions" in out, out[-600:]
+
+
 def test_contained_audit_catches_wrong_answers(tmp_path):
     pytest.importorskip("kyber_py")
     r = _contained(_contained_lib(tmp_path, defines=("MUT_NO_REJECT",)), fresh=4)
