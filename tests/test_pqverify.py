@@ -13329,7 +13329,7 @@ def _contained(so, param_set="ML-KEM-512", **kw):
 ], ids=["stopping the worker", "the last checks"])
 def test_a_contained_audit_that_cannot_end_cleanly_cannot_verify(tmp_path, monkeypatch,
                                                                 breaks, why):
-    """G8. Stopping the worker and its tree is part of containment. An error
+    """Stopping the worker and its tree is part of containment. An error
     stopping it, or in the checks made after it stopped, escaped as a
     traceback with no report. CANNOT VERIFY, exit 1, the reason kept."""
     import json
@@ -13563,7 +13563,7 @@ def test_the_worker_allows_what_a_library_may_do(tmp_path, act):
 
 
 def test_a_library_cannot_raise_the_workers_core_limit(tmp_path):
-    """G2. The worker sets its core-dump limit to zero, soft and hard, and
+    """The worker sets its core-dump limit to zero, soft and hard, and
     drops every capability before any library is mapped; raising a hard
     limit needs CAP_SYS_RESOURCE. The filter allows setrlimit, and prlimit64
     on the worker itself, and need not refuse them. It could not refuse only
@@ -13605,7 +13605,7 @@ def _worker_setrlimit(tmp_path, monkeypatch, body):
 
 
 def test_the_worker_stops_if_its_core_limit_cannot_be_set(tmp_path, monkeypatch):
-    """G2. Lowering a limit can be refused too: SELinux checks any change to
+    """Lowering a limit can be refused too: SELinux checks any change to
     a hard limit. The worker ignored the refusal and went on with the hard
     limit it inherited, which a library could then raise its own limit to.
     It now stops before the library is mapped, and the audit cannot verify."""
@@ -13620,7 +13620,7 @@ def test_the_worker_stops_if_its_core_limit_cannot_be_set(tmp_path, monkeypatch)
 
 
 def test_the_core_limit_is_confirmed_before_the_library_is_mapped(tmp_path, monkeypatch):
-    """G2. The worker's own comment said pq-verify checked it had no core
+    """The worker's own comment said pq-verify checked it had no core
     dumps; pq-verify checked the filter, no_new_privs and the capabilities,
     not the limit. A setrlimit that says it worked and did nothing left the
     worker with the limit it inherited, and the audit verified. pq-verify
@@ -13910,7 +13910,7 @@ def test_contained_audit_reads_the_symbol_table_itself(tmp_path, monkeypatch):
 
 
 def test_the_symbol_reader_reads_nothing_past_the_end_of_the_file(tmp_path, monkeypatch):
-    """G4. A section header can claim any offset and size. The reader asked
+    """A section header can claim any offset and size. The reader asked
     the OS for each in full, and found the file short only after: a 20 kB
     library claiming a 256 MiB string table had 256 MiB allocated, and under
     a memory limit the MemoryError escaped the audit. Each read is now
