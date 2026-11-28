@@ -6621,7 +6621,12 @@ def pqverify_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=None):
             print(f"  NOT RUN: {_skipped} test(s) the suite could not run")
         print("=" * 64)
 
-    return {'verified': g_ok == g_total and g_total > 0, 'passed': g_ok, 'total': g_total,
+    # A test the source held and the suite could not run was not checked, so
+    # the suite is not verified (it said verified while it printed NOT RUN).
+    # A group the source lacks is scope instead: `missing`, and the run is
+    # degraded, so --require-full-coverage fails it.
+    return {'verified': g_ok == g_total and g_total > 0 and not _skipped,
+            'passed': g_ok, 'total': g_total,
             'missing': gone, 'skipped': _skipped,
             'detail': {f"{c}/{ps}": v for (c, ps), v in cat.items()},
             'vectors': _vector_label(_local, 'ML-KEM-keyGen-FIPS203', 'ML-KEM-encapDecap-FIPS203'),
@@ -7071,6 +7076,11 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
     check = {'keyGen': lambda par, g, t, r: keygen_ok(par, t, r),
              'sigVer': sigver_ok, 'sigGen': siggen_ok}
     detail, failures, ok_all, tot_all = {}, [], 0, 0
+    # Tests the source held for a parameter set the reference does not have.
+    # They were left out with a SKIP line alone and the suite verified: a set
+    # the pinned bundle lacks (one NIST adds, under --live) was not even in
+    # the groups listed as not run.
+    skipped, no_ref = 0, set()
     for mode in modes:
         p, e = load(mode)
         exp = {str(t['tcId']): t for g in e['testGroups'] for t in g['tests']}
@@ -7081,6 +7091,8 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             par = _par(ps)
             label = _label(mode, g)
             if par is None:
+                skipped += len(g.get('tests') or ())
+                no_ref.add(ps)
                 if verbose:
                     print(f"  SKIP  {ps}: parameter set not available in reference")
                 continue
@@ -7110,7 +7122,13 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             mt = sum(v[1] for k, v in detail.items() if k.startswith(mode + '/'))
             print(f"  {'PASS' if mp == mt else 'FAIL'}      {mode + ' (all groups)':40s} {mp}/{mt}")
 
-    verified = (ok_all == tot_all and tot_all > 0)
+    # Not verified while a test the source held went unrun; a group the source
+    # lacks is scope (`missing`), as for the other suites.
+    verified = (ok_all == tot_all and tot_all > 0 and not skipped)
+    if skipped:
+        DEGRADED['skipped_checks'].append(
+            f"SLH-DSA ACVP ({skipped} test(s) the suite could not run: no reference "
+            f"for {', '.join(sorted(no_ref))})")
     # What the source held, against the pinned bundle (pq_verify.coverage),
     # for the modes and sets this run was asked for.
     from . import coverage as _cov
@@ -7127,6 +7145,10 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             ", all 12 FIPS 205 parameter sets" if len(sets_run) == 12 and not gone else
             f", {len(sets_run)} of the 12 FIPS 205 parameter sets"))
         _cov.print_missing(gone)
+        if skipped:
+            print(f"  NOT RUN: {skipped} test(s) the suite could not run, for "
+                  f"parameter set(s) the reference does not have: "
+                  f"{', '.join(sorted(no_ref))}")
         if not siggen:
             print("  sigGen (624 byte-exact signatures, ~30 min) is opt-in:")
             print("         pq-verify --slhdsa-siggen")
@@ -7134,6 +7156,7 @@ def pqverify_slhdsa_acvp(prompt_dir=None, verbose=True, live=False, vector_dir=N
             print(f"  failed: {f}")
         print("=" * 64)
     return {'verified': verified, 'passed': ok_all, 'total': tot_all, 'missing': gone,
+            'skipped': skipped,
             'detail': detail, 'modes': modes, 'failures': failures,
             'vectors': _vector_label(_local, *dirs),
             'reference': _reference('slh-dsa')}
@@ -8096,10 +8119,18 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             _e1, _e2 = 2 * n, n
         else:
             _e1, _e2 = n, n // 2
-        ok = pow(zeta_root, _e1, q) == 1 and pow(zeta_root, _e2, q) == q - 1
+        _shape = 'complete' if bits == _log2n else 'incomplete'
+        _z1, _z2 = pow(zeta_root, _e1, q), pow(zeta_root, _e2, q)
+        ok = _z1 == 1 and _z2 == q - 1
         t += 1; p += ok
         print(f"  {_OK if ok else _BAD} Primitivity: zeta^{_e1}=1, zeta^{_e2}=-1"
-              f"  [{bits}-layer {'complete' if bits == _log2n else 'incomplete'} NTT]")
+              f"  [{bits}-layer {_shape} NTT]")
+        # Every check that fails names itself: a failure only in the count
+        # left the banner and the report's verdict to the checks that did.
+        if not ok:
+            findings.append(f"Primitivity: zeta^{_e1} = {_z1}, zeta^{_e2} = {_z2} "
+                            f"mod {q}; a {bits}-layer {_shape} transform needs "
+                            f"1 and {q - 1}")
 
         # Domain-aware comparison. An NTT may leave its output in the
         # MONTGOMERY domain (each coeff x R mod q); a raw got!=ref would report
@@ -8152,29 +8183,57 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
             print(f"  ⏭️  Freivalds: SKIPPED — the engines check the n = 256 "
                   f"transform only (n = {n}). This check did NOT run; coverage is reduced.")
         elif lib is not None and hasattr(lib, _fn):
+            # The check used to sit in one try, and any exception ended it
+            # unseen: not counted, no finding, nothing in DEGRADED, and the
+            # banner said VERIFIED. Now the function under test and the engine
+            # are told apart. An exception from the function fails that input,
+            # as it does in the Full NTT check and the KAT. One from the
+            # engine, or an output it cannot take (floats, say), stops the
+            # check, which is counted and not passed.
+            _ct = ctypes.c_uint16 if _narrow else ctypes.c_uint32
+            _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
+            random.seed(42); ff = raised = done = 0; _why = None
             try:
-                _ct = ctypes.c_uint16 if _narrow else ctypes.c_uint32
-                _cq = ctypes.c_uint16 if _narrow else ctypes.c_uint32
                 _f = getattr(lib, _fn)
                 _f.argtypes = [ctypes.POINTER(_ct)] * 2 + [
-                    ctypes.c_int, _cq, _cq, ctypes.c_int, ctypes.c_uint32]
+                    ctypes.c_int, _ct, _ct, ctypes.c_int, ctypes.c_uint32]
                 _f.restype = ctypes.c_int
-                random.seed(42); ff = 0
-                for trial in range(100):
-                    poly = [random.randint(0, q - 1) for _ in range(n)]
-                    # The engine checks y == NTT(x) in the plain domain, so
-                    # output the Full NTT check found in the Montgomery
-                    # domain is brought back first, as that check did.
-                    ntt_out = _plain(func(list(poly)))
-                    x = (_ct * n)(*poly); y = (_ct * n)(*ntt_out)
-                    if _f(x, y, n, q, zeta_root, 5, freivalds_seed(trial)) != 1: ff += 1
-                ok = ff == 0; t += 1; p += ok
-                _eng_lbl = 'ML-KEM 16-bit' if _narrow else 'ML-DSA 32-bit'
-                print(f"  {_OK if ok else _BAD} Freivalds ({_eng_lbl} engine): "
-                      f"100 x 5 rounds, {ff} failures")
-                if not ok: findings.append(f"Freivalds: {ff}")
             except Exception as _fe:
-                print(f"  \u23ed\ufe0f  Freivalds: engine error ({type(_fe).__name__})")
+                _why = f"{type(_fe).__name__}: {_fe}"
+            for trial in range(100 if _why is None else 0):
+                poly = [random.randint(0, q - 1) for _ in range(n)]
+                # The engine checks y == NTT(x) in the plain domain, so
+                # output the Full NTT check found in the Montgomery
+                # domain is brought back first, as that check did.
+                try:
+                    ntt_out = _plain(func(list(poly)))
+                except Exception:
+                    ff += 1; raised += 1; done += 1
+                    continue
+                try:
+                    x = (_ct * n)(*poly); y = (_ct * n)(*ntt_out)
+                    res = _f(x, y, n, q, zeta_root, 5, freivalds_seed(trial))
+                except Exception as _fe:
+                    _why = f"{type(_fe).__name__}: {_fe}"
+                    break
+                done += 1
+                if res != 1: ff += 1
+            ok = ff == 0 and _why is None; t += 1; p += ok
+            _raised = f" (the function raised on {raised})" if raised else ""
+            if _why is None:
+                print(f"  {_OK if ok else _BAD} Freivalds ({_eng_lbl} engine): "
+                      f"100 x 5 rounds, {ff} failures{_raised}")
+            else:
+                DEGRADED['skipped_checks'].append('Freivalds')
+                print(f"  {_BAD} Freivalds ({_eng_lbl} engine): the engine could not "
+                      f"check the output ({_why}) after {done} of 100 polynomials, "
+                      f"{ff} failures{_raised}. Counted, not passed.")
+            if ff:          # a failure it found stands, whatever stopped it after
+                findings.append(f"Freivalds: {ff}{_raised}" + (
+                    f"; the engine could not check the rest ({_why})" if _why else ""))
+            elif _why:
+                findings.append(f"Freivalds: cannot verify: the {_eng_lbl} engine "
+                                f"could not check the output ({_why})")
         else:
             DEGRADED['skipped_checks'].append('Freivalds')
             print(f"  \u23ed\ufe0f  Freivalds: SKIPPED \u2014 engine unavailable. "
@@ -8231,6 +8290,9 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                     except: cf += 1
             ok = cf == 0; t += 1; p += ok
             print(f"  {_OK if ok else _BAD} CP round-trip: 100 cycles, {cf} failures")
+            if not ok:
+                findings.append(f"CP round-trip: cp_remove did not recover {cf} of "
+                                f"100 polynomials through cp_apply")
             ci = 0
             for trial in range(100):
                 poly = [random.randint(0, q - 1) for _ in range(n)]
@@ -8248,9 +8310,14 @@ def pqverify_scan(*targets, ns=None, scheme=None, q=None, zeta=None):
                     except: ci += 1
             ok = ci == 0; t += 1; p += ok
             print(f"  {_OK if ok else _BAD} NTT->CP->unCP: 100 trials, {ci} failures")
+            if not ok:
+                findings.append(f"NTT->CP->unCP: cp_remove did not recover {ci} of "
+                                f"100 NTT outputs through cp_apply")
 
+        # VERIFIED only when every counted check passed: the banner read the
+        # findings alone, so a check that failed without one still said it.
         print(f"\n  {'='*60}")
-        if findings:
+        if findings or p < t:
             print(f"  {nm}: {p}/{t} -- FINDINGS:")
             for f in findings: print(f"    \u26a0\ufe0f  {f}")
         else:

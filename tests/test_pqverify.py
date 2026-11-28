@@ -3839,6 +3839,128 @@ def test_kat_counts_an_ntt_that_raises_on_a_boundary_input():
     assert (r["verified"], r["random_fails"], r["boundary_fails"]) == (False, 0, 1)
 
 
+def _scan_rules(r):
+    from pq_verify.report import to_sarif
+    return [x["ruleId"] for x in to_sarif([r])["runs"][0]["results"]]
+
+
+def test_scan_cp_checks_that_fail_are_findings():
+    """The two CP round-trip checks counted a failure and wrote no finding,
+    and the banner read the findings alone: cp_apply and cp_remove that did
+    not invert each other gave "4/6 VERIFIED", and the report verified."""
+    from pq_verify.report import to_json
+    core, eng = _scan_engines()
+    ref = core._mlkem_ntt_by_definition
+
+    def ntt(p):
+        return list(ref(list(p)))
+    shift = lambda p: [(v + 1) % 3329 for v in p]               # noqa: E731
+    for cp_remove, want in ((lambda p: list(p), (4, 6)),
+                            (lambda p: [(v - 1) % 3329 for v in p], (6, 6))):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            (r,) = core.pqverify_scan(ntt, scheme="mlkem", ns={
+                "engines": eng, "cp_apply": shift, "cp_remove": cp_remove})
+        assert (r["passed"], r["total"]) == want, out.getvalue()
+        if want == (6, 6):                                      # the control
+            assert r["findings"] == [] and to_json([r])["summary"]["verified"] is True
+            continue
+        assert r["findings"] == [
+            "CP round-trip: cp_remove did not recover 100 of 100 polynomials "
+            "through cp_apply",
+            "NTT->CP->unCP: cp_remove did not recover 100 of 100 NTT outputs "
+            "through cp_apply"]
+        assert "ntt: 4/6 -- FINDINGS:" in out.getvalue()
+        assert "ntt: 4/6 ✅ VERIFIED" not in out.getvalue()
+        assert to_json([r])["summary"]["verified"] is False
+        assert len(_scan_rules(r)) == 2                         # in SARIF too
+
+
+def test_scan_names_a_primitivity_failure():
+    """A zeta of the wrong order failed the primitivity check without a
+    finding. The KAT caught the transform, so the scan did not verify, but
+    the report named only the KAT, and SARIF never carried PQV003."""
+    core, eng = _scan_engines()
+    ntt = _butterfly_ntt(3329, 289, 256, 7)                     # 289 = 17^2: order 128
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        (r,) = core.pqverify_scan(ntt, ns={"engines": eng}, q=3329, zeta=289)
+    assert (r["passed"], r["total"]) == (2, 4), out.getvalue()
+    assert r["findings"][0] == ("Primitivity: zeta^256 = 1, zeta^128 = 1 mod 3329; "
+                                "a 7-layer incomplete transform needs 1 and 3328")
+    assert _scan_rules(r) == ["PQV003", "PQV004"]
+
+
+def test_scan_report_verifies_only_when_every_check_passed():
+    """The scan report verified on "no finding" alone, so a result whose
+    count showed a failed check verified, and --audit-so reads this."""
+    from pq_verify.report import to_json
+    r = {"name": "x", "passed": 3, "total": 4, "findings": []}
+    assert to_json([r])["summary"]["verified"] is False
+    assert to_json([dict(r, passed=4)])["summary"]["verified"] is True
+
+
+class _FaultyEngine:
+    """A Freivalds engine whose call raises."""
+    @staticmethod
+    def zq_freivalds_ntt(*a):
+        raise RuntimeError("engine fault")
+
+
+@pytest.mark.parametrize("engines, out_type, why", [
+    ({"zq": _FaultyEngine()}, int, "RuntimeError: engine fault"),
+    (None, float, "TypeError: "),           # an output the engine cannot take
+])
+def test_a_freivalds_check_the_engine_could_not_make_is_counted(engines, out_type, why):
+    """Any exception inside the Freivalds check ended it unseen: not
+    counted, no finding, nothing in DEGRADED, so the scan said "3/3
+    VERIFIED" with full coverage for a check that never ran. It is counted
+    now, as could not verify (PQV000), and the run is degraded."""
+    from pq_verify.report import to_json
+    core, eng = _scan_engines()
+    ref = core._mlkem_ntt_by_definition
+    ntt = lambda p: [out_type(v) for v in ref(list(p))]         # noqa: E731
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            (r,) = core.pqverify_scan(ntt, scheme="mlkem",
+                                      ns={"engines": engines or eng})
+        assert core.DEGRADED["skipped_checks"] == ["Freivalds"]
+    assert (r["passed"], r["total"]) == (3, 4), out.getvalue()
+    (f,) = r["findings"]
+    assert f.startswith("Freivalds: cannot verify: the ML-KEM 16-bit engine could "
+                        "not check the output (" + why), f
+    assert _scan_rules(r) == ["PQV000"]
+    assert to_json([r])["summary"]["verified"] is False
+    assert "Counted, not passed." in out.getvalue()
+
+
+def test_an_ntt_that_raises_in_the_freivalds_check_fails_it():
+    """An exception from the function under test, in the Freivalds check
+    alone, ended that check and dropped it: "3/3 VERIFIED". It fails that
+    input, as the Full NTT check and the KAT count one."""
+    core, eng = _scan_engines()
+    ref = core._mlkem_ntt_by_definition
+    state = {"freivalds": False, "raised": 0}
+
+    class Spy:                       # marks the moment the scan takes the engine
+        def __getattr__(self, name):
+            state["freivalds"] = True
+            return getattr(eng["zq"], name)
+
+    def once_in_freivalds(p):
+        if state["freivalds"] and not state["raised"]:
+            state["raised"] += 1
+            raise ValueError("scratch buffer exhausted")
+        return list(ref(list(p)))
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            (r,) = core.pqverify_scan(once_in_freivalds, scheme="mlkem",
+                                      ns={"engines": {"zq": Spy()}})
+        assert core.DEGRADED["skipped_checks"] == []
+    assert state["raised"] == 1
+    assert (r["passed"], r["total"]) == (3, 4), out.getvalue()
+    assert r["findings"] == ["Freivalds: 1 (the function raised on 1)"]
+    assert _scan_rules(r) == ["PQV002"]
+
+
 def test_params_reads_k_as_n_equals_256k():
     """pqverify_params(k=3, q=3329) printed its usage line and returned None:
     k was turned into n only after the test that needs n."""
@@ -13741,6 +13863,123 @@ def test_the_kem_acvp_suite_says_verified_only_when_something_was(tmp_path):
             core.DEGRADED[k][:] = v
     assert r["verified"] is False and r["total"] == 0
     assert "VERIFIED" not in out.getvalue()
+
+
+def _kem_suite_dir(tmp_path, mutate, name):
+    """The pinned ML-KEM suite files as a --vector-dir, after mutate(encapDecap)."""
+    import json, os
+    vd = _vector_dir(tmp_path, _KEM_SUITE_FILES, name=name)
+    path = os.path.join(vd, "ML-KEM-encapDecap-FIPS203", "internalProjection.json")
+    with open(path) as fh:
+        doc = json.load(fh)
+    mutate(doc)
+    with open(path, "w") as fh:
+        json.dump(doc, fh)
+    return vd
+
+
+def _strip_a_decaps_key(doc):
+    t = _decaps_groups(doc)[0]["tests"][0]
+    for k in ("dk", "d", "z"):
+        t.pop(k, None)
+    return 1
+
+
+def _add_an_unknown_function(doc):
+    import copy
+    g = copy.deepcopy(_decaps_groups(doc)[0])
+    g["function"], g["tgId"] = "decapsulationKeyRefresh", 10_000
+    doc["testGroups"].append(g)
+    return len(g["tests"])
+
+
+@pytest.mark.parametrize("mutate", [_strip_a_decaps_key, _add_an_unknown_function])
+def test_the_kem_acvp_suite_is_not_verified_with_a_test_it_could_not_run(tmp_path, mutate):
+    """A test the vectors held and the suite could not run (a decapsulation
+    test with no key, a function the suite does not know) printed NOT RUN,
+    and the suite still returned verified=True: --acvp exited 0 and its
+    report said VERIFIED. A group the vectors lack stays scope."""
+    pytest.importorskip("kyber_py")
+    from pq_verify import core
+    from pq_verify.report import to_json_acvp
+    n = []
+    vd = _kem_suite_dir(tmp_path, lambda d: n.append(mutate(d)), mutate.__name__)
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            r = core.pqverify_acvp(vector_dir=vd)
+        assert [s for s in core.DEGRADED["skipped_checks"]
+                if s == f"ML-KEM ACVP ({n[0]} test(s) the suite could not run)"]
+    assert (r["skipped"], r["verified"]) == (n[0], False), out.getvalue()
+    assert r["passed"] == r["total"] > 0                  # nothing it ran failed
+    assert f"NOT RUN: {n[0]} test(s) the suite could not run" in out.getvalue()
+    doc = to_json_acvp({"ML-KEM (FIPS 203)": r})
+    assert (doc["verified"], doc["status"]) == (False, "CANNOT VERIFY")
+    assert doc["suites"]["ML-KEM (FIPS 203)"]["skipped"] == n[0]
+    with _isolated_degraded():
+        code, out = _cli("--acvp", "--vector-dir", vd)
+    assert code == 1 and "FAILING: ACVP CANNOT VERIFY" in out, out
+    # The control: a group the vectors lack is a partial scope, as before.
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = core.pqverify_acvp(vector_dir=_vector_dir(
+                tmp_path, _KEM_SUITE_FILES, drop=_kem_768_key_checks, name="scope"))
+    assert r["missing"] and r["skipped"] == 0 and r["verified"] is True
+    doc = to_json_acvp({"ML-KEM (FIPS 203)": r})
+    assert doc["status"] == "VERIFIED" and doc["scope"]["complete"] is False
+
+
+@pytest.mark.parametrize("unrunnable", ["reference", "bundle"])
+def test_the_slhdsa_suite_is_not_verified_with_a_set_it_cannot_run(tmp_path, monkeypatch,
+                                                                     unrunnable):
+    """A group whose parameter set the reference does not have was left out
+    with a SKIP line, and the suite verified on what was left. A set the
+    pinned bundle lacks (one NIST adds, under --live) was not even listed
+    among the groups not run."""
+    slhdsa = pytest.importorskip("slhdsa")
+    import copy, json, os
+    import slhdsa.lowlevel.parameters as params
+    from pq_verify import core
+    from pq_verify.report import to_json_acvp
+    keep = ("SLH-DSA-SHA2-128f", "SLH-DSA-SHAKE-128f")
+    if unrunnable == "reference":            # the installed reference lacks a set
+        monkeypatch.delattr(params, "shake_128f")
+        kw, n = {"param_sets": keep}, 10 + 42
+    else:                                    # the vectors hold a set nobody knows
+        files = {d: v for d, v in _SLHDSA_FILES.items() if "sigGen" not in d}
+        vd = _vector_dir(tmp_path, files, name="slh",
+                         drop=lambda s, g: g.get("parameterSet") != keep[0])
+        path = os.path.join(vd, "SLH-DSA-sigVer-FIPS205", "prompt.json")
+        with open(path) as fh:
+            doc = json.load(fh)
+        new = copy.deepcopy(doc["testGroups"][0])
+        new["parameterSet"], new["tgId"] = "SLH-DSA-SHA2-128x", 10_000
+        doc["testGroups"].append(new)
+        with open(path, "w") as fh:
+            json.dump(doc, fh)
+        kw, n = {"vector_dir": vd}, len(new["tests"])
+    with _isolated_degraded():
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            r = core.pqverify_slhdsa_acvp(**kw)
+        assert [s for s in core.DEGRADED["skipped_checks"]
+                if s.startswith(f"SLH-DSA ACVP ({n} test(s) the suite could not run")]
+    assert r["passed"] == r["total"] > 0, out.getvalue()
+    assert (r["skipped"], r["verified"]) == (n, False)
+    assert f"NOT RUN: {n} test(s) the suite could not run" in out.getvalue()
+    doc = to_json_acvp({"SLH-DSA (FIPS 205)": r})
+    assert (doc["verified"], doc["status"]) == (False, "CANNOT VERIFY")
+
+
+def test_the_acvp_report_holds_every_suite_to_its_own_verdict():
+    """The report verified on the counts it summed: a suite that ran no
+    vector (verified False, 0 of 0) beside one that passed read VERIFIED."""
+    from pq_verify.report import to_json_acvp
+    kem = {"verified": False, "passed": 0, "total": 0,
+           "missing": ["keyGen/ML-KEM-512"], "skipped": 0}
+    dsa = {"verified": True, "passed": 615, "total": 615, "missing": []}
+    doc = to_json_acvp({"ML-KEM (FIPS 203)": kem, "ML-DSA (FIPS 204)": dsa})
+    assert (doc["verified"], doc["status"]) == (False, "CANNOT VERIFY")
+    doc = to_json_acvp({"ML-DSA (FIPS 204)": dsa})
+    assert (doc["verified"], doc["status"]) == (True, "VERIFIED")
 
 
 def test_the_edge_check_with_nothing_to_run_is_not_verified(monkeypatch):

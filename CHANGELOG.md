@@ -50,6 +50,45 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **NTT scan: a check that failed without a finding still verified.** The
+  primitivity check, and the two CP round-trip checks the scan runs when
+  the namespace defines `cp_apply` and `cp_remove`, counted a failure and
+  wrote no finding, and the banner read the findings alone: a `cp_apply`
+  and `cp_remove` that did not invert each other gave "4/6 VERIFIED". The
+  scan's JSON report verified on "no finding" too. Each failing check now
+  names itself, and VERIFIED, in the banner and in the report, needs every
+  counted check to pass. A primitivity failure is `PQV003` in SARIF; the
+  CP checks have no rule of their own and file under `PQV001`, the scan's
+  default. A zeta of the wrong order was not passed: in every case tried
+  the KAT failed too, but the report named only the KAT. `--audit-so` was
+  not affected; it takes q and zeta from the scheme and passes no CP
+  functions.
+- **NTT scan: an exception in the Freivalds check dropped the check.** It
+  ran in one `try`, and any exception ended it unseen: not counted, no
+  finding, nothing in the integrity report, so the scan said "3/3
+  VERIFIED" with full coverage. An NTT whose output the engine cannot take
+  (floats, say), a fault in the engine, and an NTT that raised once all did
+  this. An exception from the function under test now fails that input, as
+  the Full NTT check and the KAT count one. One from the engine stops the
+  check, which is counted and not passed, files a could-not-verify finding
+  (`PQV000`), and marks the run degraded; a failure found before it stands.
+- **The ACVP suites verified with tests they could not run.** The ML-KEM
+  suite printed NOT RUN for a test it skipped (a decapsulation test without
+  a key, a function it does not know) and still returned `verified: true`,
+  so `--acvp --vector-dir` exited 0 and its report said VERIFIED. The
+  SLH-DSA suite left out a group whose parameter set its reference lacks
+  with a SKIP line alone; a set the pinned bundle lacks (one NIST adds,
+  under `--live`) was not even listed as not run. Both suites are now not
+  verified while a test their source held went unrun: CANNOT VERIFY if
+  nothing failed, and exit 1. Both count those tests
+  (`suites.<suite>.skipped` in the JSON report) and mark the run degraded.
+  A group the source lacks is still scope, not a failure: listed, degraded,
+  and failed by `--require-full-coverage`. The ML-DSA and LMS suites run
+  every test their source holds.
+- **The ACVP report verified beside a suite that verified nothing.** It
+  checked the counts it summed, so a suite that ran no vector (0 of 0,
+  `verified: false`) next to one that passed read VERIFIED. The report is
+  now verified only when every suite is, by its own account.
 - **A secret-division check that failed in itself lost the audit's results.**
   The check's own instrumentation could fail once the check began:
   - its driver did not build, or could not be disassembled;

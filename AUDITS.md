@@ -122,6 +122,15 @@ see the note after the list):
    transform, computed by direct polynomial reduction rather than by
    butterflies.
 
+A target is VERIFIED only when every check counted for it passed, and each
+check that fails names itself in the findings. An exception from the
+function under test fails that input. One from a Freivalds engine, or an
+output the engine cannot take, stops that check: it is counted, not passed,
+with a could-not-verify finding (`PQV000`), and the run is marked degraded.
+In a notebook, the scan also checks a zeta table it finds in the namespace,
+and runs two round-trip checks when the namespace defines `cp_apply` and
+`cp_remove`; they count the same way. `--audit-so` runs the four above.
+
 The KAT ran in earlier releases too, but its result was printed and not
 counted, so the symbol results recorded in the tables above are 3/3. An NTT
 wrong only on the all-ones input passed those three checks. Re-run on
