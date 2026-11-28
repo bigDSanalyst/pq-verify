@@ -5,7 +5,9 @@
  * -DLEAK_BRANCH (encaps branches on m), -DLEAK_INDEX (decaps indexes a table
  * with a byte of the secret key) or -DLEAK_DISCARDED (decaps reads such a
  * table and overwrites the register at once, the load Valgrind's default
- * translation deletes), it plants one leak each.
+ * translation deletes), it plants one leak each. -DDIV_PUBLIC adds to decaps a
+ * division of two public values, a site for the secret-division check
+ * (pq_verify.ct_div) to watch and find no secret in.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -13,6 +15,11 @@
 #define EK 800
 #define DK 1632
 #define CT 768
+
+#ifdef DIV_PUBLIC
+static volatile uint32_t shim_public_n = 7654321, shim_public_q = 3329;
+static volatile uint32_t shim_public_div;
+#endif
 
 int shim_kem_keypair_derand(uint8_t *ek, uint8_t *dk, const uint8_t *coins) {
     for (size_t i = 0; i < EK; i++) ek[i] = (uint8_t)(coins[i % 32] * 3 + i);
@@ -33,6 +40,9 @@ int shim_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *dk) {
     uint8_t acc = 0;
     for (size_t i = 0; i < CT; i++) acc ^= (uint8_t)(ct[i] & dk[i % 768]);
     for (size_t i = 0; i < 32; i++) ss[i] = (uint8_t)(acc ^ dk[DK - 32 + i]);
+#ifdef DIV_PUBLIC
+    shim_public_div = shim_public_n / shim_public_q;   /* public: must not be reported */
+#endif
 #ifdef LEAK_INDEX
     static uint8_t table[256];
     for (int i = 0; i < 256; i++) table[i] = (uint8_t)(i * 7);

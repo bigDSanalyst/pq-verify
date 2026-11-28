@@ -3341,6 +3341,153 @@ def test_a_division_check_whose_self_test_fails_cannot_verify(tmp_path, monkeypa
     assert f and _rule_for(f[0]) == "PQV000"
 
 
+# F2: a division check that cannot run, or a constant-time run that stops on
+# an operating-system error, keeps what memcheck and NIST's vectors found.
+# The planted driver mutant: pq-verify's own self-test division multiplies, as
+# a compiler that folded the division would leave it.
+_NO_SELFTEST_DIVISION = ("{ return a / b; }", "{ return a * b; }")
+
+
+def test_a_division_check_that_cannot_calibrate_keeps_memcheck_s_findings(tmp_path,
+                                                                          monkeypatch):
+    """The secret-division check's own instrumentation failing -- here its
+    driver's self-test division gone -- raised out of the constant-time run
+    (ct_div's Unavailable, which the KEM audit did not catch), and every
+    result memcheck had produced was lost, the secret branch it had found in
+    Encaps among them. Each operation the check could not cover is now not
+    verified, saying why, and memcheck's finding stands."""
+    from pq_verify import ct_audit as C
+    _division_check_or_skip()
+    so = _ct_shim(tmp_path, "LEAK_BRANCH", "DIV_PUBLIC")
+    assert C.DRIVER_C.count(_NO_SELFTEST_DIVISION[0]) == 1
+    monkeypatch.setattr(C, "DRIVER_C", C.DRIVER_C.replace(*_NO_SELFTEST_DIVISION))
+    r = _ct_run(so)
+    assert [(l["kind"], l["function"]) for l in r["leaks"]["encaps"]] == [
+        ("branch on a secret", "shim_kem_enc_derand")]
+    assert r["stages"] == {"encaps": (0, 1), "decaps": (0, 1)}
+    assert "encaps" not in r["failed"]                 # a finding, not could-not-check
+    assert "self-test division was not found" in r["failed"]["decaps"]
+    dc = r["division_check"]
+    assert dc["checked"] is False and "self-test division was not found" in dc["why"]
+    # with no leak planted, neither operation is verified, and neither passes
+    clean = _ct_run(_ct_shim(tmp_path, "DIV_PUBLIC"))
+    assert clean["stages"] == {"encaps": (0, 1), "decaps": (0, 1)}
+    assert set(clean["failed"]) == {"encaps", "decaps"}
+
+
+def test_a_division_check_that_cannot_calibrate_keeps_the_audit(tmp_path, monkeypatch):
+    """The same on pq-verify's reference ML-KEM, which is not constant time:
+    its decaps compares with memcmp, a branch memcheck reports. The audit
+    raised, and NIST's results went with that finding: the CLI said only
+    "cannot verify: Unavailable: ...". NIST's results stand, Encaps is not
+    verified, saying why, and Decaps's finding is reported."""
+    from pq_verify import ct_audit as C
+    _division_check_or_skip()
+    monkeypatch.setattr(C, "DRIVER_C", C.DRIVER_C.replace(*_NO_SELFTEST_DIVISION))
+    r, doc, text = _kem_ct(tmp_path, "MUT_DIV_PUBLIC")
+    d, ct = r["detail"], r["constant_time"]
+    assert "ct:unavailable" not in d, ct
+    assert (d["keyGen"], d["encaps"], d["decaps"]) == ((25, 25), (25, 25), (10, 10))
+    assert d["ct:encaps"] == d["ct:decaps"] == (0, 1)
+    why = ct["failed"]["encaps"]
+    assert why.startswith("the secret-division check could not run: ") and "self-test" in why
+    assert "decaps" not in ct["failed"]
+    assert [(l["kind"], l["function"]) for l in ct["leaks"]["decaps"]] == [
+        ("branch on a secret", "pqvref_mlkem768_dec")]
+    assert r["status"] == "FINDINGS PRESENT" and r["verified"] is False
+    assert "secret-division check (PQV013): not run: " in text
+    assert doc["side_channel"]["constant_time_checked"]["leak_free"] is False
+
+
+def test_an_os_error_in_the_division_check_keeps_the_audit(tmp_path, monkeypatch):
+    """A full disk while the secret-division check ran raised out of
+    --audit-kem --constant-time, and the NIST results went with it. Each
+    operation the check could not finish is now not verified, saying why."""
+    import errno, os
+    from pq_verify import ct_div
+    _division_check_or_skip()
+
+    def full(*a, **k):
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+    monkeypatch.setattr(ct_div, "run", full)
+    r, doc, text = _kem_ct(tmp_path, "MUT_DIV_PUBLIC")
+    d, ct = r["detail"], r["constant_time"]
+    assert (d["keyGen"], d["encaps"], d["decaps"]) == ((25, 25), (25, 25), (10, 10))
+    assert d["ct:encaps"] == (0, 1) and "No space left on device" in ct["failed"]["encaps"]
+    assert ct["leaks"]["decaps"] and "decaps" not in ct["failed"]   # memcheck's finding
+    assert r["status"] == "FINDINGS PRESENT"
+
+
+@pytest.mark.parametrize("exc", ["cut short", "missing"])
+def test_an_unreadable_memcheck_report_fails_its_operation_only(tmp_path, monkeypatch, exc):
+    """memcheck's report of one operation cut short or missing (a full disk
+    can leave either) raised out of the constant-time run. That operation now
+    fails its stage, saying why, and the other keeps its result."""
+    import xml.etree.ElementTree as ET
+    from pq_verify import ct_audit as C
+    so = _ct_shim(tmp_path)
+    parse = C._parse
+
+    def unreadable(path):
+        if path.endswith("memcheck-decaps.xml"):
+            if exc == "cut short":
+                raise ET.ParseError("no element found: line 40, column 0")
+            raise FileNotFoundError(2, "No such file or directory", path)
+        return parse(path)
+    monkeypatch.setattr(C, "_parse", unreadable)
+    r = _ct_run(so)
+    assert r["stages"] == {"encaps": (1, 1), "decaps": (0, 1)}
+    assert r["failed"]["decaps"].startswith("the run under memcheck failed: its report "
+                                            "could not be read")
+
+
+def test_a_constant_time_run_that_stops_on_an_os_error_keeps_the_nist_results(tmp_path,
+                                                                              monkeypatch):
+    """The ML-KEM audit caught only Unavailable from its constant-time run; the
+    ML-DSA and Classic McEliece audits also catch RuntimeError, OSError and a
+    timeout. Any of those lost the whole ML-KEM audit, 1,435 passing checks
+    with it. It is now the failing stage the others record."""
+    import errno, os, subprocess
+    from pq_verify import ct_audit as C
+    from pq_verify.core import pqverify_audit_kem
+    so = _mlkem_ref_so(tmp_path)
+    for exc, said in ((OSError(errno.ENOSPC, os.strerror(errno.ENOSPC)), "No space left"),
+                      (RuntimeError("the driver failed (selftest, exit 1)"), "driver failed"),
+                      (subprocess.TimeoutExpired(["valgrind"], 600), "within 600 s")):
+        def stop(*a, _exc=exc, **k):
+            raise _exc
+        monkeypatch.setattr(C, "run_kem", stop)
+        r = pqverify_audit_kem(so, "ML-KEM-768", edge=False, accumulated=0,
+                               constant_time=True, verbose=False)
+        d = r["detail"]
+        assert (d["keyGen"], d["encaps"], d["decaps"]) == ((25, 25), (25, 25), (10, 10))
+        assert d["ct:unavailable"] == (0, 1) and said in r["constant_time"]["unavailable"]
+        assert r["status"] == "CANNOT VERIFY", exc
+
+
+def test_a_leak_is_not_leak_free_whatever_else_could_not_be_checked():
+    """A run in which one operation leaked and another could not be checked
+    reported leak_free None, unknown, as if no leak had been seen."""
+    from pq_verify.report import to_json_kem
+    leak = [{"kind": "branch on a secret", "function": "dec", "count": 1}]
+    ct = {"stages": {"encaps": (0, 1), "decaps": (0, 1)},
+          "leaks": {"encaps": [], "decaps": leak},
+          "failed": {"encaps": "the secret-division check could not run: x"},
+          "division_check": {"checked": False, "sites": 2, "why": "x"}}
+    r = {"verified": False, "status": "FINDINGS PRESENT", "passed": 60, "total": 62,
+         "detail": {"keyGen": (25, 25), "encaps": (25, 25), "decaps": (10, 10),
+                    "ct:encaps": (0, 1), "ct:decaps": (0, 1)}, "constant_time": ct}
+    checked = lambda r: to_json_kem(r, param_set="ML-KEM-768")[
+        "side_channel"]["constant_time_checked"]["leak_free"]
+    assert checked(r) is False
+    unknown = dict(ct, leaks={"encaps": [], "decaps": []},
+                   failed={"encaps": "x", "decaps": "x"})
+    assert checked(dict(r, constant_time=unknown)) is None
+    clean = dict(ct, stages={"encaps": (1, 1), "decaps": (1, 1)},
+                 leaks={"encaps": [], "decaps": []}, failed={})
+    assert checked(dict(r, constant_time=clean)) is True
+
+
 def test_pqv013_is_an_error_level_rule():
     from pq_verify.report import RULES, _rule_for
     assert RULES["PQV013"]["level"] == "error"
@@ -8642,16 +8789,17 @@ def test_dsa_audit_runs_the_accumulated_cases_through_the_vendor(tmp_path):
 # inputs marked. tests/data/ct_kem_shim.c is a fake KEM with planted leaks.
 # ----------------------------------------------------------------------
 
-def _ct_shim(tmp_path, define=None):
+def _ct_shim(tmp_path, define=None, *more):
     import shutil, subprocess
     from pq_verify.ct_audit import available
     why = available()
     if why:
         pytest.skip(why)
     root = pathlib.Path(__file__).resolve().parent.parent
-    so = tmp_path / f"ctshim_{define or 'clean'}.so"
+    defines = [d for d in (define, *more) if d]
+    so = tmp_path / f"ctshim_{'_'.join(defines) or 'clean'}.so"
     subprocess.run([shutil.which("cc") or "gcc", "-O1", "-fPIC", "-shared",
-                    *([f"-D{define}"] if define else []), "-o", str(so),
+                    *(f"-D{d}" for d in defines), "-o", str(so),
                     str(root / "tests" / "data" / "ct_kem_shim.c")],
                    check=True, capture_output=True)
     return str(so)

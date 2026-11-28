@@ -257,7 +257,13 @@ registers for the dividend and the divisor at each one; a divisor in memory
 is read from the shadow bits of its bytes. A secret operand fails the stage
 (the error-level SARIF rule `PQV013`). A self-test in the same run must see a
 secret dividend reported and a public one not, or the stage cannot be
-verified. The check sees only divisions that execute, the first 1,024 times
+verified. The same holds when the check fails in itself, once the library has
+a division to watch. Its driver may not build or not disassemble, its
+self-test's division may be missing from the driver's code, or the system may
+refuse it a file or a process. Each operation it was to cover is then not
+verified, saying why, and memcheck's findings for it stand. Without gdb or
+vgdb the check does not start, and the divisions are listed instead. The
+check sees only divisions that execute, the first 1,024 times
 each does while secrets are live, and it does not measure latency, which
 depends on the processor. pq-crystals' Kyber reference from before the
 KyberSlash fixes, built with gcc `-Os`, fails it in `poly_tomsg`,
