@@ -21,6 +21,7 @@ import os
 import re
 
 from . import coverage as _coverage
+from .verdict import NOT_RUN as _NOT_RUN, finalize
 
 SARIF_VERSION = "2.1.0"
 SARIF_SCHEMA = ("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
@@ -885,18 +886,18 @@ def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
     doc["standard"] = _MCELIECE_STANDARD
     doc["parameter_set"] = param_set
     doc["library"] = library or (result or {}).get("library")
+    # The verdict is set last, by pq_verify.verdict.finalize, from the
+    # stages' outcomes the audit reports; these are placeholders that keep
+    # the fields' order.
+    doc["status"], doc["verified"] = "CANNOT VERIFY", False
     if result is None:
-        doc.update(status="CANNOT VERIFY", verified=False, stages={}, symbols={},
-                   not_applicable={},
+        doc.update(stages={}, symbols={}, not_applicable={},
                    summary={"checks_passed": 0, "checks_total": 0, "findings": 1},
                    findings=["cannot verify: " + (
                        reason or "no Classic McEliece entry point could be bound "
                                  "unambiguously")])
-        return doc
+        return finalize(doc, {})
     p, t = result.get("passed", 0), result.get("total", 0)
-    doc["verified"] = bool(result.get("verified"))
-    doc["status"] = "VERIFIED" if doc["verified"] else (
-        "FINDINGS PRESENT" if t else "CANNOT VERIFY")
     doc["calling_convention"] = result.get("abi")
     doc["symbols"] = result.get("symbols", {})
     doc["vectors"] = result.get("vectors")
@@ -933,6 +934,16 @@ def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
             first = next((f for f in fails if f["stage"] == k), None)
             where = f"; first: {first['case']}: {first['detail']}" if first else ""
             findings.append(f"Classic McEliece: stage {k}: {v[0]}/{v[1]}{where}")
+    outcomes = result.get("outcomes")
+    if not isinstance(outcomes, dict):
+        # A result without its stages' outcomes cannot be judged: it is not
+        # read as a pass.
+        findings.append("cannot verify: the audit's result carries no stage outcomes")
+        outcomes = {}
+    for s in sorted(s for s, o in outcomes.items()
+                    if o == _NOT_RUN and s not in (result.get("detail") or {})):
+        findings.append(f"cannot verify: Classic McEliece: stage {s} was not run, "
+                        f"so it was not checked")
     doc["failures"] = fails
     doc["findings"] = findings
     doc["summary"] = {"checks_passed": p, "checks_total": t,
@@ -940,7 +951,12 @@ def to_json_mceliece_audit(result, artifact=None, param_set=None, library=None,
                       "findings": len(findings)}
     doc["scope"] = _scope(t, result.get("not_applicable_total", 0),
                           na_why="the parameter set or API has no such case")
-    return doc
+    try:
+        return finalize(doc, outcomes)
+    except ValueError as exc:            # an outcome that is not one
+        doc["findings"].append(f"cannot verify: {exc}")
+        doc["summary"]["findings"] = len(doc["findings"])
+        return finalize(doc, {})
 
 
 _HQC_STANDARD = "HQC code layer (selected by NIST; standard not final)"

@@ -456,7 +456,20 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
     p_all = sum(p for p, _ in T.detail.values())
     t_all = sum(t for _, t in T.detail.values())
     na_all = sum(c for c, _ in T.na.values())
-    verified = p_all == t_all and t_all > 0
+    # Each stage's outcome, and the verdict from them alone (pq_verify.verdict).
+    # The stages this audit requires are named, so one that never ran is not
+    # run, not absent: keyGen, Encaps and Decaps always; padding where the set
+    # has padding bits; constant time's operations when it was asked for and
+    # ran. Constant time asked for and not run could not be checked: CANNOT
+    # VERIFY when everything else passed, not FINDINGS PRESENT.
+    from . import verdict as V
+    required = ["keyGen", "encaps", "decaps"] + (["padding"] if v.P.padded else [])
+    if constant_time_check and "ct:unavailable" not in T.detail:
+        from .ct_audit import MCE_OPS
+        required += ["ct:" + op for op in MCE_OPS]
+    outcomes = V.stage_outcomes(T.detail, required=required, cannot={"ct:unavailable"},
+                                not_applicable=T.na)
+    status, verified = V.verdict(outcomes)
     via = {"keyGen": v.sym.get("keypair"), "encaps": v.sym.get("enc"),
            "decaps": v.sym.get("dec"), "padding": v.sym.get("dec"),
            "ct:encaps": v.sym.get("enc"), "ct:decaps": v.sym.get("dec")}
@@ -487,8 +500,9 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
             print(f"  n/a   ct:keyGen   {ct_res['not_applicable']['keyGen'][:60]}...")
         for f in T.failures[:5]:
             print(f"        ✗ {f['stage']} {f['case']}: {f['detail']}")
+        for s in sorted(s for s, o in outcomes.items() if o == V.NOT_RUN):
+            print(f"  FAIL  {s:8s} not run: no case reached it, so it was not checked")
         print("=" * 68)
-        status = "VERIFIED" if verified else ("FINDINGS PRESENT" if t_all else "CANNOT VERIFY")
         print(f"  RESULT: {p_all}/{t_all} — {status}"
               + (f"   ({na_all} not applicable)" if na_all else ""))
         print(f"  {M.TRACK_NOTE}")
@@ -497,7 +511,8 @@ def pqverify_audit_mceliece(so_path, param_set="mceliece348864", symbols=None,
             "Constant time: branches and addresses only, not timing or power."
             if constant_time_check else "Not a side-channel review."))
         print("=" * 68)
-    return {"verified": verified, "passed": p_all, "total": t_all,
+    return {"verified": verified, "status": status, "outcomes": outcomes,
+            "passed": p_all, "total": t_all,
             "detail": T.detail, "not_applicable": {k: list(x) for k, x in T.na.items()},
             "not_applicable_total": na_all, "via": via, "abi": v.abi,
             "failures": T.failures, "library": v.path, "vectors": M.sources(),
