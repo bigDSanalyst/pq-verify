@@ -94,19 +94,16 @@ class Harness:
         t.start()
         try:
             self._before_handshake()
-        except HarnessDied:
-            self.close()
-            raise
+        except HarnessDied as exc:
+            self._abandon(str(exc))
         try:
             hs = self._read("the handshake")
-        except HarnessDied:
-            self.close()            # and whatever it had started
-            raise
+        except HarnessDied as exc:
+            self._abandon(str(exc))     # and whatever it had started
         functions = hs.get("functions") if isinstance(hs, dict) else None
         if not isinstance(hs, dict) or "implementation" not in hs \
                 or not isinstance(functions, (list, type(None))):
-            self.close()
-            raise HarnessDied(f"the first line is not a handshake: {str(hs)[:120]}")
+            self._abandon(f"the first line is not a handshake: {str(hs)[:120]}")
         self.implementation = str(hs["implementation"])
         self.functions = [str(f) for f in functions or []]
 
@@ -205,6 +202,16 @@ class Harness:
         missing = [f for f in functions if f not in self.functions]
         if missing:
             raise HarnessDied(f"the harness does not advertise {', '.join(missing)}")
+
+    def _abandon(self, why):
+        """Stop a harness that did not start, then raise HarnessDied(why). An
+        error stopping it is added to the reason, never put in its place: it
+        used to replace the reason, and escape the audit as a traceback."""
+        try:
+            self.close()
+        except (OSError, _sp.TimeoutExpired) as exc:
+            why = f"{why}; and it could not be stopped cleanly: {exc}"
+        raise HarnessDied(why) from None
 
     def close(self):
         try:
@@ -722,6 +729,7 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
                                          else "drawn for this run")}
     h = None
     died = None
+    unfinished = []         # what went wrong stopping the harness or finishing
     tally, na, failures, det, calls = {}, {}, [], {}, 0
     try:
         h = (start or Harness)(argv, timeout=timeout)
@@ -744,9 +752,21 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
     except HarnessDied as exc:
         died = str(exc)
         tally, na, failures, det = {}, {}, [], {}
+    except (OSError, _sp.TimeoutExpired) as exc:
+        # The operating system refused the audit a pipe, a file or a process
+        # part way through. A partial run is not an audit: CANNOT VERIFY, as a
+        # harness that died. It used to escape as a traceback, with no report.
+        # A pq-verify defect is not caught here; it is reported as one.
+        died = f"the audit stopped on an operating-system error: {exc}"
+        tally, na, failures, det = {}, {}, [], {}
     finally:
         if h is not None:
-            h.close()
+            try:
+                h.close()
+            except (OSError, _sp.TimeoutExpired) as exc:
+                # Said with the outcome, never in its place: raised here, it
+                # replaced the result, or the exception in flight.
+                unfinished.append(f"the harness could not be stopped cleanly: {exc}")
     if seed is not None:
         base["fresh"]["seed"] = seed.hex()     # told only now: the harness is gone
         # Whether any was asked, by what was scored: a seed drawn for
@@ -762,11 +782,30 @@ def pqverify_audit_harness(command, param_set, timeout=DEFAULT_CALL_TIMEOUT,
     else:
         result = _result(base, tally, na, failures, det, calls)
     if finish is not None:
-        result = finish(result, h)
+        try:
+            result = finish(result, h)
+        except (OSError, _sp.TimeoutExpired) as exc:
+            unfinished.append(f"the audit could not be finished: {exc}")
+    if unfinished:
+        result = _unfinished(result, unfinished)
     if verbose:
         _print_result(result, describe.get("closing"),
                       brief=died is not None and result["status"] == "CANNOT VERIFY")
     return result
+
+
+def _unfinished(result, why):
+    """A run that could not end cleanly (the harness not stopped, the
+    audit's last checks not made) is not verified. Its findings stand, as
+    FINDINGS PRESENT; otherwise it is CANNOT VERIFY, saying why. Stopping
+    what the audit started is part of the audit: for a contained one, it is
+    how the worker's tree is known to be gone."""
+    said = "; ".join(why)
+    out = dict(result, harness_notes=list(result.get("harness_notes") or []) + list(why))
+    if out.get("status") != "FINDINGS PRESENT":
+        out.update(status="CANNOT VERIFY", verified=False,
+                   reason=f"{out['reason']}; {said}" if out.get("reason") else said)
+    return out
 
 
 def _result(base, tally, na, failures, det, calls):

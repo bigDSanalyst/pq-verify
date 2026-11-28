@@ -72,6 +72,40 @@ versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--audit-harness` and `--audit-contained`: an operating-system error
+  ended the audit with a traceback and no report.** An `OSError` or a
+  timeout while running, while stopping the harness or worker and its
+  processes, or in the contained audit's checks after the worker has
+  stopped, escaped the CLI. A failure stopping a harness that had already
+  died hid why it died. Each is now CANNOT VERIFY, exit 1, as a harness that
+  dies already is, with its reason; a finding made before it stands, as
+  FINDINGS PRESENT, with the error noted. An exception that is pq-verify's
+  own bug, and Ctrl-C, still propagate.
+- **`--audit-contained`: the symbol reader allocated what a section header
+  claimed, up to 256 MiB.** It asked the OS for each section in full and
+  found the file short only after: a 20 kB library claiming a 256 MiB string
+  table had 256 MiB allocated, and under a memory limit the `MemoryError`
+  escaped. No read now goes past the end of the file. The reader already checked the
+  section count and links: 21,546 hostile headers, targeted and random,
+  gave a list every time, before and after.
+- **`--audit-contained` did not confirm the worker's core-dump limit.** The
+  worker sets it to zero, soft and hard, before any library is mapped, and
+  ignored a refusal; a security module can refuse even a lowering (SELinux
+  checks any change to a hard limit). The worker then kept the hard limit it
+  inherited, which a library could raise its own limit to. Its comment said
+  pq-verify checked this from outside; pq-verify checked the filter,
+  `no_new_privs` and the capabilities. The worker now stops on a refusal,
+  and pq-verify reads the limit in `/proc/<pid>/limits` before the library
+  is mapped (`containment.core_dump_limit`): anything but zero is CANNOT
+  VERIFY. A new test plants a library that tries every raise the filter
+  allows, and shows the limit holds at zero. The filter allows `setrlimit`,
+  and `prlimit64` on the worker itself; a rule could not refuse only a
+  raise, since it sees the pointer, not the limit.
+- **LIMITS.md did not say whose word the contained audit's `bounds` stage
+  is,** or what happens to a crash's core dump. The guard bytes are checked
+  in the library's own process: a library that writes past a buffer and puts
+  them back passes. Where the system pipes core dumps to a program, the
+  kernel sends it the worker's memory whatever its limit.
 - **`--audit-mceliece`: constant time asked for and not run read FINDINGS
   PRESENT.** With everything else passing, nothing had been found. The
   report's status was `FINDINGS PRESENT` whenever anything had been counted.

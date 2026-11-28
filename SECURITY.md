@@ -83,10 +83,11 @@ that gives you, and what it does not:
   the audit changes neither what runs nor what the report names. pq-verify
   reads the copy's symbol table itself, so on this path no other program
   (`nm`, on the other paths) is run on the file outside the worker.
-- **What the library may do.** Before the library is mapped, the worker drops
-  its capabilities, sets `no_new_privs` and installs a seccomp filter.
-  pq-verify confirms all three in `/proc/<pid>/status`, and that the library
-  is not mapped yet, before it tells the worker to load it. The filter is a
+- **What the library may do.** Before the library is mapped, the worker sets
+  its core-dump limit to zero, drops its capabilities, sets `no_new_privs`
+  and installs a seccomp filter. pq-verify confirms all four in
+  `/proc/<pid>/status` and `/proc/<pid>/limits`, and that the library is not
+  mapped yet, before it tells the worker to load it. The filter is a
   deny-list. On it: starting a process, running another program, a new
   session or process group; sockets; opening a file for writing, creating,
   renaming, removing or truncating one, changing its mode, owner, times or

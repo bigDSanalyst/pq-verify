@@ -93,6 +93,27 @@ do:
   knows to be dangerous. A call that is not on it is allowed, and nothing
   shows the list is complete. There is no limit on memory or CPU, and no
   namespace: run a binary you do not trust in a container or a VM.
+- **Its `bounds` stage is the worker's word, so the library's.** The worker
+  puts 64 guard bytes on each side of every buffer it hands the library and
+  checks them after each call, in the library's own process. A library that
+  writes past a buffer and puts the guard bytes back passes the stage, and
+  a library can write on the pipe the worker replies on, as if it were the
+  worker. The stage catches a library's mistakes, not a library hiding
+  them. What the library cannot reach is on pq-verify's side: the filter,
+  which the kernel enforces; the containment pq-verify confirms from /proc
+  before the library is mapped; and the scoring of every answer, in
+  pq-verify's own process.
+- **A crash's core dump is the system's.** The worker's core-dump limit is
+  zero, soft and hard, and without capabilities the library cannot raise
+  it, so the kernel writes no core file. Where the system hands core dumps
+  to a program instead (a `core_pattern` that starts with `|`), the kernel
+  sends that program the worker's memory whatever the limit, and what it
+  keeps is its own policy. That memory holds the library, the questions
+  pq-verify asked and the library's answers; the worker's environment is
+  only `PATH` and `LC_ALL`. Making the worker non-dumpable would not close
+  this: the library can make it dumpable again, and without
+  `CAP_SYS_PTRACE` pq-verify could not read the memory map of a worker that
+  is not, which it confirms containment from.
 - **A filter kill is a finding about the library, not a proof of malice.** A
   library that opens a log file for writing, or a socket to the kernel's
   crypto API, is stopped and reported like any other. Whether that behaviour

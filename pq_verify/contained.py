@@ -273,12 +273,17 @@ def exported_functions(fd):
     import struct
 
     def at(offset, n):
+        # A header can claim any offset and size: none is read, or allocated
+        # for, past the end of the file.
+        if offset + n > end:
+            raise ValueError("past the end of the file")
         data = os.pread(fd, n, offset)
         if len(data) != n:
             raise ValueError("short read")
         return data
 
     try:
+        end = os.fstat(fd).st_size
         head = at(0, 64)
         if head[:6] != b"\x7fELF\x02\x01":            # ELF, 64-bit, little-endian
             return []
@@ -404,6 +409,17 @@ def _status(pid):
     return out
 
 
+def _core_limit(pid):
+    """(soft, hard): the core-dump limit `pid` runs under, as
+    /proc/<pid>/limits gives it (bytes, or "unlimited"); None if not shown."""
+    with open(f"/proc/{pid}/limits", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("Max core file size"):
+                fields = line[len("Max core file size"):].split()
+                return tuple(fields[:2]) if len(fields) >= 2 else None
+    return None
+
+
 def _maps(pid):
     """{inode: path} of the files mapped into `pid`."""
     files = {}
@@ -480,7 +496,7 @@ class ContainedHarness(Harness):
                               + str(first)[:160])
         pid = self.proc.pid
         try:
-            st, before = _status(pid), _maps(pid)
+            st, before, core = _status(pid), _maps(pid), _core_limit(pid)
         except OSError as exc:
             raise HarnessDied(f"the worker's state could not be read from /proc: {exc}") from None
         c = self.containment
@@ -492,6 +508,10 @@ class ContainedHarness(Harness):
         except (KeyError, ValueError):
             caps = [1]
         c["capabilities"] = "none" if not any(caps) else "some"
+        # Zero, soft and hard. With no capabilities, nothing in the worker
+        # can raise it: a hard limit is raised only with CAP_SYS_RESOURCE.
+        c["core_dump_limit"] = ("zero" if core == ("0", "0") else
+                                f"soft {core[0]}, hard {core[1]}" if core else "not shown")
         c["library_mapped_before_asked"] = self.pinned.inode in before
         wrong = []
         if self.use_filter and c["seccomp"] != "filter":
@@ -500,6 +520,8 @@ class ContainedHarness(Harness):
             wrong.append("no_new_privs is not set in the worker")
         if any(caps):
             wrong.append("the worker still holds capabilities")
+        if core != ("0", "0"):
+            wrong.append(f"the worker's core-dump limit is not zero ({c['core_dump_limit']})")
         if c["library_mapped_before_asked"]:
             wrong.append("the library was mapped before pq-verify asked for it")
         c["confirmed_before_load"] = bool(self.use_filter and not wrong)

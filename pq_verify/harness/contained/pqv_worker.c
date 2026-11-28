@@ -17,9 +17,11 @@
  * own process.
  *
  * Order of events. pq-verify checks steps 1 and 2 from outside, in
- * /proc/<pid>/status and /proc/<pid>/maps, before it lets step 5 happen:
+ * /proc/<pid>/status, /proc/<pid>/limits and /proc/<pid>/maps, before it
+ * lets step 5 happen:
  *
- *   1. no core dumps, no_new_privs, every capability dropped;
+ *   1. a core-dump limit of zero, soft and hard; no_new_privs; every
+ *      capability dropped;
  *   2. the seccomp filter below is installed;
  *   3. the worker does, under the filter, what it and the dynamic loader will
  *      need to do later (allocate, read a file, list a directory, start a
@@ -849,7 +851,10 @@ int main(int argc, char **argv)
     EK = size_arg(argv[5]); DK = size_arg(argv[6]); CT = size_arg(argv[7]);
 
     prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
-    setrlimit(RLIMIT_CORE, &none);
+    /* Zero, soft and hard: with no capabilities a library cannot raise it.
+       Lowering can fail too (SELinux checks any change to a hard limit). */
+    if (setrlimit(RLIMIT_CORE, &none) != 0)
+        fatal("the core-dump limit could not be set to zero", strerror(errno));
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
         fatal("no_new_privs could not be set", strerror(errno));
     if (drop_capabilities() != 0)

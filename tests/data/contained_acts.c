@@ -11,6 +11,9 @@
  *   ACT_PARENT_MEM  tries to open pq-verify's memory, environment, memory map
  *                   and each of its open files through /proc; aborts if one
  *                   opens
+ *   ACT_CORE_LIMIT  tries to raise its core-dump limit: soft and hard to
+ *                   unlimited, through setrlimit and prlimit64, then the soft
+ *                   to the hard; aborts if the limit is then not zero
  * On the filter's list, and must stop the worker:
  *   ACT_CREAT       creat(ACT_PATH), then writes to it
  *   ACT_OPEN_WRITE  open(ACT_PATH, O_WRONLY | O_CREAT)
@@ -40,6 +43,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -95,6 +99,14 @@ void pqv_act(const uint8_t *coins)
         if (open(path, O_RDONLY | O_NONBLOCK) >= 0) abort();   /* nor a file it has open */
     }
     if (d) closedir(d);
+#elif defined(ACT_CORE_LIMIT)
+    struct rlimit want = { RLIM_INFINITY, RLIM_INFINITY }, now;
+    if (getrlimit(RLIMIT_CORE, &now) != 0) abort();
+    setrlimit(RLIMIT_CORE, &want);
+    syscall(SYS_prlimit64, 0L, (long)RLIMIT_CORE, &want, (void *)0);
+    want.rlim_cur = want.rlim_max = now.rlim_max;
+    syscall(SYS_prlimit64, (long)getpid(), (long)RLIMIT_CORE, &want, (void *)0);
+    if (getrlimit(RLIMIT_CORE, &now) != 0 || now.rlim_cur || now.rlim_max) abort();
 #elif defined(ACT_CREAT)
 #ifdef SYS_creat
     long fd = syscall(SYS_creat, ACT_PATH, 0644);

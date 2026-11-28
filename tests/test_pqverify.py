@@ -8499,6 +8499,118 @@ def _failing(r):
     return {k for k, (p, t) in r["detail"].items() if p < t}
 
 
+# ----------------------------------------------------------------------
+# G8: an operating-system error in a harness audit's run, or in stopping
+# the harness after it, is CANNOT VERIFY in a written report, exit 1 (the
+# documented contract, and what a harness that dies already gives). It
+# escaped as a traceback with no report, and in the cleanup it replaced the
+# outcome. A stand-in harness and runner: no subprocess, no reference.
+# ----------------------------------------------------------------------
+
+class _StandInHarness:
+    implementation = "stand-in"
+    calls = 0
+    close_raises = None
+
+    def __init__(self, argv, timeout=None):
+        pass
+
+    def close(self):
+        if _StandInHarness.close_raises:
+            raise _StandInHarness.close_raises
+
+
+def _harness_cli(tmp_path, monkeypatch, runner, close_raises=None):
+    """--audit-harness through the CLI with the stand-ins: (exit, report)."""
+    import errno, json, sys
+    from pq_verify import harness_audit
+    monkeypatch.setattr(harness_audit, "Harness", _StandInHarness)
+    monkeypatch.setattr(harness_audit, "run_kem", runner)
+    monkeypatch.setattr(_StandInHarness, "close_raises", close_raises)
+    out = tmp_path / "h.json"
+    code, text = _cli("--audit-harness", sys.executable, "ML-KEM-512",
+                      "--accumulated", "0", "--json", str(out))
+    return code, json.loads(out.read_text())
+
+
+def _passes(h, ps, load, **kw):
+    return {"keyGen": (2, 2), "encaps": (2, 2)}, {}, [], {}
+
+
+def _finds_a_fault(h, ps, load, **kw):
+    return ({"keyGen": (2, 2), "encaps": (1, 2)}, {},
+            [{"stage": "encaps", "case": "tcId 7", "detail": "wrong ciphertext"}], {})
+
+
+def _disk_full(h, ps, load, **kw):
+    import errno
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+
+def _harness_died(h, ps, load, **kw):
+    from pq_verify.harness_audit import HarnessDied
+    raise HarnessDied("the harness exited (status 3) during encaps")
+
+
+_CANT_STOP = OSError(5, "Input/output error")
+
+
+@pytest.mark.parametrize("runner, close_raises, status, why", [
+    (_passes, _CANT_STOP, "CANNOT VERIFY",
+     "cannot verify: the harness could not be stopped cleanly: [Errno 5] Input/output error"),
+    (_disk_full, None, "CANNOT VERIFY",
+     "cannot verify: the audit stopped on an operating-system error: "
+     "[Errno 28] No space left on device"),
+    (_harness_died, _CANT_STOP, "CANNOT VERIFY",
+     "cannot verify: the harness exited (status 3) during encaps; the harness could not "
+     "be stopped cleanly: [Errno 5] Input/output error"),
+    (_finds_a_fault, _CANT_STOP, "FINDINGS PRESENT",
+     "ML-KEM-512: stage encaps: 1/2; first: tcId 7: wrong ciphertext"),
+], ids=["cleanup fails", "run fails", "died, then cleanup fails", "fault, then cleanup fails"])
+def test_a_harness_audit_that_cannot_end_cleanly_still_reports(tmp_path, monkeypatch, runner,
+                                                               close_raises, status, why):
+    """CANNOT VERIFY, or the findings when there are any, in a written report,
+    exit 1: what a harness that dies already gives. Each reason is kept."""
+    code, doc = _harness_cli(tmp_path, monkeypatch, runner, close_raises)
+    assert code == 1 and doc["status"] == status and doc["verified"] is False
+    assert why in doc["findings"], doc["findings"]
+    if close_raises:
+        assert [n for n in doc["harness_notes"] if "could not be stopped cleanly" in n]
+
+
+def test_a_harness_audit_s_cleanup_error_does_not_hide_a_pq_verify_defect(tmp_path,
+                                                                          monkeypatch):
+    """A defect in pq-verify (here a KeyError) still escapes, reported as
+    one, never read as "not verified". The cleanup error raised in the
+    finally block used to replace it."""
+    def defect(h, ps, load, **kw):
+        raise KeyError("a pq-verify defect")
+    with pytest.raises(KeyError, match="a pq-verify defect"):
+        _harness_cli(tmp_path, monkeypatch, defect, _CANT_STOP)
+    with pytest.raises(KeyboardInterrupt):          # and an interrupt ends the run
+        _harness_cli(tmp_path, monkeypatch, lambda *a, **k: (_ for _ in ()).throw(
+            KeyboardInterrupt()), _CANT_STOP)
+
+
+def test_a_harness_that_fails_to_start_and_to_stop_says_both():
+    """The start's failure is the reason; an error stopping it is added, not
+    put in its place."""
+    import sys
+    from pq_verify.harness_audit import Harness, HarnessDied
+
+    class StartsBadly(Harness):
+        def _before_handshake(self):
+            raise HarnessDied("the worker did not reach its contained stage")
+
+        def close(self):
+            Harness.close(self)
+            raise OSError(5, "Input/output error")
+    with pytest.raises(HarnessDied) as exc:
+        StartsBadly([sys.executable, "-c", "pass"], timeout=5)
+    assert str(exc.value) == ("the worker did not reach its contained stage; and it could "
+                              "not be stopped cleanly: [Errno 5] Input/output error")
+
+
 def test_harness_audit_verifies_a_correct_kem():
     r = _harness_audit("", "ML-KEM-512")
     assert r["status"] == "VERIFIED", r["failures"][:3]
@@ -13211,6 +13323,39 @@ def _contained(so, param_set="ML-KEM-512", **kw):
     return C.pqverify_audit_contained(so, param_set, verbose=False, **kw)
 
 
+@pytest.mark.parametrize("breaks, why", [
+    ("close", "the harness could not be stopped cleanly: [Errno 5] Input/output error"),
+    ("ended", "the audit could not be finished: [Errno 5] Input/output error"),
+], ids=["stopping the worker", "the last checks"])
+def test_a_contained_audit_that_cannot_end_cleanly_cannot_verify(tmp_path, monkeypatch,
+                                                                breaks, why):
+    """G8. Stopping the worker and its tree is part of containment. An error
+    stopping it, or in the checks made after it stopped, escaped as a
+    traceback with no report. CANNOT VERIFY, exit 1, the reason kept."""
+    import json
+    C = _contained_or_skip()
+    so = _contained_lib(tmp_path)
+    if breaks == "close":
+        real = C.ContainedHarness.close
+
+        def close(self):
+            first = not self._closed
+            real(self)
+            if first:
+                raise OSError(5, "Input/output error")
+        monkeypatch.setattr(C.ContainedHarness, "close", close)
+    else:
+        def ended(self):
+            raise OSError(5, "Input/output error")
+        monkeypatch.setattr(C.ContainedHarness, "ended", ended)
+    out = tmp_path / "c.json"
+    code, text = _cli("--audit-contained", so, "ML-KEM-512", "--accumulated", "0",
+                      "--json", str(out))
+    doc = json.loads(out.read_text())
+    assert code == 1 and (doc["status"], doc["verified"]) == ("CANNOT VERIFY", False), text
+    assert [f for f in doc["findings"] if why in f], doc["findings"]
+
+
 def _stopped_by_the_filter(r):
     return (r["status"] == "FINDINGS PRESENT" and _failing(r) == {"containment"}
             and r["failures"][0]["case"] == "ISO-SECCOMP-VIOLATION"
@@ -13229,6 +13374,7 @@ def test_contained_audit_verifies_a_correct_library(tmp_path):
     assert r["detail"]["fresh:decaps"] == (4, 4) and r["detail"]["containment"] == (1, 1)
     c = r["containment"]
     assert (c["seccomp"], c["no_new_privs"], c["capabilities"]) == ("filter", True, "none")
+    assert c["core_dump_limit"] == "zero"
     assert c["confirmed_before_load"] is True and c["library_mapped_before_asked"] is False
     assert c["escapees"] == [] and c["sealed_copy_unchanged"] is True
     assert c["file_on_disk_changed_during_audit"] is False
@@ -13414,6 +13560,86 @@ def test_the_worker_allows_what_a_library_may_do(tmp_path, act):
         path.write_text("a file the user can read\n")
     r = _contained(_contained_lib(tmp_path, act, path))
     assert r["status"] == "VERIFIED", (r.get("reason"), r["containment"])
+
+
+def test_a_library_cannot_raise_the_workers_core_limit(tmp_path):
+    """G2. The worker sets its core-dump limit to zero, soft and hard, and
+    drops every capability before any library is mapped; raising a hard
+    limit needs CAP_SYS_RESOURCE. The filter allows setrlimit, and prlimit64
+    on the worker itself, and need not refuse them. It could not refuse only
+    a raise: it sees the pointer, not the limit. CORE_LIMIT tries each raise
+    and aborts if the limit is then not zero. The control: outside the
+    worker, wherever the hard limit is not zero, it aborts."""
+    import resource, signal, subprocess, sys
+    so = _contained_lib(tmp_path, "CORE_LIMIT")
+    r = _contained(so)
+    assert r["status"] == "VERIFIED", (r.get("reason"), r["containment"])
+    # made non-dumpable first (PR_SET_DUMPABLE), so its abort dumps nothing
+    control = ("import ctypes, sys; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); "
+               "ctypes.CDLL(sys.argv[1]).pqv_act(bytes(64))")
+    ran = subprocess.run([sys.executable, "-I", "-c", control, so], cwd=tmp_path)
+    hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
+    assert ran.returncode == (-signal.SIGABRT if hard else 0)
+
+
+def _worker_setrlimit(tmp_path, monkeypatch, body):
+    """Run the contained worker with a setrlimit of its own, preloaded: the
+    worker calls it once, to set its core-dump limit to zero."""
+    import shutil, subprocess
+    C = _contained_or_skip()
+    src = tmp_path / "setrlimit.c"
+    src.write_text("#include <errno.h>\nstruct rlimit;\n"
+                   "int setrlimit(int r, const struct rlimit *l)\n"
+                   "{ (void)r; (void)l; " + body + " }\n")
+    shim = tmp_path / "libsetrlimit.so"
+    subprocess.run([shutil.which("cc") or "gcc", "-shared", "-fPIC", "-o", str(shim),
+                    str(src)], check=True, capture_output=True)
+    exe, _ = C.worker()
+    real = subprocess.Popen
+
+    def popen(argv, *a, env=None, **kw):
+        if env is not None and argv and argv[0] == exe:
+            env = dict(env, LD_PRELOAD=str(shim))
+        return real(argv, *a, env=env, **kw)
+    monkeypatch.setattr(C.subprocess, "Popen", popen)
+
+
+def test_the_worker_stops_if_its_core_limit_cannot_be_set(tmp_path, monkeypatch):
+    """G2. Lowering a limit can be refused too: SELinux checks any change to
+    a hard limit. The worker ignored the refusal and went on with the hard
+    limit it inherited, which a library could then raise its own limit to.
+    It now stops before the library is mapped, and the audit cannot verify."""
+    so = _contained_lib(tmp_path)
+    _worker_setrlimit(tmp_path, monkeypatch, "errno = EPERM; return -1;")
+    r = _contained(so)
+    assert (r["status"], r["verified"]) == ("CANNOT VERIFY", False), r.get("reason")
+    assert r["reason"] == ("the worker stopped: the core-dump limit could not be set "
+                           "to zero: Operation not permitted")
+    assert r["containment"]["worker_ended"] == "exited with status 3"   # its fatal()
+    assert r["loaded_objects"] == [] and r["total"] == 0                # nothing mapped or run
+
+
+def test_the_core_limit_is_confirmed_before_the_library_is_mapped(tmp_path, monkeypatch):
+    """G2. The worker's own comment said pq-verify checked it had no core
+    dumps; pq-verify checked the filter, no_new_privs and the capabilities,
+    not the limit. A setrlimit that says it worked and did nothing left the
+    worker with the limit it inherited, and the audit verified. pq-verify
+    now reads the limit in /proc/<pid>/limits, and the library is not
+    mapped unless it is zero. Where pq-verify itself runs with a hard limit
+    of zero, the worker inherits zero and there is nothing to refuse."""
+    import resource
+    so = _contained_lib(tmp_path)
+    soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+    _worker_setrlimit(tmp_path, monkeypatch, "return 0;")
+    r = _contained(so)
+    if hard == 0:
+        assert r["status"] == "VERIFIED", r.get("reason")
+        return
+    shown = lambda v: "unlimited" if v == resource.RLIM_INFINITY else str(v)
+    assert (r["status"], r["total"], r["loaded_objects"]) == ("CANNOT VERIFY", 0, []), \
+        r.get("reason")
+    assert r["reason"] == ("containment could not be confirmed: the worker's core-dump limit "
+                           f"is not zero (soft {shown(soft)}, hard {shown(hard)})")
 
 
 @pytest.mark.parametrize("act", ["CREAT", "OPEN_WRITE", "TMPFILE", "FCHMOD"])
@@ -13641,6 +13867,10 @@ def test_containment_that_cannot_be_confirmed_cannot_verify(tmp_path, monkeypatc
     assert r["loaded_objects"] == []               # nothing of the library's was mapped
     monkeypatch.setattr(C, "_status", lambda pid: dict(status(pid), CapEff="0000000000000001"))
     assert "still holds capabilities" in _contained(so)["reason"]
+    monkeypatch.setattr(C, "_status", status)
+    monkeypatch.setattr(C, "_core_limit", lambda pid: None)        # a limits file without it
+    assert _contained(so)["reason"] == ("containment could not be confirmed: the worker's "
+                                        "core-dump limit is not zero (not shown)")
 
 
 def test_contained_audit_reads_the_symbol_table_itself(tmp_path, monkeypatch):
@@ -13675,6 +13905,46 @@ def test_contained_audit_reads_the_symbol_table_itself(tmp_path, monkeypatch):
         fd = os.open(p, os.O_RDONLY)
         try:
             assert C.exported_functions(fd) == []
+        finally:
+            os.close(fd)
+
+
+def test_the_symbol_reader_reads_nothing_past_the_end_of_the_file(tmp_path, monkeypatch):
+    """G4. A section header can claim any offset and size. The reader asked
+    the OS for each in full, and found the file short only after: a 20 kB
+    library claiming a 256 MiB string table had 256 MiB allocated, and under
+    a memory limit the MemoryError escaped the audit. Each read is now
+    checked against the file's size first."""
+    import os, struct
+    C = _contained_or_skip()
+    blob = bytes(open(_contained_lib(tmp_path), "rb").read())
+    shoff, = struct.unpack_from("<Q", blob, 0x28)
+    shnum, = struct.unpack_from("<H", blob, 0x3C)
+
+    def field(i, at):
+        return shoff + 64 * i + at
+
+    dynsym = next(i for i in range(shnum) if struct.unpack_from("<I", blob, field(i, 4))[0] == 11)
+    dynstr, = struct.unpack_from("<I", blob, field(dynsym, 40))
+    asked, real = [], os.pread
+
+    def pread(fd, n, offset):
+        asked.append(n)
+        return real(fd, n, offset)
+    monkeypatch.setattr(C.os, "pread", pread)
+    for where, fmt, value in ((field(dynstr, 32), "<Q", 1 << 28),    # .dynstr's size
+                              (field(dynsym, 32), "<Q", 1 << 28),    # .dynsym's size
+                              (field(dynstr, 24), "<Q", 2**62),      # .dynstr's offset
+                              (0x3C, "<H", 0xFFFF)):                 # e_shnum
+        bad = bytearray(blob)
+        struct.pack_into(fmt, bad, where, value)
+        p = tmp_path / "claims.so"
+        p.write_bytes(bad)
+        fd = os.open(p, os.O_RDONLY)
+        try:
+            asked.clear()
+            assert C.exported_functions(fd) == [], (where, value)
+            assert max(asked) <= len(blob), (where, value, max(asked))
         finally:
             os.close(fd)
 
